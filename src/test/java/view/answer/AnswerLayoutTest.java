@@ -101,6 +101,34 @@ class AnswerLayoutTest {
         assertEquals(40, AnswerLayout.charHeight(half), 0.01);
     }
 
+    // lim over x->inf off a saved canvas, chars ~20 tall
+    private static final int[][] LIM = {
+        {66, 66, 68, 63, 68, 71, 61, 112, 62, 122},
+        {82, 97, 79, 114}, {87, 87, 87, 81, 89, 85},
+        {92, 106, 90, 117, 92, 109, 99, 98, 105, 99, 104, 115, 113, 99, 119, 97, 121, 118},
+    };
+    private static final int[][] X_TO_INF = {
+        {51, 149, 52, 143, 56, 141, 67, 160}, {69, 142, 54, 162},
+        {79, 150, 98, 148}, {92, 141, 99, 144, 101, 149, 87, 161},
+        {110, 157, 109, 152, 113, 142, 125, 161, 128, 160, 129, 137, 109, 162},
+    };
+
+    @Test
+    void limitUnderLimIsCharSizeNotStackSize() {
+        List<Stroke> stacked = ink(LIM);
+        stacked.addAll(ink(X_TO_INF));
+        List<Stroke> inARow = ink(LIM);
+        for (int[] p : X_TO_INF) {
+            int[] moved = p.clone();
+            for (int i = 0; i < moved.length; i += 2) {
+                moved[i] += 80;      // right of the m
+                moved[i + 1] -= 60;  // up on lim's line
+            }
+            inARow.add(stroke(moved));
+        }
+        assertEquals(AnswerLayout.charHeight(inARow), AnswerLayout.charHeight(stacked), 0.01);
+    }
+
     @Test
     void charHeightIsClamped() {
         assertEquals(AnswerLayout.MIN_CHAR_HEIGHT, AnswerLayout.charHeight(List.of(stroke(0, 0, 100, 0))), 0.01);

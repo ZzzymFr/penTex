@@ -21,6 +21,7 @@ public final class AnswerLayout {
     public static final double NEW_INK_GAP_X = 1.5;
     public static final double NEW_INK_GAP_Y = 0.35;
     private static final double DOT = 6;
+    private static final double LINE = 0.5;  // a stacked line needs a stroke this tall (x char), an i's dot isnt one
 
     private AnswerLayout() {
     }
@@ -61,12 +62,67 @@ public final class AnswerLayout {
         return clamped(median(heights));
     }
 
-    // fractions pulled apart (x overlap merged 2 over 3 into one glyph), just the ink if there's no real char
+    // fractions + lines over lines pulled apart (x overlap merged 2 over 3, lim over x->inf into one glyph), just the ink if there's no real char
     private static List<List<Stroke>> unstacked(Collection<Stroke> strokes) {
         if (tallHeights(strokeBoxes(strokes)).isEmpty()) {
             return List.of(new ArrayList<>(strokes));
         }
-        return Fractions.layers(strokes, strokeHeight(strokes));
+        double h = strokeHeight(strokes);
+        List<List<Stroke>> parts = new ArrayList<>();
+        for (List<Stroke> layer : Fractions.layers(strokes, h)) {
+            parts.addAll(lines(layer, h));
+        }
+        return parts;
+    }
+
+    // ink cut where no stroke spans the y gap, each band w/ a char half as tall as h is a line; dots + bars go w/ the closest
+    private static List<List<Stroke>> lines(List<Stroke> layer, double h) {
+        List<Stroke> byTop = new ArrayList<>();
+        for (Stroke s : layer) {
+            if (bounds(List.of(s)) != null) {
+                byTop.add(s);
+            }
+        }
+        byTop.sort(Comparator.comparingInt(s -> bounds(List.of(s)).y));
+        List<List<Stroke>> bands = new ArrayList<>();
+        double bottom = Double.NEGATIVE_INFINITY;
+        for (Stroke s : byTop) {
+            Rectangle b = bounds(List.of(s));
+            if (b.getMinY() > bottom) {
+                bands.add(new ArrayList<>());
+            }
+            bands.get(bands.size() - 1).add(s);
+            bottom = Math.max(bottom, b.getMaxY());
+        }
+        List<List<Stroke>> lines = new ArrayList<>();
+        for (List<Stroke> band : bands) {
+            if (tallHeights(strokeBoxes(band)).stream().anyMatch(t -> t >= LINE * h)) {
+                lines.add(band);
+            }
+        }
+        if (lines.size() < 2) {
+            return List.of(layer);
+        }
+        for (List<Stroke> band : bands) {
+            if (!lines.contains(band)) {
+                closest(lines, bounds(band)).addAll(band);
+            }
+        }
+        return lines;
+    }
+
+    private static List<Stroke> closest(List<List<Stroke>> lines, Rectangle box) {
+        List<Stroke> best = lines.get(0);
+        double gap = Double.MAX_VALUE;
+        for (List<Stroke> line : lines) {
+            Rectangle b = bounds(line);
+            double g = Math.max(b.getMinY() - box.getMaxY(), box.getMinY() - b.getMaxY());
+            if (g < gap) {
+                gap = g;
+                best = line;
+            }
+        }
+        return best;
     }
 
     // any real char in there, not just "-" "=" dots

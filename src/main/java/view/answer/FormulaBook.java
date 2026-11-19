@@ -63,7 +63,43 @@ public class FormulaBook {
         for (Formula f : taken) {
             remove(f.getId());
         }
+        takeTiedTo(box, h, taken);
         return taken;
+    }
+
+    // guesses the regroup would grow into come too: beside all the taken ink, or a limit stacked on a taken one
+    private void takeTiedTo(Rectangle box, double h, List<Formula> taken) {
+        Rectangle all = box == null ? null : new Rectangle(box);
+        List<Stroke> ink = new ArrayList<>();
+        for (Formula t : taken) {
+            all = all == null ? t.reach() : all.union(t.reach());
+            ink.addAll(t.getStrokes());
+        }
+        boolean grew = all != null;
+        while (grew) {
+            grew = false;
+            double row = ink.isEmpty() ? h : Math.max(h, AnswerLayout.strokeHeight(ink));  // a lone "=" isnt the char size
+            for (Formula f : new ArrayList<>(formulas.values())) {
+                Rectangle reach = f.reach();
+                if (f.getAnswer() == null && guesses.contains(f.getId()) && reach != null
+                        && (AnswerLayout.sameNewFormula(all, Math.max(row, f.getCharHeight()), reach) || stackedOnAny(taken, f))) {
+                    remove(f.getId());
+                    taken.add(f);
+                    all = all.union(reach);
+                    ink.addAll(f.getStrokes());
+                    grew = true;
+                }
+            }
+        }
+    }
+
+    private static boolean stackedOnAny(List<Formula> taken, Formula f) {
+        for (Formula t : taken) {
+            if (Scripts.stackedOn(t.getStrokes(), f.getStrokes()) || Scripts.stackedOn(f.getStrokes(), t.getStrokes())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean isGuess(long id) {

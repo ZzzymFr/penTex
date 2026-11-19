@@ -1517,7 +1517,9 @@ public class DrawingCanvas extends JPanel {
                     continue;
                 }
                 Set<Stroke> other = looseRow(s, h, group);
-                if (Scripts.stackedOn(group, other) || Scripts.stackedOn(other, group)
+                // beside the whole group too, a fraction pulled in from the seed's row can reach ink the row couldnt
+                if (AnswerLayout.sameNewFormula(boundsOf(group), h, boundsOf(List.of(s)))
+                        || Scripts.stackedOn(group, other) || Scripts.stackedOn(other, group)
                         || Fractions.across(group, other, loose, h)) {
                     group.addAll(other);
                     grew = true;

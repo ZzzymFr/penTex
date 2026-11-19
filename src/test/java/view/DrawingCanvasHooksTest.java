@@ -581,6 +581,56 @@ class DrawingCanvasHooksTest {
         assertOneFormulaOf(5);
     }
 
+    // lim x->inf sinh(2x)/cos(x) = off a saved canvas, shifted; the real pauses were after #0 #3 #8 #18 #19 #26
+    private static final int[][] LIM_SINH_OVER_COS = {
+        {66, 66, 68, 63, 68, 71, 61, 112, 62, 122},                                     // l
+        {82, 97, 79, 114}, {87, 87, 87, 81, 89, 85},                                    // i
+        {92, 106, 90, 117, 92, 109, 99, 98, 105, 99, 104, 115, 113, 99, 119, 97, 121, 118},  // m
+        {51, 149, 52, 143, 56, 141, 67, 160}, {69, 142, 54, 162},                       // x
+        {79, 150, 98, 148}, {92, 141, 99, 144, 101, 149, 87, 161},                      // ->
+        {110, 157, 109, 152, 113, 142, 125, 161, 128, 160, 129, 137, 109, 162},         // inf
+        {188, 71, 185, 70, 174, 79, 183, 86, 184, 90, 175, 95, 170, 91},                // s
+        {198, 80, 194, 92}, {201, 60, 202, 56, 205, 66},                                // i
+        {205, 86, 203, 92, 211, 79, 214, 81, 214, 94},                                  // n
+        {231, 58, 224, 88, 230, 79, 234, 79, 234, 93},                                  // h
+        {266, 61, 263, 60, 258, 66, 253, 79, 253, 91, 261, 92},                         // (
+        {274, 72, 274, 69, 284, 68, 289, 73, 282, 81, 273, 86, 289, 85},                // 2
+        {302, 74, 300, 71, 310, 62, 314, 67, 315, 78, 317, 82, 319, 81}, {323, 66, 317, 69, 306, 84},  // x
+        {333, 54, 336, 56, 340, 68, 339, 78, 329, 87},                                  // )
+        {162, 111, 203, 106, 273, 103, 322, 108, 333, 107},                             // bar
+        {215, 132, 212, 132, 204, 149, 206, 155, 211, 156},                             // c
+        {226, 145, 223, 150, 229, 150, 232, 142, 229, 139, 225, 144},                   // o
+        {250, 134, 248, 133, 240, 141, 253, 149, 251, 153, 240, 155},                   // s
+        {279, 127, 277, 126, 273, 132, 269, 148, 275, 154},                             // (
+        {284, 142, 282, 141, 284, 137, 290, 133, 298, 147}, {304, 130, 298, 132, 288, 151},  // x
+        {313, 122, 316, 133, 316, 145, 312, 154, 305, 156},                             // )
+        {357, 105, 376, 103}, {355, 117, 356, 115, 373, 115},                           // =
+    };
+
+    @Test
+    void limWrittenWithItsRealPausesIsOneFormula() {
+        writePausing(LIM_SINH_OVER_COS, 0, 3, 8, 18, 19, 26);
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void pauseMidLimitThenMidFractionIsOneFormula() {
+        writePausing(LIM_SINH_OVER_COS, 5, 19);  // lim | x | ->inf sinh(2x) bar | rest, the limit only touches lim
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void bottomLeftLooseAtThePauseStillReachesTheLimit() {
+        writePausing(LIM_SINH_OVER_COS, 1, 4, 5, 16, 19);  // bottom stays loose, "=" lands on the top
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void limOverAFractionGroupsTheSameFromAnyStroke() {
+        writePausing(java.util.Arrays.copyOfRange(LIM_SINH_OVER_COS, 0, 27));  // last stroke is the bottom's ")"
+        assertOneFormulaOf(27);
+    }
+
     @Test
     void regroupedButSameInkKeepsItsFormula() {
         writeAll(new int[][]{{100, 100, 100, 140}});                   // 1
