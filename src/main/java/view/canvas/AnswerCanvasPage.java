@@ -55,6 +55,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private final Set<Long> waiting = new LinkedHashSet<>();    // written in the same go, popup still owed
     private Stroke targetStroke;      // new ink to pop up for, or
     private long targetId = -1;       // an edited formula, or
+    private boolean targetEdited;     // its ink changed (not just moved), regroups w/ guesses next to it
     private boolean targetPick;       // the lasso pick
     private long generation;          // bumps on every user action, old results check it
     private FormulaCapture shown;     // formula the popup is about
@@ -248,6 +249,7 @@ public class AnswerCanvasPage extends CanvasPage {
             return;
         }
         offerAgain(id);
+        targetEdited = true;
     }
 
     // whole formula dragged / resized: same ink, offer it again like an edit, error card stays
@@ -264,6 +266,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private void offerAgain(long id) {
         targetStroke = null;
         targetId = id;
+        targetEdited = false;
         targetPick = false;
         restartPause();
     }
@@ -330,7 +333,8 @@ public class AnswerCanvasPage extends CanvasPage {
             session.clear();
         } else if (targetId >= 0) {
             FormulaCapture loose = registerLeftovers();  // first, it may fold into the edited one
-            capture = getSharedCanvas().captureForRecalculation(targetId);
+            capture = targetEdited ? getSharedCanvas().captureEdited(targetId)
+                    : getSharedCanvas().captureForRecalculation(targetId);
             if (capture == null) {
                 capture = loose;
             }

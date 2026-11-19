@@ -18,7 +18,9 @@ import java.util.function.UnaryOperator;
 
 // which strokes are calculated formulas and what their answers are
 public class FormulaBook {
+    static final double REGROUP_REACH = 1.5;  // chars around new ink that a pause's guesses get regrouped
     private final Map<Long, Formula> formulas = new LinkedHashMap<>();
+    private final Set<Long> guesses = new LinkedHashSet<>();  // grouped by a pause, not a lasso / calculate
     private final AtomicLong ids;  // shared with copies so undo never reuses an id
 
     public FormulaBook() {
@@ -33,9 +35,45 @@ public class FormulaBook {
     public Formula add(Collection<Stroke> strokes, long revision) {
         Set<Stroke> picked = new LinkedHashSet<>(strokes);
         formulas.values().removeIf(f -> !Collections.disjoint(f.getStrokes(), picked));
+        guesses.retainAll(formulas.keySet());
         Formula f = new Formula(ids.incrementAndGet(), picked, revision, null);
         formulas.put(f.getId(), f);
         return f;
+    }
+
+    // same, but just a pause's guess at the grouping, later ink can still regroup it
+    public Formula addGuess(Collection<Stroke> strokes, long revision) {
+        Formula f = add(strokes, revision);
+        guesses.add(f.getId());
+        return f;
+    }
+
+    // unanswered guesses near box taken out so they get grouped again w/ the new ink, h = new ink's char
+    public List<Formula> takeGuessesNear(Rectangle box, double h) {
+        List<Formula> taken = new ArrayList<>();
+        for (Formula f : formulas.values()) {
+            Rectangle reach = f.reach();
+            double r = REGROUP_REACH * Math.max(h, f.getCharHeight());
+            if (f.getAnswer() == null && guesses.contains(f.getId()) && reach != null && box != null
+                    && reach.getMinX() <= box.getMaxX() + r && reach.getMaxX() >= box.getMinX() - r
+                    && reach.getMinY() <= box.getMaxY() + r && reach.getMaxY() >= box.getMinY() - r) {
+                taken.add(f);
+            }
+        }
+        for (Formula f : taken) {
+            remove(f.getId());
+        }
+        return taken;
+    }
+
+    public boolean isGuess(long id) {
+        return formulas.containsKey(id) && guesses.contains(id);
+    }
+
+    // a taken guess came out the same, back as it was (id + revision, so its read still counts)
+    public void putBack(Formula f) {
+        formulas.put(f.getId(), f);
+        guesses.add(f.getId());
     }
 
     public Formula get(long id) {
@@ -103,11 +141,13 @@ public class FormulaBook {
 
     public void remove(long id) {
         formulas.remove(id);
+        guesses.remove(id);
     }
 
     public FormulaBook copy() {
         FormulaBook copy = new FormulaBook(ids);
         copy.formulas.putAll(formulas);
+        copy.guesses.addAll(guesses);
         return copy;
     }
 

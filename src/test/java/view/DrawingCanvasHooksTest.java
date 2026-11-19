@@ -501,4 +501,116 @@ class DrawingCanvasHooksTest {
         canvas.registerNewInk(last(), List.of(last()));
         assertEquals(2, canvas.getFormulas().size());
     }
+
+    // 2/3 - 1/5 = off the bug report: digits ~half a char off their bars, a short 1
+    private static final int[][] TWO_THIRDS_MINUS_A_FIFTH = {
+        {60, 55, 75, 52, 92, 52, 105, 59, 107, 70, 100, 82, 85, 92, 65, 103, 112, 103},  // 2
+        {45, 124, 114, 124},                                                            // bar
+        {65, 150, 98, 150, 81, 167, 95, 170, 101, 180, 97, 190, 85, 194, 65, 194},      // 3
+        {139, 132, 174, 132},                                                           // -
+        {258, 74, 258, 95},                                                             // 1, half as tall
+        {216, 121, 301, 121},                                                           // bar
+        {284, 146, 256, 146, 255, 165, 270, 161, 282, 165, 287, 175, 282, 186, 270, 188, 254, 186},  // 5
+        {338, 116, 364, 116}, {338, 131, 366, 131},                                     // =
+    };
+
+    // writes ink w/ a pause after the listed strokes + at the end, like the page: loose ink, or the formula it joined
+    private void writePausing(int[][] ink, int... pauseAfter) {
+        List<Stroke> round = new ArrayList<>();
+        long edited = -1;
+        for (int i = 0; i < ink.length; i++) {
+            write(ink[i]);
+            if (canvas.isBound(last())) {
+                edited = canvas.formulaIdOf(last());
+            } else {
+                round.add(last());
+                edited = -1;
+            }
+            int at = i;
+            if (i == ink.length - 1 || java.util.Arrays.stream(pauseAfter).anyMatch(p -> p == at)) {
+                if (!round.isEmpty()) {
+                    canvas.registerNewInk(round.get(round.size() - 1), round);
+                }
+                if (edited >= 0) {
+                    canvas.captureEdited(edited);
+                }
+                round = new ArrayList<>();
+                edited = -1;
+            }
+        }
+    }
+
+    private void assertOneFormulaOf(int strokes) {
+        assertEquals(1, canvas.getFormulas().size());
+        assertEquals(strokes, canvas.getFormulas().get(0).getStrokes().size());
+    }
+
+    @Test
+    void spacedFractionsInOneGoAreOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheBarKeepsTheFractionTogether() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 1);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheFirstFractionKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 2);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheShortTopKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 4);  // rest of 1/5 = lands on the 2/3 - as an edit
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterEveryStrokeKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 0, 1, 2, 3, 4, 5, 6, 7);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void shortTopStillMakesAFraction() {
+        writePausing(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 4, 9));  // 1/5 = alone
+        assertOneFormulaOf(5);
+    }
+
+    @Test
+    void regroupedButSameInkKeepsItsFormula() {
+        writeAll(new int[][]{{100, 100, 100, 140}});                   // 1
+        canvas.registerNewInk(last(), List.of(last()));
+        view.answer.Formula before = canvas.getFormulas().get(0);
+        writeAll(new int[][]{{80, 160, 120, 160}});                    // "-" under it, still no fraction
+        canvas.registerNewInk(last(), List.of(last()));
+        view.answer.Formula after = canvas.getFormulas().stream()
+                .filter(f -> f.getId() == before.getId()).findFirst().orElseThrow();
+        assertEquals(before.getRevision(), after.getRevision(), "same ink, its read still counts");
+    }
+
+    @Test
+    void lassoPickedFormulaIsNotRegrouped() {
+        writeAll(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 0, 2));  // 2 over the bar
+        lasso(30, 40, 130, 130);
+        FormulaCapture picked = canvas.registerSelection();
+        canvas.setTool(DrawingCanvas.Tool.PEN);
+        writePausing(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 2, 3));  // 3 under it
+        assertEquals(2, canvas.getFormulas().size(), "user picked those two, leave them be");
+        assertTrue(canvas.isCurrent(picked.getId(), picked.getRevision()));
+    }
+
+    @Test
+    void answeredFormulaIsNotRegrouped() {
+        Stroke one = answeredAt(100);                                  // 1, answered
+        writeAll(new int[][]{{80, 160, 120, 160}, {85, 175, 115, 175, 85, 215, 115, 215}});  // bar + 2 under it
+        canvas.registerNewInk(last(), List.of(canvas.getStrokes().get(1), last()));
+        assertEquals(1, canvas.getFormulas().stream().filter(f -> f.getStrokes().contains(one))
+                .findFirst().orElseThrow().getStrokes().size());
+        assertEquals(1, canvas.getAnswers().size());
+    }
 }
