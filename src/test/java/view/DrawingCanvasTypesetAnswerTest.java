@@ -53,6 +53,46 @@ class DrawingCanvasTypesetAnswerTest {
         assertEquals(120, centre, 12);
     }
 
+    // 7/15 typeset on that ink, its height
+    private static double answerHeightOn(int[][] ink) {
+        DrawingCanvas c = new DrawingCanvas();
+        c.setSize(900, 500);
+        for (int[] xy : ink) {
+            c.dispatchEvent(new MouseEvent(c, MouseEvent.MOUSE_PRESSED, 0, 0, xy[0], xy[1], 1, false, MouseEvent.BUTTON1));
+            for (int i = 2; i < xy.length; i += 2) {
+                c.dispatchEvent(new MouseEvent(c, MouseEvent.MOUSE_DRAGGED, 0, 0, xy[i], xy[i + 1], 1, false, MouseEvent.BUTTON1));
+            }
+            c.dispatchEvent(new MouseEvent(c, MouseEvent.MOUSE_RELEASED, 0, 0, xy[xy.length - 2], xy[xy.length - 1], 1, false,
+                    MouseEvent.BUTTON1));
+        }
+        FormulaCapture f = c.takeFormulasToCalculate().get(0);
+        assertTrue(c.showTypesetAnswer(f.getId(), f.getRevision(), AnswerKind.AFTER_EQUALS, "7/15", "\\frac{7}{15}"));
+        return c.getAnswers().get(0).getHeight();
+    }
+
+    @Test
+    void answerAfterFractionsIsSizedLikeTheirDigits() {
+        double stacked = answerHeightOn(new int[][]{
+            {60, 55, 75, 52, 92, 52, 105, 59, 107, 70, 100, 82, 85, 92, 65, 103, 112, 103},  // 2
+            {45, 124, 114, 124},                                                            // bar
+            {65, 150, 98, 150, 81, 167, 95, 170, 101, 180, 97, 190, 85, 194, 65, 194},      // 3
+            {139, 132, 174, 132},                                                           // -
+            {258, 74, 258, 95},                                                             // 1
+            {216, 121, 301, 121},                                                           // bar
+            {284, 146, 256, 146, 255, 165, 270, 161, 282, 165, 287, 175, 282, 186, 270, 188, 254, 186},  // 5
+            {338, 116, 364, 116}, {338, 131, 366, 131},                                     // =
+        });
+        double inARow = answerHeightOn(new int[][]{                                         // 23 - 15 =
+            {60, 105, 75, 102, 92, 102, 105, 109, 107, 120, 100, 132, 85, 142, 65, 153, 112, 153},
+            {125, 106, 158, 106, 141, 123, 155, 126, 161, 136, 157, 146, 145, 150, 125, 150},
+            {180, 130, 215, 130},
+            {240, 130, 240, 151},                                                           // short 1 like the stacked one
+            {290, 107, 262, 107, 261, 126, 276, 122, 288, 126, 293, 136, 288, 147, 276, 149, 260, 147},
+            {320, 122, 346, 122}, {320, 137, 348, 137},
+        });
+        assertEquals(inARow, stacked, 0.5, "same digits, same size answer");
+    }
+
     @Test
     void staleRevisionDrawsNothing() {
         FormulaCapture c = writeOneEquals();

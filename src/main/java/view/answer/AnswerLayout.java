@@ -48,14 +48,25 @@ public final class AnswerLayout {
         return glyphs;
     }
 
-    // median height of the tall glyphs, skips "-", "=", dots
+    // median height of the tall glyphs, skips "-", "=", dots; a fraction's top + bottom are chars of their own
     public static double charHeight(Collection<Stroke> strokes) {
-        List<Integer> heights = tallHeights(glyphs(strokes));
+        List<Integer> heights = new ArrayList<>();
+        for (List<Stroke> part : unstacked(strokes)) {
+            heights.addAll(tallHeights(glyphs(part)));
+        }
         if (heights.isEmpty()) {
             Rectangle all = bounds(strokes);
             return clamped(all == null ? 0 : all.height);
         }
         return clamped(median(heights));
+    }
+
+    // fractions pulled apart (x overlap merged 2 over 3 into one glyph), just the ink if there's no real char
+    private static List<List<Stroke>> unstacked(Collection<Stroke> strokes) {
+        if (tallHeights(strokeBoxes(strokes)).isEmpty()) {
+            return List.of(new ArrayList<>(strokes));
+        }
+        return Fractions.layers(strokes, strokeHeight(strokes));
     }
 
     // any real char in there, not just "-" "=" dots

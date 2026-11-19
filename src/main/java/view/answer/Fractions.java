@@ -36,8 +36,42 @@ public final class Fractions {
         return false;
     }
 
+    // ink split into the line + each fraction's top and bottom, bars dropped, so a stacked fraction isnt one tall glyph
+    public static List<List<Stroke>> layers(Collection<Stroke> ink, double h) {
+        List<Stroke> all = new ArrayList<>(ink);
+        List<Stroke> line = new ArrayList<>(all);
+        List<List<Stroke>> layers = new ArrayList<>();
+        layers.add(line);
+        for (Stroke bar : all) {
+            List<List<Stroke>> parts = parts(bar, all, h);
+            if (parts.isEmpty()) {
+                continue;
+            }
+            line.remove(bar);
+            for (List<Stroke> part : parts) {
+                List<Stroke> mine = new ArrayList<>(part);
+                mine.retainAll(line);  // already in an earlier fraction stays there
+                line.removeAll(mine);
+                layers.add(mine);
+            }
+        }
+        return layers;
+    }
+
     // bar + the chars right over/under it, empty if it's not a bar w/ both
     private static List<Stroke> around(Stroke bar, List<Stroke> ink, double h) {
+        List<List<Stroke>> parts = parts(bar, ink, h);
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        List<Stroke> fraction = new ArrayList<>(List.of(bar));
+        fraction.addAll(parts.get(0));
+        fraction.addAll(parts.get(1));
+        return fraction;
+    }
+
+    // [chars right over the bar, chars right under it], empty if it's not a bar w/ both
+    private static List<List<Stroke>> parts(Stroke bar, List<Stroke> ink, double h) {
         Rectangle r = AnswerLayout.bounds(List.of(bar));
         if (r == null || r.height > FLAT * h || r.width < MIN_BAR * h) {
             return List.of();
@@ -52,20 +86,17 @@ public final class Fractions {
         }
         // short 1 over a 5: reach goes by the bigger of h + the digits right next to the bar
         double reach = REACH * Math.max(h, Math.max(nextTo(r, column, true), nextTo(r, column, false)));
-        List<Stroke> fraction = new ArrayList<>(List.of(bar));
-        boolean over = false;
-        boolean under = false;
+        List<Stroke> over = new ArrayList<>();
+        List<Stroke> under = new ArrayList<>();
         for (Stroke s : column) {
             Rectangle b = AnswerLayout.bounds(List.of(s));
             if (b.getMaxY() <= r.getMinY() && r.getMinY() - b.getMaxY() <= reach) {
-                over = true;
-                fraction.add(s);
+                over.add(s);
             } else if (b.getMinY() >= r.getMaxY() && b.getMinY() - r.getMaxY() <= reach) {
-                under = true;
-                fraction.add(s);
+                under.add(s);
             }
         }
-        return over && under ? fraction : List.of();
+        return over.isEmpty() || under.isEmpty() ? List.of() : List.of(over, under);
     }
 
     // height of the closest char over (or under) the bar, 0 if none
