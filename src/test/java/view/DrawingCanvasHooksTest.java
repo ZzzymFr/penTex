@@ -215,6 +215,42 @@ class DrawingCanvasHooksTest {
         assertEquals(1, canvas.getFormulas().size());
     }
 
+    // "5+3=" 40 tall, the "3" 26 past the "+", the "=" 20 past the "3"
+    private static final int[][] FIVE_PLUS_THREE = {
+        {100, 100, 120, 140},                      // 5
+        {140, 120, 170, 120},                      // +
+        {155, 105, 155, 135},
+        {196, 100, 220, 140},                      // 3
+        {240, 115, 270, 115},                      // =
+        {240, 127, 270, 127},
+    };
+
+    @Test
+    void tailDeletedThenWrittenBackStaysOneFormula() {
+        List<Stroke> all = writeAll(FIVE_PLUS_THREE);
+        canvas.registerNewInk(last(), all);
+        lasso(190, 90, 280, 150);                  // "3="
+        canvas.deleteSelection();
+        canvas.setTool(DrawingCanvas.Tool.PEN);
+        List<Stroke> again = writeAll(new int[][]{FIVE_PLUS_THREE[3], FIVE_PLUS_THREE[4], FIVE_PLUS_THREE[5]});
+        assertTrue(again.stream().allMatch(canvas::isBound), "lands where the old ink was");
+        assertEquals(1, canvas.getFormulas().size());
+        assertEquals(6, canvas.getFormulas().get(0).getStrokes().size());
+    }
+
+    // undo goes back to before the pause bound it, so the whole formula is loose again
+    @Test
+    void equalsWrittenBackAfterUndoTakesTheLooseFormulaAlong() {
+        List<Stroke> all = writeAll(FIVE_PLUS_THREE);
+        canvas.registerNewInk(last(), all);
+        canvas.undo();
+        canvas.undo();
+        assertEquals(0, canvas.getFormulas().size());
+        List<Stroke> bars = writeAll(new int[][]{FIVE_PLUS_THREE[4], FIVE_PLUS_THREE[5]});
+        assertEquals(6, strokesIn(canvas.registerNewInk(last(), bars)));
+        assertEquals(1, canvas.getFormulas().size());
+    }
+
     @Test
     void registerNewInkReturnsNullForGoneStroke() {
         write(100, 100, 130, 140);

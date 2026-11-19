@@ -1320,7 +1320,7 @@ public class DrawingCanvas extends JPanel {
                 pool.add(s);
             }
         }
-        double h = AnswerLayout.strokeHeight(pool);
+        double h = Math.max(AnswerLayout.strokeHeight(pool), olderRowHeight(pool));
         bindGroup(looseGroup(last, h));
         for (Stroke s : session) {
             if (strokes.contains(s) && !book.isBound(s)) {
@@ -1331,6 +1331,19 @@ public class DrawingCanvas extends JPanel {
         round.add(last);
         joinLoneEquals(round);
         return capture(book.holding(last));  // after all of it, a later limit may have merged it again
+    }
+
+    // undo can leave a whole formula loose: its ink on this round's row sizes it too, 0 if none
+    private double olderRowHeight(List<Stroke> round) {
+        Rectangle box = boundsOf(round);
+        List<Stroke> row = new ArrayList<>(round);
+        for (Stroke s : strokes) {
+            Rectangle b = book.isBound(s) || round.contains(s) ? null : boundsOf(List.of(s));
+            if (b != null && b.getMinY() <= box.getMaxY() && b.getMaxY() >= box.getMinY()) {
+                row.add(s);
+            }
+        }
+        return row.size() == round.size() ? 0 : AnswerLayout.strokeHeight(row);
     }
 
     // an "=" on its own this round joins the formula just left of it, even far off or bigger than its ink

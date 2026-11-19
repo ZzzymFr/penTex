@@ -118,7 +118,7 @@ public class FormulaBook {
         Map<Long, Set<Stroke>> after = new LinkedHashMap<>();
         Set<Long> changed = new LinkedHashSet<>();
         for (Formula f : formulas.values()) {
-            before.put(f.getId(), AnswerLayout.bounds(f.getStrokes()));
+            before.put(f.getId(), f.reach());
             Set<Stroke> kept = new LinkedHashSet<>(f.getStrokes());
             if (kept.removeAll(gone)) {
                 changed.add(f.getId());
@@ -141,7 +141,7 @@ public class FormulaBook {
             if (strokes.isEmpty()) {
                 formulas.remove(id);
             } else {
-                formulas.put(id, formulas.get(id).with(strokes, revisions.getAsLong(), null));
+                formulas.put(id, formulas.get(id).edited(strokes, revisions.getAsLong()));
             }
         }
         return changed;
