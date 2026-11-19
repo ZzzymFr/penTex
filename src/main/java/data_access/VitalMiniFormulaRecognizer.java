@@ -28,6 +28,7 @@ public class VitalMiniFormulaRecognizer implements FormulaRecognizer {
     // whole ink = one line, band rule blew fractions up past what these weights can read
     @Override
     public String recognize(BufferedImage formulaImage) throws Exception {
-        return model.read(FormulaImagePreprocessor.prepare(formulaImage, BandRule.WHOLE_INK));
+        BufferedImage prepared = FormulaImagePreprocessor.prepare(formulaImage, BandRule.WHOLE_INK);
+        return model.read(ReadableWidth.fit(prepared));  // too wide and the model drops the tail
     }
 }
