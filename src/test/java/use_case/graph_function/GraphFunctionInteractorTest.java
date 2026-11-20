@@ -3,6 +3,7 @@ package use_case.graph_function;
 import data_access.InMemoryGraphSessionDataAccessObject;
 import entity.LatexFunctionParser;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitPlot;
 import entity.graph.SurfacePlot;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +122,48 @@ class GraphFunctionInteractorTest {
         interactor.execute(new GraphFunctionInputData("f(x,y)=xy", -1, 1, 0, 3));
         assertEquals(0, presenter.surface.getYMin(), 1e-9);
         assertEquals(3, presenter.surface.getYMax(), 1e-9);
+    }
+
+    @Test
+    void xyzEquationIsGraphedAsAMeshInABoxItFills() {
+        interactor.execute(new GraphFunctionInputData("x^2+y^2+z^2=1"));
+        assertNull(presenter.error);
+        assertTrue(presenter.fresh);
+        SurfaceOutputData data = presenter.surface;
+        assertNull(data.getZ());
+        assertTrue(data.getMesh().length > 100);
+        assertTrue(data.getXMax() < 3 && data.getXMax() > 1, "zoomed in on the sphere");
+        assertTrue(data.getZMin() < -1 && data.getZMax() > 1);
+        assertTrue(session.current() instanceof ImplicitPlot);
+    }
+
+    @Test
+    void xyzEquationKeepsATypedRange() {
+        interactor.execute(new GraphFunctionInputData("x+y+z=1", -3, 3));
+        SurfaceOutputData data = presenter.surface;
+        assertEquals(-3, data.getXMin(), 1e-9);
+        assertEquals(3, data.getYMax(), 1e-9);
+        assertEquals(3 * 0.72, data.getZMax(), 1e-9);
+    }
+
+    @Test
+    void gridSurfaceHasNoMesh() {
+        interactor.execute(new GraphFunctionInputData("z=x^2+y^2", -2, 2));
+        assertNull(presenter.surface.getMesh());
+    }
+
+    @Test
+    void xyzEquationWithNothingInTheBoxIsReported() {
+        interactor.execute(new GraphFunctionInputData("x^2+y^2+z^2=-1"));
+        assertNull(presenter.surface);
+        assertTrue(presenter.error.contains("no points"), presenter.error);
+    }
+
+    @Test
+    void twoLetterEquationKeepsTheOldError() {
+        interactor.execute(new GraphFunctionInputData("x^2-4=0"));
+        assertTrue(presenter.error.startsWith("Cannot graph \"x^2-4=0\": Write the function explicitly"),
+                presenter.error);
     }
 
     @Test

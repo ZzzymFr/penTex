@@ -350,7 +350,7 @@ class AnswerCanvasPageTest {
         shared.setFormulaRecognizer(image -> image.getHeight() < 200 ? "f(2)=" : "f(x)=x^{2}+2x");
     }
 
-    private void autoDefine() throws Exception {
+    private void checkDefinitions() throws Exception {
         DefinitionCheckController check = new DefinitionCheckController(new DefinitionCheckInteractor());
         onEdt(() -> page.setDefinitionCheck(check::isDefinition));
     }
@@ -360,14 +360,23 @@ class AnswerCanvasPageTest {
         return page.notices().shownError() == null && done != null && done.startsWith("Defined");
     }
 
+    private void clickRecognize() throws Exception {
+        onEdt(() -> page.visiblePopup().clickRecognize());
+    }
+
     @Test
-    void definitionIsSavedWithoutCalculate() throws Exception {
+    void definitionWaitsForRecognize() throws Exception {
+        AtomicInteger results = countResults();
         defineThenCall();
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
+        waitPopup("f(x)=x^{2}+2x");
+        assertTrue(popup().hasRecognize());
+        Thread.sleep(200);
+        assertEquals(0, results.get(), "not saved behind your back");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
-        assertNull(popup(), "nothing to click");
 
         drag(400, 300, 420, 330);
         waitPopup("f(2)=");
@@ -376,38 +385,26 @@ class AnswerCanvasPageTest {
     }
 
     @Test
-    void definitionWrittenRightBeforeTheCallIsSavedFirst() throws Exception {
-        defineThenCall();
-        openPage();
-        autoDefine();
-        onEdt(() -> page.setPopupDelay(400));
-        write();                                     // f(x)=...
-        drag(400, 300, 420, 330);                    // f(2)= right after, no pause
-        waitPopup("f(2)=");
-        clickCalculate();
-        waitFor(() -> answerIs("8"), "f(2)");
-        Thread.sleep(400);
-        assertNull(popup(), "f(x) line doesn't pop up after");
-    }
-
-    @Test
     void badDefinitionStillGetsThePopup() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=x+y");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         waitPopup("f(x)=x+y");
-        assertFalse(errorShown("f(x)"), "no error till Calculate");
-        clickCalculate();
+        assertFalse(errorShown("f(x)"), "no error till Recognize");
+        clickRecognize();
         waitFor(() -> errorShown("f(x) can only use x, not y"), "the error");
     }
 
     @Test
-    void autoSavedDefinitionGoesToPdfStudio() throws Exception {
+    void recognizedDefinitionGoesToPdfStudio() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=x^{2}+2x");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
+        waitPopup("f(x)=x^{2}+2x");
+        assertTrue(sent.isEmpty(), "nothing till the click");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
         waitFor(() -> sent.equals(List.of("f(x)=x^{2}+2x|")), "sent once, no answer");
     }
@@ -427,7 +424,7 @@ class AnswerCanvasPageTest {
     void halfWrittenInkNeverGoesToPdfStudio() throws Exception {
         shared.setFormulaRecognizer(image -> "1+");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         Thread.sleep(400);
         assertNull(popup());
@@ -438,7 +435,7 @@ class AnswerCanvasPageTest {
     void definitionWithNoBodyYetWaitsQuietly() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         waitPopup("f(x)=");
         assertNull(page.notices().shownError());
@@ -848,14 +845,17 @@ class AnswerCanvasPageTest {
     void savedDefinitionStillPopsUpOnHover() throws Exception {
         shared.setFormulaRecognizer(image -> image.getWidth() > 200 ? "f(x)=2x+3x^{2}" : ".");
         openPage();
-        autoDefine();
+        checkDefinitions();
         writeQuadratic();
+        waitPopup("f(x)=2x+3x^{2}");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
         assertNull(popup());
         Thread.sleep(400);
 
-        hover(130, 120);                    // on the "=", Graph lives in this popup
+        hover(130, 120);                    // on the "=", Recognize again
         waitPopup("f(x)=2x+3x^{2}");
+        assertTrue(popup().hasRecognize());
     }
 
     @Test
@@ -998,7 +998,7 @@ class AnswerCanvasPageTest {
         GraphCheckInteractor graphCheck = new GraphCheckInteractor(new LatexFunctionParser());
         CalculateCheckInteractor calcCheck = new CalculateCheckInteractor(functions);
         SwingUtilities.invokeAndWait(() -> {
-            page = new AnswerCanvasPage(shared, controller, viewModel, (id, latex, result) -> { },
+            page = new AnswerCanvasPage(shared, controller, viewModel, (id, latex, result) -> sent.add(latex + "|" + result),
                     new GraphController(input -> { }),
                     new GraphExploreController(new NoExplore()), new GraphViewModel(), graphCheck::canGraph,
                     java.awt.Color.WHITE);
@@ -1067,6 +1067,13 @@ class AnswerCanvasPageTest {
     }
 
     @Test
+    void xyzEquationGetsGraphNotCalculate() throws Exception {
+        boardPopupFor("x+y+z=1");
+        assertFalse(popup().hasCalculate());
+        assertTrue(popup().hasGraph());
+    }
+
+    @Test
     void flatLineGetsBoth() throws Exception {
         boardPopupFor("y=2+3");
         assertTrue(popup().hasCalculate());
@@ -1093,6 +1100,283 @@ class AnswerCanvasPageTest {
         waitFor(() -> calls.get() == 1, "the read");
         Thread.sleep(300);
         assertNull(popup());
+    }
+
+    // board: write once, wait for that read, then lasso the same ink
+    private void boardPickFor(String latex) throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        shared.setFormulaRecognizer(image -> {
+            calls.incrementAndGet();
+            return latex;
+        });
+        openBoard();
+        write();
+        waitFor(() -> calls.get() == 1, "the first read");
+        lasso(80, 80, 220, 170);
+        waitPick();
+    }
+
+    private void waitPick() throws Exception {
+        waitFor(() -> page.visiblePopup() != null && page.visiblePopup().isPick(), "the lasso popup");
+    }
+
+    // Calculate, Graph, Recognize, Phase Portrait: lit or gray
+    private void assertLit(boolean calc, boolean graph, boolean recognize, boolean phase) throws Exception {
+        AnswerPopup p = popup();
+        assertEquals(calc, p.pickEnabled("Calculate"), "Calculate");
+        assertEquals(graph, p.pickEnabled("Graph"), "Graph");
+        assertEquals(recognize, p.pickEnabled("Recognize"), "Recognize");
+        assertEquals(phase, p.pickEnabled("Phase Portrait"), "Phase Portrait");
+    }
+
+    private void clickInPick(String label) throws Exception {
+        onEdt(() -> page.visiblePopup().clickInPick(label));
+    }
+
+    @Test
+    void lassoOnASumGivesFourButtons() throws Exception {
+        boardPickFor("3+4");
+        assertLit(true, false, true, false);
+    }
+
+    @Test
+    void lassoOnALineGraysCalculate() throws Exception {
+        boardPickFor("y=3x");
+        assertLit(false, true, true, false);
+    }
+
+    @Test
+    void lassoOnAnOdeLightsPhasePortrait() throws Exception {
+        boardPickFor("y'=x-y");
+        assertLit(false, false, true, true);
+        clickInPick("Phase Portrait");
+        waitFor(() -> phaseAsked.size() == 1, "phase portrait use case");
+        assertEquals("y'=x-y", phaseAsked.get(0));
+    }
+
+    @Test
+    void lassoOnNothingUsefulKeepsCalculate() throws Exception {
+        boardPickFor("x+");
+        assertLit(true, false, true, false);
+    }
+
+    @Test
+    void grayButtonDoesNothing() throws Exception {
+        boardPickFor("y=3x");
+        clickInPick("Calculate");
+        Thread.sleep(200);
+        assertNotNull(popup(), "still up");
+        assertTrue(canvas.getAnswers().isEmpty());
+        assertNull(page.notices().shownProgress());
+    }
+
+    @Test
+    void hoverAfterAnotherActionGetsTheNormalPopup() throws Exception {
+        shared.setFormulaRecognizer(image -> "1+1=");
+        openBoard();
+        writeWithEquals();
+        waitPopup("1+1=");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        onEdt(() -> canvas.setTool(DrawingCanvas.Tool.PEN));
+        waitFor(() -> page.visiblePopup() == null, "popup closed");
+        hover(130, 125);
+        waitPopup("1+1=");
+        assertFalse(popup().isPick());
+    }
+
+    private boolean successIs(String start) {
+        String done = page.notices().lastSuccess();
+        return done != null && done.startsWith(start);
+    }
+
+    // calculate / define results from here on
+    private AtomicInteger countResults() {
+        AtomicInteger results = new AtomicInteger();
+        viewModel.addPropertyChangeListener(e -> {
+            if (MathLabViewModel.RESULT.equals(e.getPropertyName())) {
+                results.incrementAndGet();
+            }
+        });
+        return results;
+    }
+
+    @Test
+    void recognizeSendsToHistory() throws Exception {
+        boardPickFor("3+4");
+        clickInPick("Recognize");
+        waitFor(() -> sent.equals(List.of("3+4|")), "sent, no answer");
+        assertTrue(successIs("Added to History"));
+        assertNull(popup());
+    }
+
+    @Test
+    void recognizeTwiceSendsOnce() throws Exception {
+        boardPickFor("3+4");
+        clickInPick("Recognize");
+        waitFor(() -> sent.size() == 1, "sent");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        clickInPick("Recognize");
+        waitFor(() -> successIs("Already in History"), "already there");
+        assertEquals(List.of("3+4|"), sent);
+    }
+
+    @Test
+    void lassoedDefinitionWaitsForRecognize() throws Exception {
+        AtomicInteger results = countResults();
+        shared.setFormulaRecognizer(image -> "f(x)=x^{2}");
+        openBoard();
+        checkDefinitions();
+        write();
+        waitPopup("f(x)=x^{2}");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        assertLit(false, true, true, false);
+        Thread.sleep(200);
+        assertEquals(0, results.get(), "no auto-save");
+        clickInPick("Recognize");
+        waitFor(() -> results.get() == 1, "saved on Recognize");
+    }
+
+    @Test
+    void recognizeBringsAnOlderDefinitionBack() throws Exception {
+        AtomicReference<String> latex = new AtomicReference<>("f(x)=x^{2}");
+        shared.setFormulaRecognizer(image -> latex.get());
+        AtomicInteger results = countResults();
+        openBoard();
+        checkDefinitions();
+        write();
+        waitPopup("f(x)=x^{2}");
+        clickRecognize();
+        waitFor(() -> results.get() == 1, "x^2 saved");
+        latex.set("f(x)=x^{3}");
+        drag(400, 300, 420, 330);
+        waitPopup("f(x)=x^{3}");
+        clickRecognize();
+        waitFor(() -> results.get() == 2, "x^3 saved");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        assertEquals("f(x)=x^{2}", popup().getLatex(), "old read");
+        clickInPick("Recognize");
+        waitFor(() -> results.get() == 3, "x^2 back");
+        latex.set("f(2)=");
+        onEdt(() -> canvas.setTool(DrawingCanvas.Tool.PEN));
+        drag(700, 420, 720, 450);
+        waitPopup("f(2)=");
+        clickCalculate();
+        waitFor(() -> answerIs("4"), "f(2) with the old f");
+    }
+
+    @Test
+    void answeredFormulaStillGetsTheLassoPopup() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        shared.setFormulaRecognizer(image -> {
+            calls.incrementAndGet();
+            return "1+1=";
+        });
+        openBoard();
+        write();
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> answerIs("2"), "the answer");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        assertLit(false, false, true, false);
+        assertEquals(1, calls.get(), "not read again");
+        assertTrue(answerIs("2"));
+    }
+
+    @Test
+    void pickOverTwoAnsweredFormulasStaysQuiet() throws Exception {
+        shared.setFormulaRecognizer(image -> "1+1=");
+        openBoard();
+        writeWithEqualsAt(100, 100);
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> canvas.getAnswers().size() == 1, "first answer");
+        writeWithEqualsAt(400, 100);
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> canvas.getAnswers().size() == 2, "both answered");
+        lasso(80, 80, 520, 170);
+        Thread.sleep(400);
+        assertNull(popup());
+    }
+
+    // popup's visible part, canvas area coords
+    private Rectangle seenPopup() throws Exception {
+        AtomicReference<Rectangle> seen = new AtomicReference<>();
+        onEdt(() -> seen.set(page.visiblePopup().visibleBounds()));
+        return seen.get();
+    }
+
+    @Test
+    void lassoPopupFitsANarrowBoard() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        shared.setFormulaRecognizer(image -> {
+            calls.incrementAndGet();
+            return "y'=x-y";
+        });
+        openBoard();
+        onEdt(() -> {
+            page.setSize(300, 560);  // History + PDF open
+            layout(page);
+        });
+        write();
+        waitFor(() -> calls.get() == 1, "the first read");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        Rectangle seen = seenPopup();
+        assertTrue(seen.x >= 0 && seen.x + seen.width <= page.boardArea().getWidth(),
+                "whole capsule on the canvas: " + seen);
+    }
+
+    @Test
+    void answeredPickPopupLeavesTheAnswerVisible() throws Exception {
+        shared.setFormulaRecognizer(image -> "1+1=");
+        openBoard();
+        write();
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> answerIs("2"), "the answer");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        AtomicReference<Rectangle> answer = new AtomicReference<>();
+        onEdt(() -> answer.set(SwingUtilities.convertRectangle(canvas,
+                shared.worldToScreen(canvas.getAnswers().get(0).getBox().getBounds()).getBounds(),
+                page.boardArea())));
+        assertFalse(seenPopup().intersects(answer.get()), "popup off the answer");
+    }
+
+    private boolean movedRight() {
+        return shared.formulaBounds(shared.getFormulas().get(0).getId()).x > 200;
+    }
+
+    @Test
+    void movedPickKeepsFourButtons() throws Exception {
+        boardPickFor("3+4");
+        drag(150, 120, 300, 300);  // drag the lassoed formula away
+        waitPick();
+        assertTrue(movedRight(), "it moved");
+        assertLit(true, false, true, false);
+    }
+
+    @Test
+    void movedAnsweredPickKeepsFourButtons() throws Exception {
+        shared.setFormulaRecognizer(image -> "1+1=");
+        openBoard();
+        write();
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> answerIs("2"), "the answer");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        drag(150, 120, 300, 300);
+        waitPick();
+        assertTrue(movedRight(), "it moved");
+        assertLit(false, false, true, false);
+        assertTrue(answerIs("2"), "answer came along");
     }
 
     // faint "=" chip, null when not up
@@ -1208,8 +1492,11 @@ class AnswerCanvasPageTest {
     @Test
     void lassoDragFromTheFaintEqualsAddsNoStroke() throws Exception {
         chipShown();
-        lasso(80, 80, 220, 170);
-        drag(150, 120, 150, 320);  // moved, chip comes back by it
+        drag(400, 100, 500, 150);  // 2nd formula, moving both isn't a one-formula pick
+        waitFaint();
+        onEdt(() -> page.setPopupDelay(400));
+        lasso(80, 80, 520, 170);
+        drag(150, 120, 150, 320);  // moved before the pick's pause, chip comes back
         waitFaint();
         int before = strokeCount();
         dragFrom(faint(), 0, 40);
@@ -1261,25 +1548,6 @@ class AnswerCanvasPageTest {
         drag(130, 125, 330, 275);
         Thread.sleep(400);
         assertNull(popup());
-    }
-
-    @Test
-    void reusedReadStillWaitsForThePendingDefinition() throws Exception {
-        shared.setFormulaRecognizer(image -> image.getHeight() < 200 ? "1+1" : "f(x)=x^{2}+2x");
-        AtomicInteger results = new AtomicInteger();
-        viewModel.addPropertyChangeListener(e -> {
-            if (MathLabViewModel.RESULT.equals(e.getPropertyName())) {
-                results.incrementAndGet();
-            }
-        });
-        openPage();
-        autoDefine();
-        onEdt(() -> page.setPopupDelay(400));
-        write();                   // f(x)=...
-        drag(400, 300, 420, 330);  // 1+1 right after, no pause
-        waitFor(this::definedShown, "the Defined message");
-        Thread.sleep(500);
-        assertEquals(1, results.get(), "saved once");
     }
 
     private static final class NoPhaseExplore implements use_case.explore_phase.ExplorePhaseInputBoundary {

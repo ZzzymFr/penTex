@@ -1,11 +1,15 @@
 package use_case.graph_function;
 
+import entity.ImplicitSurface;
+import entity.ImplicitSurfaceReader;
 import entity.LatexFunctionParser;
 import entity.LatexParseException;
 import entity.MathFunction;
 import entity.SurfaceFunction;
+import entity.graph.AutoBox;
 import entity.graph.AutoRange;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitPlot;
 import entity.graph.Plot;
 import entity.graph.SurfacePlot;
 import entity.graph.Viewport;
@@ -16,13 +20,20 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
     static final int RANGE_SAMPLES = 400;
 
     private final LatexFunctionParser parser;
+    private final ImplicitSurfaceReader surfaces;   // x y z equations
     private final GraphSessionDataAccessInterface session;
     private final GraphFunctionOutputBoundary presenter;
     private final PlotPublisher publisher;
 
     public GraphFunctionInteractor(LatexFunctionParser parser, GraphSessionDataAccessInterface session,
                                    GraphFunctionOutputBoundary presenter) {
+        this(parser, new ImplicitSurfaceReader(), session, presenter);
+    }
+
+    public GraphFunctionInteractor(LatexFunctionParser parser, ImplicitSurfaceReader surfaces,
+                                   GraphSessionDataAccessInterface session, GraphFunctionOutputBoundary presenter) {
         this.parser = parser;
+        this.surfaces = surfaces;
         this.session = session;
         this.presenter = presenter;
         this.publisher = new PlotPublisher(presenter);
@@ -61,9 +72,31 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
         try {
             return surface(parser.parseSurface(latex), input);
         } catch (LatexParseException e) {
+            // not z = f(x,y) either, maybe an x y z equation
+        }
+        try {
+            return implicit(surfaces.read(latex), input);
+        } catch (LatexParseException e) {
             presenter.prepareFailView("Cannot graph \"" + latex + "\": " + curveError.getMessage());
             return null;
         }
+    }
+
+    // default range -> box fits the surface (sphere fills it), typed range -> that floor as is
+    private Plot implicit(ImplicitSurface f, GraphFunctionInputData input) {
+        double yMin = input.isYAutomatic() ? input.getXMin() : input.getYMin();
+        double yMax = input.isYAutomatic() ? input.getXMax() : input.getYMax();
+        Viewport floor = new Viewport(input.getXMin(), input.getXMax(), yMin, yMax);
+        boolean untouched = input.isYAutomatic() && input.getXMin() == GraphFunctionInputData.DEFAULT_X_MIN
+                && input.getXMax() == GraphFunctionInputData.DEFAULT_X_MAX;
+        ImplicitPlot plot = untouched ? AutoBox.around(f, floor) : AutoBox.within(f, floor);
+        if (plot.getMesh().isEmpty()) {
+            presenter.prepareFailView("\"" + f.getLatex() + "\" has no points in x in [" + floor.getXMin() + ", "
+                    + floor.getXMax() + "], y in [" + yMin + ", " + yMax + "], z in [" + plot.getZMin() + ", "
+                    + plot.getZMax() + "].");
+            return null;
+        }
+        return plot;
     }
 
     private Plot curve(MathFunction f, GraphFunctionInputData input) {

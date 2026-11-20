@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 // answer page: pause after an "=" -> popup with the read formula -> Calculate -> answer on the canvas
@@ -57,6 +56,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private long targetId = -1;       // an edited formula, or
     private boolean targetEdited;     // its ink changed (not just moved), regroups w/ guesses next to it
     private boolean targetPick;       // the lasso pick
+    private long pickedId = -1;       // board: formula the lasso picked, gets all 4 buttons
     private long generation;          // bumps on every user action, old results check it
     private FormulaCapture shown;     // formula the popup is about
     private final GlassPageNotices notices = new GlassPageNotices(this);
@@ -68,7 +68,6 @@ public class AnswerCanvasPage extends CanvasPage {
     private Predicate<String> differential = latex -> false;
     private PopupHover hover;         // mouse on an unanswered "=" brings the popup back
     private final Map<Long, Read> reads = new HashMap<>();  // last read per formula
-    private final Map<Long, Long> defined = new HashMap<>();  // id -> revision saved as a f(x)=...
     private Predicate<String> graphable = latex -> false;
     private Predicate<String> definitionCheck = latex -> false;
     private Predicate<String> calculable = latex -> true;
@@ -207,7 +206,7 @@ public class AnswerCanvasPage extends CanvasPage {
         addCanvasOverlay(overlay);
     }
 
-    // f(x)=... lines get saved right away, no Calculate click
+    // f(x)=... lines get a Recognize button, saved only when clicked
     public void setDefinitionCheck(Predicate<String> definitionCheck) {
         this.definitionCheck = definitionCheck;
     }
@@ -286,6 +285,10 @@ public class AnswerCanvasPage extends CanvasPage {
     private void formulaMoved(long id) {
         hover.forgetSpot(id);
         Formula f = formula(id);
+        if (graphing != null && getSharedCanvas().selectionIsFormula(id)) {
+            picked();  // board: still the lasso pick after the move, 4 buttons again
+            return;
+        }
         if (!inFront() || f == null || f.getAnswer() != null) {
             return;  // answered ones stay quiet, don't let one steal the target
         }
@@ -313,6 +316,7 @@ public class AnswerCanvasPage extends CanvasPage {
     }
 
     private void restartPause() {
+        pickedId = -1;
         hidePopup();
         generation++;
         pauseTimer.restart();
@@ -324,6 +328,7 @@ public class AnswerCanvasPage extends CanvasPage {
         targetStroke = null;
         targetId = -1;
         targetPick = false;
+        pickedId = -1;
         generation++;
         hidePopup();
     }
@@ -354,8 +359,12 @@ public class AnswerCanvasPage extends CanvasPage {
         FormulaCapture capture = null;
         if (targetPick) {
             capture = getSharedCanvas().registerSelection();
+            if (capture == null && graphing != null) {
+                capture = getSharedCanvas().capturePickedAnswered();  // board: answered ones too
+            }
             if (capture != null) {
                 gate.picked(capture.getId());
+                pickedId = graphing != null ? capture.getId() : -1;
             }
         } else if (targetStroke != null) {
             capture = getSharedCanvas().registerNewInk(targetStroke, session);
@@ -379,7 +388,6 @@ public class AnswerCanvasPage extends CanvasPage {
             capture = nextWaiting();  // a pick is on purpose, never swap in another formula
         }
         if (capture != null) {
-            readAhead();
             recognize(capture, generation);
         }
     }
@@ -428,16 +436,6 @@ public class AnswerCanvasPage extends CanvasPage {
             return;  // ink changed while we were reading it
         }
         reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));  // for hovering later
-        if (problem == null && definitionCheck.test(latex)) {
-            define(capture, latex, saved -> {
-                if (!saved) {
-                    offer(capture, gen, latex, problem);  // bad body, popup's Calculate shows why
-                } else if (gen == generation && inFront()) {
-                    offerNext(gen);
-                }
-            });
-            return;
-        }
         offer(capture, gen, latex, problem);
     }
 
@@ -465,48 +463,6 @@ public class AnswerCanvasPage extends CanvasPage {
         }
     }
 
-    // read the queued ones now too, so a f(x)=... among them is saved before the newest gets Calculate
-    private void readAhead() {
-        for (long id : waiting) {
-            FormulaCapture capture = getSharedCanvas().captureForRecalculation(id);
-            Read r = reads.get(id);
-            if (capture == null || r != null && r.revision == capture.getRevision()) {
-                continue;  // answered, or read already
-            }
-            worker.recognize(() -> reader.read(capture), (latex, problem) -> {
-                if (!getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
-                    return;
-                }
-                reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));
-                if (problem == null && definitionCheck.test(latex)) {
-                    define(capture, latex, saved -> { });  // its popup comes later in turn
-                }
-            });
-        }
-    }
-
-    private boolean isDefined(long id, long revision) {
-        return Objects.equals(defined.get(id), revision);
-    }
-
-    // save f(x)=... quietly; saved=false means the body was bad
-    private void define(FormulaCapture capture, String latex, Consumer<Boolean> then) {
-        if (isDefined(capture.getId(), capture.getRevision())) {
-            then.accept(true);  // same ink saved already
-            return;
-        }
-        worker.calculate(latex, outcome -> {
-            if (!outcome.definition) {
-                then.accept(false);
-                return;
-            }
-            defined.put(capture.getId(), capture.getRevision());
-            notices.success(outcome.result, outcome.definedLatex);
-            publishFormulaOnly(capture, latex);  // saved = done, so PDF Studio gets it
-            then.accept(true);
-        });
-    }
-
     private Formula formula(long id) {
         for (Formula f : getSharedCanvas().getFormulas()) {
             if (f.getId() == id) {
@@ -522,6 +478,10 @@ public class AnswerCanvasPage extends CanvasPage {
             hidePopup();
             showError(capture, "Can't read formula", problem);
             return;
+        } else if (capture.getId() == pickedId) {
+            showPick(capture, latex);
+        } else if (definitionCheck.test(latex)) {
+            popup.showRecognize(latex, () -> saveToHistory(capture, latex));  // f(x)=... saves only if asked
         } else if (phase != null && differential.test(latex)) {
             popup.showFormula(latex, null, null, () -> phasePortrait(capture, latex));
         } else if (graphing != null) {
@@ -537,6 +497,31 @@ public class AnswerCanvasPage extends CanvasPage {
         placePopup();
     }
 
+    // lasso: all 4, gray where it doesn't fit; Calculate stays lit if nothing else is, it says why
+    private void showPick(FormulaCapture capture, String latex) {
+        Formula f = formula(capture.getId());
+        boolean canGraph = graphable.test(latex);
+        boolean canPhase = phase != null && differential.test(latex);
+        boolean canCalc = (f == null || f.getAnswer() == null)
+                && (calculable.test(latex) || !canGraph && !canPhase);
+        popup.showPick(latex, canCalc ? () -> calculate(capture, latex) : null,
+                canGraph ? () -> graph(capture, latex) : null,
+                () -> saveToHistory(capture, latex),
+                canPhase ? () -> phasePortrait(capture, latex) : null);
+    }
+
+    // Recognize: f(x)=... saves like Calculate (again, so an older f wins back), the rest just goes to History
+    private void saveToHistory(FormulaCapture capture, String latex) {
+        if (definitionCheck.test(latex)) {
+            calculate(capture, latex);
+            return;
+        }
+        hidePopup();
+        boolean sentAlready = Objects.equals(exportedRevisions.get(capture.getId()), capture.getRevision());
+        publishFormulaOnly(capture, latex);
+        notices.success(sentAlready ? "Already in History" : "Added to History", latex);
+    }
+
     private void placePopup() {
         if (shown == null || !popup.isVisible()) {
             return;
@@ -550,6 +535,12 @@ public class AnswerCanvasPage extends CanvasPage {
         Rectangle f = toArea(world);
         Rectangle eqWorld = hover.equalsOf(shown.getId());
         Rectangle eq = eqWorld == null ? null : toArea(eqWorld);
+        Formula answered = formula(shown.getId());
+        if (answered != null && answered.getAnswer() != null) {
+            f = f.union(toArea(answered.getAnswer().getBox().getBounds()));  // lasso'd answered one: keep the answer clear
+            eq = null;
+        }
+        popup.fitWidth(area.getWidth());
         popup.setBounds(popup.spotBeside(f, eq, area.getWidth(), area.getHeight()));
         area.repaint();
     }

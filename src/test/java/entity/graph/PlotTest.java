@@ -57,6 +57,11 @@ class PlotTest {
             public String visitSurface(SurfacePlot plot) {
                 return "3d";
             }
+
+            @Override
+            public String visitImplicit(ImplicitPlot plot) {
+                return "3d";
+            }
         });
         assertEquals("2d", kind);
     }
