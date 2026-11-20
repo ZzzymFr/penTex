@@ -137,6 +137,13 @@ final class GraphCardRenderer {
         });
     }
 
+    // live 3d card: same frame + header, but the plot comes from the caller (a picture the render thread made)
+    static void paintLiveSurface(Graphics2D g0, GraphState s, double w, double h, int hotButton, Dimension controls,
+                                 PlotLayer plot) {
+        paintCard(g0, w, h, s.getLatex(), badge(s), GraphTheme.surface(0, 1, 255), GraphTheme.surface(1, 1, 255),
+                true, hotButton, controls, plot);
+    }
+
     // the card itself: rounded white body, plot, header w/ dot + typeset title + badge + buttons, grip
     static void paintCard(Graphics2D g0, double w, double h, String latex, String badge, Color dotLow, Color dotHigh,
                           boolean live, int hotButton, PlotLayer layer) {

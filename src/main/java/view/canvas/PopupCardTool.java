@@ -326,7 +326,12 @@ abstract class PopupCardTool<K> {
             }
             int w = (int) Math.max(2, Math.round(on.getWidth() * 2));
             int h = (int) Math.max(2, Math.round(on.getHeight() * 2));
-            canvas.getDrawingCanvas().replaceGraphImage(this, card.snapshot(w, h));
+            // 3d cards draw this on their render thread, card may be gone by the time it lands
+            card.snapshotLater(w, h, image -> {
+                if (onCanvas()) {
+                    canvas.getDrawingCanvas().replaceGraphImage(this, image);
+                }
+            });
         }
 
         // card + range boxes over this graph's canvas card
