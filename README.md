@@ -24,7 +24,7 @@ penTex is a Java Swing desktop app for students who would rather write math than
 
 **Specification (for noun/verb analysis).** A *student* draws *strokes* on a *canvas*. Strokes are grouped into *formulas*, and each formula is *recognized* as a LaTeX string. A formula can be *calculated*: evaluated to a *value*, solved as an equation or inequality in one unknown, differentiated, or saved as a *user-defined function* such as f(x) = x². The *answer* is shown next to the formula. A formula of the form y = … or f(x) = … can be *graphed* over an x range. Every calculation, defined function and graph becomes a *history entry* that is kept between sessions. History entries and canvas selections become *materials*, which the student places on the *pages* of a *PDF document* and exports. The whole canvas can be *saved* under a name and *reopened* later.
 
-**What the calculator supports:** arithmetic, fractions, powers and roots, trig, inverse trig and hyperbolic functions, log / ln / exp, ±, user-defined functions, derivatives (at a point and symbolic d/dx), limits, sums and products, equations and inequalities in one unknown, vectors, sets, and logic (∧, ∨, ¬, ⇒, ∀, ∃). Integrals are recognized but not calculated yet.
+**What the calculator supports:** arithmetic, fractions, powers and roots, trig, inverse trig and hyperbolic functions, log / ln / exp, ±, user-defined functions, derivatives (at a point and symbolic d/dx), limits, sums and products, equations and inequalities in one unknown, vectors, sets, and logic (∧, ∨, ¬, ⇒, ∀, ∃). Integrals (∫ f(x) dx on its own, with or without finite bounds) use the Newton API.
 
 ---
 
@@ -101,7 +101,7 @@ The actor in every use case is the **student**.
 **Alternative flows:**
 - **Function definition:** `f(x)=x^2` is stored and confirmed in a card. Later formulas can use `f`, e.g. `f(3)=` gives `9`.
 - **Invalid formula:** for input such as `3+=`, `x+1` (x has no value) or two unknowns, the system shows an *Invalid formula* card with a one-line reason.
-- **Can't calculate:** for valid input outside what the calculator handles (integrals, numbers too large, too much work), the system shows a *Can't calculate* card with a short reason.
+- **Can't calculate:** for valid input outside what the calculator handles (an integral mixed into a bigger expression, numbers too large, too much work), the system shows a *Can't calculate* card with a short reason.
 - **Graph only:** `y=3x` is a function to graph, not a question, so the popup offers only **Graph**.
 
 **Main classes:** `EvaluateController`, `EvaluateInteractor` (with `EvaluateInputBoundary`, `EvaluateOutputBoundary`, `EvaluateInputData` and the output data classes), `FunctionDataAccessInterface` / `InMemoryFunctionDataAccessObject`, `EvaluatePresenter`, `MathLabViewModel`. `CalculateCheckInteractor`, `DefinitionCheckInteractor` and `QuestionCheckInteractor` decide which buttons the popup offers.
@@ -278,6 +278,16 @@ One saved formula, calculation or graph. It is an immutable record.
 
 ## API Usage
 
+### Integrals (Newton API)
+
+Documentation: https://github.com/aunyks/newton-api
+
+Integrals are the one thing we don't calculate ourselves. Newton is free and needs no key. When the formula is a single `∫ f dx` (bounds optional, `=` at the end optional), `IntegralRouter` sends it to `IntegrateInteractor` instead of the normal evaluate use case. The interactor only knows the `AntiderivativeGateway` interface; `NewtonAntiderivativeGateway` (`data_access.newton`) implements it by turning the LaTeX into plain input and calling `https://newton.vercel.app/api/v2/integrate/<expression>`, which returns the antiderivative F as JSON (`{"result":"1/3 x^3"}`). That gets turned back into LaTeX for the canvas.
+
+- **Indefinite:** the answer is F + C.
+- **Definite:** we only ask Newton for F and work out F(b) − F(a) with our own calculator (`entity.integral.DefiniteIntegral`). Newton's own `area` endpoint gives wrong numbers (it says ∫₀¹ x dx = 1), so we don't use it. Before that, the integrand is sampled between the bounds, so something like ∫₋₁¹ 1/x² dx says *Undefined between the bounds* instead of a wrong −2.
+- Newton always integrates in x, so for `dt` the gateway swaps t and x on the way in and back on the way out. Newton's `log` is the natural log, so `\log` (base 10 here) is sent as `log(x)/log(10)`.
+
 ### Graphing (no web API)
 
 Graphs and phase portraits are computed and drawn in plain Java (Java2D), so they work offline. Earlier versions sent the sampled points to the QuickChart web API and showed the PNG it returned; that was replaced so the graph could be a live card (hover values, pan, zoom, move) instead of a still picture.
@@ -452,7 +462,7 @@ mvn compile exec:java
 mvn test
 ```
 
-All 1437 tests passed on 2026-11-18.
+All 1509 tests passed on 2026-11-19.
 
 **Using it:**
 - Write a formula ending in "=" and pause. Click **Calculate** or **Graph** in the popup.
@@ -472,15 +482,15 @@ All 1437 tests passed on 2026-11-18.
 
 | Layer | Packages |
 |---|---|
-| Entities | `entity`, `entity.graph`, `entity.phase`, `entity.node`, `entity.value`, `entity.symbolic`, `entity.calculus`, `history.domain`, `workspace.domain`, `pdf_editor.domain` |
-| Use cases | `use_case.evaluate`, `use_case.graph_function`, `use_case.explore_graph`, `use_case.graph_check`, `use_case.phase_portrait`, `use_case.explore_phase`, `use_case.phase_check`, `history.use_case`, `workspace.use_case`, `pdf_editor.use_case` |
+| Entities | `entity`, `entity.integral`, `entity.graph`, `entity.phase`, `entity.node`, `entity.value`, `entity.symbolic`, `entity.calculus`, `history.domain`, `workspace.domain`, `pdf_editor.domain` |
+| Use cases | `use_case.evaluate`, `use_case.integrate`, `use_case.graph_function`, `use_case.explore_graph`, `use_case.graph_check`, `use_case.phase_portrait`, `use_case.explore_phase`, `use_case.phase_check`, `history.use_case`, `workspace.use_case`, `pdf_editor.use_case` |
 | Interface adapters | `interface_adapter.*`, `history.adapter`, `pdf_editor.adapter` |
-| Frameworks & drivers | `data_access`, `history.data_access`, `workspace.data_access`, `pdf_editor.data_access`, `view.*`, `pdf_editor.view`, `model` (DJL runtime) |
+| Frameworks & drivers | `data_access`, `data_access.newton`, `history.data_access`, `workspace.data_access`, `pdf_editor.data_access`, `view.*`, `pdf_editor.view`, `model` (DJL runtime) |
 | Wiring | `app.java`, `app.StackedAppBuilder` |
 
 ### Handwriting model
 The recognizer (`model.vital_mini`) is a CNN followed by transformer encoder and decoder layers. It outputs LaTeX tokens from a 234-token vocabulary and decodes with beam search. It was trained in Python with PyTorch. The training code, datasets and notes are in `src/neutral network/` (see `DATASETS.md` and `TRAIN_DECODER.md` there). The exported weights are in `src/main/java/model/checkpoints/`. Python is only needed to retrain the model, not to run the app.
 
 ### Known limitations
-- Integrals are recognized but not calculated.
+- Integrals need an internet connection. Only a lone `∫ f dx` is sent (not `2∫x dx + 1`), bounds must be finite, and Newton times out on some harder integrals (e.g. √(1 − x²)).
 - Uploading a photo (from US1) is not implemented yet. Recognition works on canvas ink only.

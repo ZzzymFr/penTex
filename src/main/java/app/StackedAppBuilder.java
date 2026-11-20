@@ -1,6 +1,13 @@
 package app;
 
 import data_access.InMemoryFunctionDataAccessObject;
+import data_access.newton.JdkNewtonHttp;
+import data_access.newton.NewtonAntiderivativeGateway;
+import interface_adapter.integrate.IntegratePresenter;
+import use_case.integrate.IntegralCalculateCheck;
+import use_case.integrate.IntegralRouter;
+import use_case.integrate.AntiderivativeGateway;
+import use_case.integrate.IntegrateInteractor;
 import history.data_access.FileHistoryRepository;
 import history.use_case.HistoryInteractor;
 import history.adapter.HistoryBoardPresenter;
@@ -102,9 +109,13 @@ public class StackedAppBuilder {
         // evaluate
         MathLabViewModel mathViewModel = new MathLabViewModel();
         InMemoryFunctionDataAccessObject functions = new InMemoryFunctionDataAccessObject();
-        EvaluateController evaluate = new EvaluateController(new EvaluateInteractor(
-                functions, new EvaluatePresenter(mathViewModel)));
-        CalculateCheckController calculateCheck = new CalculateCheckController(new CalculateCheckInteractor(functions));
+        // integrals: newton api finds F, everything else still goes to our own evaluate
+        AntiderivativeGateway integralSolver = new NewtonAntiderivativeGateway(new JdkNewtonHttp());
+        EvaluateController evaluate = new EvaluateController(new IntegralRouter(
+                new IntegrateInteractor(integralSolver, new IntegratePresenter(mathViewModel)),
+                new EvaluateInteractor(functions, new EvaluatePresenter(mathViewModel))));
+        CalculateCheckController calculateCheck = new CalculateCheckController(
+                new IntegralCalculateCheck(new CalculateCheckInteractor(functions)));
         DefinitionCheckController definitionCheck = new DefinitionCheckController(new DefinitionCheckInteractor());
         QuestionCheckController questionCheck = new QuestionCheckController(new QuestionCheckInteractor());
 
@@ -174,8 +185,10 @@ public class StackedAppBuilder {
         MathLabViewModel historyEditModel = new MathLabViewModel();
         pdf_editor.adapter.HistoryFormulaCalculator historyEditCalculator =
                 new pdf_editor.adapter.HistoryFormulaCalculator(
-                        new EvaluateController(new EvaluateInteractor(
-                                functions, new EvaluatePresenter(historyEditModel))), historyEditModel);
+                        new EvaluateController(new IntegralRouter(
+                                new IntegrateInteractor(integralSolver, new IntegratePresenter(historyEditModel)),
+                                new EvaluateInteractor(functions, new EvaluatePresenter(historyEditModel)))),
+                        historyEditModel);
         pdfStudio.setFormulaRecalculator(historyEditCalculator::calculate);
         CanvasHistoryEditMenu.install(drawing, (latex, result) ->
                 pdf_editor.data_access.MaterialRenderer.render(
@@ -230,7 +243,7 @@ public class StackedAppBuilder {
         // Save/Open are separate use-case commands; the board knows only the callbacks.
         java.util.concurrent.atomic.AtomicReference<CanvasWorkspaceDialogs> dialogs = new java.util.concurrent.atomic.AtomicReference<>();
         BoardWindow board = new BoardWindow(page, drawing,
-                host -> new HistoryPanel(historyViewModel, host, historyPresenter::undoDelete),
+                host -> new HistoryPanel(historyViewModel, host, (java.util.function.BooleanSupplier) historyPresenter::clearAll),
                 pdfPanel, historyPresenter::delete,
                 () -> dialogs.get().save(), () -> dialogs.get().saveAs(),
                 () -> dialogs.get().open());

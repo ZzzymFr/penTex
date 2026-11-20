@@ -12,10 +12,10 @@ class SelectedInkRegistryTest {
         for(var l:canvas.getMouseMotionListeners())l.mouseDragged(new MouseEvent(canvas,MouseEvent.MOUSE_DRAGGED,2,0,65,70,1,false,0));
         for(var l:canvas.getMouseListeners())l.mouseReleased(new MouseEvent(canvas,MouseEvent.MOUSE_RELEASED,3,0,65,70,1,false,1));
     }
-    @Test void eraseOrClearRemovesTrackedMaterial() {
+    @Test void eraseOrClearPreservesArchivedMaterial() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);
         MathLibrary library=new MathLibrary();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
-        var item=library.addFormula("x");tracker.track(item.id(),c.getStrokes());c.clear();assertNull(library.find(item.id()));
+        var item=library.addFormula("x");tracker.track(item.id(),c.getStrokes());c.clear();assertNotNull(library.find(item.id()));
     }
     @Test void trackedMaterialsSurviveUnrelatedInkChanges() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);

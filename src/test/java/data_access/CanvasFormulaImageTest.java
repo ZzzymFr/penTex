@@ -55,7 +55,7 @@ class CanvasFormulaImageTest {
     void handwrittenLineFillsTheModelLineHeight() {
         DrawingCanvas canvas = canvas();
         onePlusOne(canvas, 100, 100);
-        BufferedImage out = FormulaImagePreprocessor.prepare(canvas.toFormulaImage());
+        BufferedImage out = FormulaImagePreprocessor.prepare(canvas.toFormulaImage(), BandRule.TALLEST_BAND);
         assertEquals(128, out.getHeight());
         int[] rows = inkRows(out);
         assertTrue(rows[1] - rows[0] + 1 >= 105, "line is " + (rows[1] - rows[0] + 1) + " px");
@@ -69,8 +69,8 @@ class CanvasFormulaImageTest {
         DrawingCanvas zoomed = canvas();
         onePlusOne(zoomed, 100, 100);
         zoomed.zoomAt(0, 0, 3);
-        BufferedImage a = FormulaImagePreprocessor.prepare(plain.toFormulaImage());
-        BufferedImage b = FormulaImagePreprocessor.prepare(zoomed.toFormulaImage());
+        BufferedImage a = FormulaImagePreprocessor.prepare(plain.toFormulaImage(), BandRule.TALLEST_BAND);
+        BufferedImage b = FormulaImagePreprocessor.prepare(zoomed.toFormulaImage(), BandRule.TALLEST_BAND);
         assertEquals(a.getWidth(), b.getWidth());
         for (int y = 0; y < a.getHeight(); y++) {
             for (int x = 0; x < a.getWidth(); x++) {
@@ -86,8 +86,8 @@ class CanvasFormulaImageTest {
         DrawingCanvas two = canvas();
         onePlusOne(two, 100, 100);
         onePlusOne(two, 100, 200);
-        BufferedImage single = FormulaImagePreprocessor.prepare(one.toFormulaImage());
-        BufferedImage both = FormulaImagePreprocessor.prepare(two.toFormulaImage());
+        BufferedImage single = FormulaImagePreprocessor.prepare(one.toFormulaImage(), BandRule.TALLEST_BAND);
+        BufferedImage both = FormulaImagePreprocessor.prepare(two.toFormulaImage(), BandRule.TALLEST_BAND);
         assertEquals(single.getWidth(), both.getWidth(), "same scale, so same width");
         assertTrue(both.getHeight() > single.getHeight() + 112, "canvas grew instead: " + both.getHeight());
     }
@@ -96,7 +96,7 @@ class CanvasFormulaImageTest {
     void loneMinusFromTheCanvasStaysThin() {
         DrawingCanvas canvas = canvas();
         stroke(canvas, 100, 100, 140, 102);
-        BufferedImage out = FormulaImagePreprocessor.prepare(canvas.toFormulaImage());
+        BufferedImage out = FormulaImagePreprocessor.prepare(canvas.toFormulaImage(), BandRule.TALLEST_BAND);
         assertEquals(128, out.getHeight());
         int[] rows = inkRows(out);
         assertTrue(rows[1] - rows[0] + 1 <= 30, "minus is " + (rows[1] - rows[0] + 1) + " px thick");

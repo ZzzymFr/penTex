@@ -40,6 +40,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private final GlassBar historyClose;
     private final GlassBar pdfBar;
     private final GlassBar pdfClose;
+    private final GlassBar fullscreenExit;
     private final Ghost ghost = new Ghost();
     private final JComponent titleStrip;
     private boolean historyOpen;
@@ -88,6 +89,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
                        Runnable saveCanvas, Runnable saveAsCanvas, Runnable openCanvas) {
         super(null);
         saveStateDebounce.setRepeats(false);
+        saveStatusChip.setGlassBackdrop(this::paintBackdrop, this::backdropVersion);
         saveStatusChip.setRenameAction(() -> {
             openCanvas.run(); // Open's existing glass chooser exposes Rename; no shared wiring changes.
             refreshSaveState();
@@ -144,10 +146,15 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         pdfClose = bar(15f);
         pdfClose.action(null, Icons::close, () -> setPdfOpen(false), () -> true);
         pdfClose.finish();
+        fullscreenExit = bar(15f);
+        fullscreenExit.action(null, Icons::close, () -> setPdfFullscreen(false), () -> true);
+        fullscreenExit.finish();
+        fullscreenExit.setToolTipText("Exit PDF fullscreen (Esc)");
         titleStrip = BoardTheme.MAC ? new TitleStrip() : null;
 
         // first added = drawn on top
         add(ghost);
+        add(fullscreenExit);
         add(saveStatusChip);
         add(historyBar);
         add(historyClose);
@@ -308,6 +315,11 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             page.setVisible(false);
             historyBar.setVisible(false);historyClose.setVisible(false);saveStatusChip.setVisible(false);
             pdfBar.setVisible(false);pdfClose.setVisible(false);
+            fullscreenExit.setVisible(true);
+            int margin = GlassBar.MARGIN;
+            Dimension closeSize = fullscreenExit.getPreferredSize();
+            fullscreenExit.setBounds(w - BoardTheme.SIDE - fullscreenExit.capsuleWidth() - margin,
+                    BoardTheme.TOP - margin, closeSize.width, closeSize.height);
             if (floatingToolbar != null) floatingToolbar.setVisible(false);
             if (titleStrip != null) titleStrip.setVisible(false);
             pdf.setBounds(0, 0, w, h);
@@ -315,6 +327,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             return;
         }
         page.setVisible(true);
+        fullscreenExit.setVisible(false);
         historyBar.setVisible(true);pdfBar.setVisible(true);
         if (floatingToolbar != null) floatingToolbar.setVisible(true);
         if (titleStrip != null) titleStrip.setVisible(true);

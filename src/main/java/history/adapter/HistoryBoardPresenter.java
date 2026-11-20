@@ -38,6 +38,14 @@ public final class HistoryBoardPresenter {
         return latex != null && latex.codePoints().anyMatch(Character::isLetterOrDigit);
     }
 
+    /** A single persistent clear command; report failures to the view for feedback. */
+    public boolean clearAll() {
+        try { history.clearAll(); return true; }
+        catch (IOException e) {
+            System.err.println("Math Lab history clear failed: " + e.getMessage());
+            return false;
+        }
+    }
     public boolean undoDelete() {
         try { return history.undoDelete(); }
         catch (IOException e) { System.err.println("Math Lab history restore failed: " + e.getMessage()); return false; }

@@ -85,6 +85,11 @@ public abstract class PlotCard extends JComponent {
     // what the card looks like right now as a picture, for saving
     public abstract BufferedImage snapshot(int width, int height);
 
+    // same picture but done may come later (slow cards draw it off the edt); done always runs on the edt
+    public void snapshotLater(int width, int height, java.util.function.Consumer<BufferedImage> done) {
+        done.accept(snapshot(width, height));
+    }
+
     /** Header scale for the card's current size, so floating controls can match the title. */
     public float headerScale() {
         return ui();

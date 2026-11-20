@@ -22,6 +22,15 @@ final class OrbitCamera {
         version++;
     }
 
+    // frozen copy for the render thread, the live one keeps spinning on the edt
+    OrbitCamera copy() {
+        OrbitCamera c = new OrbitCamera();
+        c.yaw = yaw;
+        c.pitch = pitch;
+        c.version = version;
+        return c;
+    }
+
     void reset() {
         yaw = DEFAULT_YAW;
         pitch = DEFAULT_PITCH;
