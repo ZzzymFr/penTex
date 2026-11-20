@@ -28,6 +28,7 @@ public final class GraphCard extends PlotCard {
     // scene cache: rebuilt when the data, camera or size changes
     private SurfaceScene scene;
     private double[][] sceneZ;
+    private double[][] sceneMesh;
     private int sceneCamera = -1;
     private double sceneW;
     private double sceneH;
@@ -92,10 +93,11 @@ public final class GraphCard extends PlotCard {
         if (s.getKind() != GraphState.Kind.SURFACE) {
             return null;
         }
-        if (scene == null || sceneZ != s.getZ() || sceneCamera != camera.version()
+        if (scene == null || sceneZ != s.getZ() || sceneMesh != s.getMesh() || sceneCamera != camera.version()
                 || sceneW != getWidth() || sceneH != getHeight()) {
             scene = SurfaceScene.build(s, camera, plot());
             sceneZ = s.getZ();
+            sceneMesh = s.getMesh();
             sceneCamera = camera.version();
             sceneW = getWidth();
             sceneH = getHeight();
