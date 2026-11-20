@@ -10,7 +10,9 @@ import view.answer.AnswerFont;
 import rendering.TransparentArtwork;
 
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
+import view.glass.GlassButton;
+import view.glass.GlassDialogs;
+import java.util.function.BooleanSupplier;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JComponent;
@@ -66,13 +68,22 @@ public class HistoryPanel extends JPanel {
 
     private final JPanel list = new JPanel();
     private final DragHost host;
+    private final BooleanSupplier clearAll;
+    private GlassButton clearButton;
 
     public HistoryPanel(HistoryViewModel viewModel, DragHost host) {
-        this(viewModel, host, () -> { });
+        this(viewModel, host, (BooleanSupplier) () -> false);
     }
-    public HistoryPanel(HistoryViewModel viewModel, DragHost host, Runnable undoDelete) {
+    /** Kept for old callers; the UI no longer exposes Undo Delete. */
+    @Deprecated
+    public HistoryPanel(HistoryViewModel viewModel, DragHost host, Runnable unusedUndoDelete) {
+        this(viewModel, host, (BooleanSupplier) () -> false);
+    }
+    /** The persistent clear command is injected by the composition root. */
+    public HistoryPanel(HistoryViewModel viewModel, DragHost host, BooleanSupplier clearAll) {
         super(new BorderLayout());
         this.host = host;
+        this.clearAll = java.util.Objects.requireNonNull(clearAll);
         setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setOpaque(false);
@@ -88,13 +99,15 @@ public class HistoryPanel extends JPanel {
         JLabel title = new JLabel("Saved calculations");
         title.setFont(BoardTheme.font(13f));
         header.add(title, BorderLayout.WEST);
-        JButton undo = new JButton("Undo delete");
-        undo.setFont(BoardTheme.font(11f));
-        undo.setFocusPainted(false);
-        undo.setContentAreaFilled(false);
-        undo.setBorder(BorderFactory.createEmptyBorder(4, 7, 4, 7));
-        undo.addActionListener(e -> undoDelete.run());
-        header.add(undo, BorderLayout.EAST);
+        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
+        actions.setOpaque(false);
+        clearButton = new GlassButton("Clear", 24);
+        clearButton.setFont(BoardTheme.font(11f));
+        clearButton.setName("historyClearAll");
+        clearButton.setToolTipText("Permanently delete every saved History record");
+        clearButton.addActionListener(e -> clearHistory());
+        actions.add(clearButton);
+        header.add(actions, BorderLayout.EAST);
         add(header, BorderLayout.NORTH);
         add(scroll, BorderLayout.CENTER);
         viewModel.addPropertyChangeListener(e -> {
@@ -103,6 +116,14 @@ public class HistoryPanel extends JPanel {
             }
         });
         show(viewModel.getItems());
+    }
+
+    private void clearHistory() {
+        if (!GlassDialogs.confirm(this, "Clear History",
+                "Delete all saved calculations and graphs? This cannot be undone.", "Clear All")) return;
+        if (!clearAll.getAsBoolean()) {
+            GlassDialogs.error(this, "History could not be cleared. Please check storage permissions.");
+        }
     }
 
     private void show(List<HistoryItem> items) {

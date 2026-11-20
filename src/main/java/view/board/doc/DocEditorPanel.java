@@ -1,6 +1,7 @@
 package view.board.doc;
 
 import view.glass.GlassDialogs;
+import view.glass.GlassButton;
 
 import history.adapter.HistoryMaterialMapper;
 import pdf_editor.adapter.HistoryLibraryImporter;
@@ -351,16 +352,12 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         header.add(name, BorderLayout.CENTER);
         JPanel libraryActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0));
         libraryActions.setOpaque(false);
-        // Plain text (no platform bullet/leading icon) keeps the compact Library header clean.
-        JButton undoDelete = new JButton("Undo");
-        undoDelete.setFont(BoardTheme.font(11f));
-        undoDelete.setOpaque(false);
-        undoDelete.setContentAreaFilled(false);
-        undoDelete.setFocusPainted(false);
-        undoDelete.setBorderPainted(false);
-        undoDelete.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        undoDelete.addActionListener(e -> library.undoDelete());
-        libraryActions.add(undoDelete);
+        GlassButton clearAll = new GlassButton("Clear", 24);
+        clearAll.setFont(BoardTheme.font(11f));
+        clearAll.setName("libraryClearAll");
+        clearAll.setToolTipText("Permanently clear every Library material");
+        clearAll.addActionListener(e -> clearLibrary());
+        libraryActions.add(clearAll);
         JButton close = new LibraryHeaderCloseButton(this::toggleLibrary);
         libraryActions.add(close);
         header.add(libraryActions, BorderLayout.EAST);
@@ -425,7 +422,6 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
                 if (selected != null && !selected.isGraph())
                     item(menu, "Edit formula (calculate or manual)", DocEditorPanel.this::editLibraryFormula);
                 item(menu, "Delete from Library", DocEditorPanel.this::deleteLibraryItem);
-                item(menu, "Undo Library delete", library::undoDelete);
                 menu.show(libraryList, e.getX(), e.getY());
             }
             @Override public void mousePressed(MouseEvent e) { popup(e); }
@@ -460,6 +456,13 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     private void refreshLibrary() {
         libraryModel.clear();for (MathLibrary.Material material : library.items()) libraryModel.addElement(material);
     }
+    private void clearLibrary() {
+        if (GlassDialogs.confirm(this, "Clear Library",
+                "Delete all Library materials? This cannot be undone.", "Clear All")) {
+            library.clear();
+        }
+    }
+
     private void deleteLibraryItem() {
         MathLibrary.Material selected = libraryList.getSelectedValue();
         if (selected != null) library.delete(selected.id());
