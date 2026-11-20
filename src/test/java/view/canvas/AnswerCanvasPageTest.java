@@ -1345,6 +1345,36 @@ class AnswerCanvasPageTest {
         assertFalse(seenPopup().intersects(answer.get()), "popup off the answer");
     }
 
+    private boolean movedRight() {
+        return shared.formulaBounds(shared.getFormulas().get(0).getId()).x > 200;
+    }
+
+    @Test
+    void movedPickKeepsFourButtons() throws Exception {
+        boardPickFor("3+4");
+        drag(150, 120, 300, 300);  // drag the lassoed formula away
+        waitPick();
+        assertTrue(movedRight(), "it moved");
+        assertLit(true, false, true, false);
+    }
+
+    @Test
+    void movedAnsweredPickKeepsFourButtons() throws Exception {
+        shared.setFormulaRecognizer(image -> "1+1=");
+        openBoard();
+        write();
+        waitPopup("1+1=");
+        clickCalculate();
+        waitFor(() -> answerIs("2"), "the answer");
+        lasso(80, 80, 220, 170);
+        waitPick();
+        drag(150, 120, 300, 300);
+        waitPick();
+        assertTrue(movedRight(), "it moved");
+        assertLit(false, false, true, false);
+        assertTrue(answerIs("2"), "answer came along");
+    }
+
     // faint "=" chip, null when not up
     private FaintEquals faint() throws Exception {
         AtomicReference<FaintEquals> seen = new AtomicReference<>();
@@ -1458,8 +1488,11 @@ class AnswerCanvasPageTest {
     @Test
     void lassoDragFromTheFaintEqualsAddsNoStroke() throws Exception {
         chipShown();
-        lasso(80, 80, 220, 170);
-        drag(150, 120, 150, 320);  // moved, chip comes back by it
+        drag(400, 100, 500, 150);  // 2nd formula, moving both isn't a one-formula pick
+        waitFaint();
+        onEdt(() -> page.setPopupDelay(400));
+        lasso(80, 80, 520, 170);
+        drag(150, 120, 150, 320);  // moved before the pick's pause, chip comes back
         waitFaint();
         int before = strokeCount();
         dragFrom(faint(), 0, 40);

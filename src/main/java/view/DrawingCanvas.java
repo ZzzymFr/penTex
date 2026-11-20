@@ -1611,6 +1611,13 @@ public class DrawingCanvas extends JPanel {
         return capture(mine);
     }
 
+    // lasso selection is exactly this formula's ink
+    public boolean selectionIsFormula(long id) {
+        Formula f = book.get(id);
+        Set<Stroke> picked = new HashSet<>(selectedInkSnapshot());
+        return f != null && !picked.isEmpty() && f.getStrokes().equals(picked);
+    }
+
     // pick is exactly one answered formula: its capture anyway, null if not
     public FormulaCapture capturePickedAnswered() {
         Set<Stroke> picked = new HashSet<>(selectedInkSnapshot());

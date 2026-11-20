@@ -287,6 +287,10 @@ public class AnswerCanvasPage extends CanvasPage {
     private void formulaMoved(long id) {
         hover.forgetSpot(id);
         Formula f = formula(id);
+        if (graphing != null && getSharedCanvas().selectionIsFormula(id)) {
+            picked();  // board: still the lasso pick after the move, 4 buttons again
+            return;
+        }
         if (!inFront() || f == null || f.getAnswer() != null) {
             return;  // answered ones stay quiet, don't let one steal the target
         }
