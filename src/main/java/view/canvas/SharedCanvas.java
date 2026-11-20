@@ -172,6 +172,10 @@ public class SharedCanvas {
         return canvas.captureForRecalculation(id);
     }
 
+    public FormulaCapture captureEdited(long id) {
+        return canvas.captureEdited(id);
+    }
+
     public boolean isCurrent(long id, long revision) {
         return canvas.isCurrent(id, revision);
     }
