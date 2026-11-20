@@ -243,7 +243,7 @@ public class StackedAppBuilder {
         // Save/Open are separate use-case commands; the board knows only the callbacks.
         java.util.concurrent.atomic.AtomicReference<CanvasWorkspaceDialogs> dialogs = new java.util.concurrent.atomic.AtomicReference<>();
         BoardWindow board = new BoardWindow(page, drawing,
-                host -> new HistoryPanel(historyViewModel, host, historyPresenter::undoDelete),
+                host -> new HistoryPanel(historyViewModel, host, (java.util.function.BooleanSupplier) historyPresenter::clearAll),
                 pdfPanel, historyPresenter::delete,
                 () -> dialogs.get().save(), () -> dialogs.get().saveAs(),
                 () -> dialogs.get().open());
