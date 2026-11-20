@@ -1,0 +1,19 @@
+# 项目所有 Python 脚本（src/neutral network 下的训练、数据准备、缩放模型）需要的依赖。
+# 安装：python -m pip install -r requirement.txt
+# torch 使用 CUDA 12.8 版（Windows / Linux）；macOS 没有 CUDA 版，请用 src/neutral network/requirement-mac.txt。
+# 其他包来自默认的 PyPI，torch 的 +cu128 版本只在下面这个源里有。
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+numpy
+Pillow>=10
+
+# crop_scale.py：缩放模型里用 scipy.ndimage（训练和验证都会用到）
+scipy
+
+# crop.py fit：拟合缩放模型时用，只做推理/训练可不装
+lightgbm
+
+# data.py：下载和读取数据集
+huggingface_hub>=0.30
+pyarrow>=20

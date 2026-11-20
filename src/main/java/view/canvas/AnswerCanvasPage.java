@@ -2,12 +2,16 @@ package view.canvas;
 
 import interface_adapter.AnswerKind;
 import entity.Stroke;
-import interface_adapter.TextRun;
 import interface_adapter.MathLabViewModel;
 import interface_adapter.evaluate.EvaluateController;
 import interface_adapter.graph.GraphController;
+import interface_adapter.graph.GraphExploreController;
 import interface_adapter.graph.GraphViewModel;
+import interface_adapter.phase.PhaseController;
+import interface_adapter.phase.PhaseExploreController;
+import interface_adapter.phase.PhaseViewModel;
 import view.FormulaCapture;
+import view.answer.AnswerLayout;
 import view.answer.Formula;
 import view.stack.Fonts;
 
@@ -28,15 +32,15 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 // answer page: pause after an "=" -> popup with the read formula -> Calculate -> answer on the canvas
 public class AnswerCanvasPage extends CanvasPage {
-    static final int POPUP_DELAY_MILLIS = 1500;
-    private static final int ERROR_MESSAGE_MILLIS = 7000;
-    private static final int DEFINED_MESSAGE_MILLIS = 4000;
+    static final int POPUP_DELAY_MILLIS = 500;
 
     /** Optional source-aware export callback. Older two-argument integrations remain supported. */
     @FunctionalInterface public interface FormulaResultSink {
@@ -51,17 +55,28 @@ public class AnswerCanvasPage extends CanvasPage {
     private final Set<Long> waiting = new LinkedHashSet<>();    // written in the same go, popup still owed
     private Stroke targetStroke;      // new ink to pop up for, or
     private long targetId = -1;       // an edited formula, or
+    private boolean targetEdited;     // its ink changed (not just moved), regroups w/ guesses next to it
     private boolean targetPick;       // the lasso pick
     private long generation;          // bumps on every user action, old results check it
     private FormulaCapture shown;     // formula the popup is about
+    private final GlassPageNotices notices = new GlassPageNotices(this);
+    private long errorFor = -1;       // formula the error card is about
     private int running;              // Calculate jobs still going
-    private boolean ownMessage;       // one of them put up its own message
+    private Runnable calculating = () -> { };  // takes the Calculating… card down
     private PopupGraphing graphing;   // one board only: Graph in the popup
+    private PopupPhasePortrait phase; // one board only: Phase Portrait for an ode, null if not wired
+    private Predicate<String> differential = latex -> false;
     private PopupHover hover;         // mouse on an unanswered "=" brings the popup back
     private final Map<Long, Read> reads = new HashMap<>();  // last read per formula
-    private int reading;              // recognize jobs still out
+    private final Map<Long, Long> defined = new HashMap<>();  // id -> revision saved as a f(x)=...
     private Predicate<String> graphable = latex -> false;
-    private final PopupGate gate = new PopupGate();
+    private Predicate<String> definitionCheck = latex -> false;
+    private Predicate<String> calculable = latex -> true;
+    private Predicate<String> question = latex -> false;
+    private final PopupGate gate = new PopupGate(latex -> question.test(latex));
+    private Predicate<String> faintCheck = latex -> false;
+    private final FaintOffer faint;   // faint "=" chip for a done formula w/o one
+    private final CaptureReader reader = new CaptureReader(this::recognizeFormula);  // puts a lost trailing = back
 
     // no evaluate feature, just a placeholder
     public AnswerCanvasPage(SharedCanvas sharedCanvas) {
@@ -70,6 +85,7 @@ public class AnswerCanvasPage extends CanvasPage {
         this.worker = null;
         this.popup = null;
         this.pauseTimer = null;
+        this.faint = null;
         setFunctionArea(placeholder("Answer tools go here: evaluate or solve the expression on the canvas."));
     }
 
@@ -92,18 +108,23 @@ public class AnswerCanvasPage extends CanvasPage {
         addCanvasOverlay(popup);
         pauseTimer = new Timer(POPUP_DELAY_MILLIS, e -> paused());
         pauseTimer.setRepeats(false);
+        faint = new FaintOffer(sharedCanvas.getDrawingCanvas(), new FaintHost());
+        addCanvasOverlay(faint.chip());
 
         sharedCanvas.addFormulaChangeListener(this::formulaChanged);
+        sharedCanvas.addFormulaMoveListener(this::formulaMoved);
         sharedCanvas.addStrokeListener(this::strokeDone);
         sharedCanvas.addPickListener(this::picked);
         sharedCanvas.addUserActionListener(this::dismiss);
         sharedCanvas.addPageSwitchListener(this::dismiss);
         sharedCanvas.addViewListener(this::placePopup);
+        sharedCanvas.addViewListener(faint::place);
         hover = new PopupHover(sharedCanvas, getCanvasArea(), new HoverHost());
         getCanvasArea().addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
                 placePopup();
+                faint.place();
             }
         });
 
@@ -116,17 +137,65 @@ public class AnswerCanvasPage extends CanvasPage {
         setFunctionArea(tools);
     }
 
-    // one board: popup has Calculate + Graph, no function area
+    // one board: popup has Calculate + Graph, no function area. One shared graph session: one live graph.
     public AnswerCanvasPage(SharedCanvas sharedCanvas, EvaluateController controller, MathLabViewModel viewModel,
                             FormulaResultSink resultSink, GraphController graphController,
+                            GraphExploreController graphExplore,
                             GraphViewModel graphViewModel, Predicate<String> graphable,
-                            java.awt.Color background, int messageTop) {
+                            java.awt.Color background) {
+        this(sharedCanvas, controller, viewModel, resultSink,
+                sharedSession(new GraphSession(graphController, graphExplore, graphViewModel)), graphable, background);
+    }
+
+    /**
+     * One board where every Graph gets a fresh session from {@code graphSessions}, so several graphs
+     * stay live on the canvas at the same time, each with its own card and x / y boxes.
+     */
+    public AnswerCanvasPage(SharedCanvas sharedCanvas, EvaluateController controller, MathLabViewModel viewModel,
+                            FormulaResultSink resultSink, java.util.function.Supplier<GraphSession> graphSessions,
+                            Predicate<String> graphable, java.awt.Color background) {
         this(sharedCanvas, controller, viewModel, resultSink);
         this.graphable = graphable;
-        graphing = new PopupGraphing(sharedCanvas, graphController, graphViewModel, this::showMessage,
-                getCanvasArea(), this::publishFormulaOnly);
-        addCanvasOverlay(graphing.rangeBar());
-        useBoardLook(background, messageTop);
+        graphing = new PopupGraphing(sharedCanvas, graphSessions, notices, getCanvasArea(), this::publishFormulaOnly);
+        graphing.setLayers(cardLayers());
+        useBoardLook(background);
+    }
+
+    private static <T> java.util.function.Supplier<T> sharedSession(T session) {
+        return () -> session;
+    }
+
+    // live cards float over the ink but under the docks, their range boxes above everything
+    private PopupCardTool.Layers cardLayers() {
+        return new PopupCardTool.Layers() {
+            @Override
+            public void underlay(JComponent card) {
+                addCanvasUnderlay(card);
+            }
+
+            @Override
+            public void overlay(JComponent ranges) {
+                addCanvasOverlay(ranges);
+            }
+        };
+    }
+
+    // ode -> Phase Portrait in the popup, its own use case + card next to Graph's (one shared session)
+    public void enablePhasePortrait(PhaseController controller, PhaseExploreController explore,
+                                    PhaseViewModel viewModel, Predicate<String> isDifferentialEquation) {
+        enablePhasePortrait(sharedSession(new PhaseSession(controller, explore, viewModel)), isDifferentialEquation);
+    }
+
+    /** Phase Portrait with a fresh session per portrait, so several stay live next to the graphs. */
+    public void enablePhasePortrait(java.util.function.Supplier<PhaseSession> phaseSessions,
+                                    Predicate<String> isDifferentialEquation) {
+        if (graphing == null || phase != null) {
+            return;   // board only, once
+        }
+        phase = new PopupPhasePortrait(getSharedCanvas(), phaseSessions, notices, getCanvasArea(),
+                this::publishFormulaOnly);
+        phase.setLayers(cardLayers());
+        differential = isDifferentialEquation;
     }
 
     // the area the board floats things over (same coords as the canvas)
@@ -136,6 +205,36 @@ public class AnswerCanvasPage extends CanvasPage {
 
     public void addBoardOverlay(JComponent overlay) {
         addCanvasOverlay(overlay);
+    }
+
+    // f(x)=... lines get saved right away, no Calculate click
+    public void setDefinitionCheck(Predicate<String> definitionCheck) {
+        this.definitionCheck = definitionCheck;
+    }
+
+    // only-graphable lines (y=3x, f(x)=x^2) drop Calculate
+    public void setCalculateCheck(Predicate<String> calculable) {
+        this.calculable = calculable;
+    }
+
+    // done comparisons (2x>5) pop up w/o an "="
+    public void setQuestionCheck(Predicate<String> question) {
+        this.question = question;
+    }
+
+    // formulas w/o "=" this says can be worked out get the faint = chip; never if not set
+    public void setFaintEqualsCheck(Predicate<String> check) {
+        this.faintCheck = check;
+    }
+
+    // tests use a short wait
+    void setFaintDelay(int millis) {
+        faint.setDelay(millis);
+    }
+
+    // null when not up
+    FaintEquals visibleFaint() {
+        return faint == null ? null : faint.visible();
     }
 
     // tests type ranges like the user
@@ -171,11 +270,33 @@ public class AnswerCanvasPage extends CanvasPage {
 
     // ink of a formula changed: answer is gone already, offer again after a pause
     private void formulaChanged(long id) {
+        hover.forgetSpot(id);  // undo/redo can put it back where it was w/ the same revision
+        if (id == errorFor) {
+            notices.clearError();  // they're fixing it
+            errorFor = -1;
+        }
         if (!inFront()) {
             return;
         }
+        offerAgain(id);
+        targetEdited = true;
+    }
+
+    // whole formula dragged / resized: same ink, offer it again like an edit, error card stays
+    private void formulaMoved(long id) {
+        hover.forgetSpot(id);
+        Formula f = formula(id);
+        if (!inFront() || f == null || f.getAnswer() != null) {
+            return;  // answered ones stay quiet, don't let one steal the target
+        }
+        offerAgain(id);
+    }
+
+    // that formula gets the popup / chip after a pause
+    private void offerAgain(long id) {
         targetStroke = null;
         targetId = id;
+        targetEdited = false;
         targetPick = false;
         restartPause();
     }
@@ -208,8 +329,14 @@ public class AnswerCanvasPage extends CanvasPage {
     }
 
     private void hidePopup() {
-        shown = null;
         hover.forget();
+        closePopup();
+        faint.hide();
+    }
+
+    // just take it down, hover keeps its state
+    private void closePopup() {
+        shown = null;
         if (popup.isVisible()) {
             popup.setVisible(false);
             getCanvasArea().repaint();
@@ -235,17 +362,37 @@ public class AnswerCanvasPage extends CanvasPage {
             queueRest(capture);
             session.clear();
         } else if (targetId >= 0) {
-            capture = getSharedCanvas().captureForRecalculation(targetId);
+            FormulaCapture loose = registerLeftovers();  // first, it may fold into the edited one
+            capture = targetEdited ? getSharedCanvas().captureEdited(targetId)
+                    : getSharedCanvas().captureForRecalculation(targetId);
+            if (capture == null) {
+                capture = loose;
+            }
+            queueRest(capture);
+            session.clear();
         }
+        boolean pick = targetPick;
         targetStroke = null;
         targetId = -1;
         targetPick = false;
-        if (capture == null) {
-            capture = nextWaiting();
+        if (capture == null && !pick) {
+            capture = nextWaiting();  // a pick is on purpose, never swap in another formula
         }
         if (capture != null) {
+            readAhead();
             recognize(capture, generation);
         }
+    }
+
+    // loose ink written before the edit gets bound too instead of dropped; null if none
+    private FormulaCapture registerLeftovers() {
+        Stroke last = null;
+        for (Stroke s : session) {
+            if (!getSharedCanvas().isBound(s)) {
+                last = s;
+            }
+        }
+        return last == null ? null : getSharedCanvas().registerNewInk(last, session);
     }
 
     // other formulas of this round got bound too, only the last one gets the popup now
@@ -270,29 +417,94 @@ public class AnswerCanvasPage extends CanvasPage {
     }
 
     private void recognize(FormulaCapture capture, long gen) {
-        reading++;
-        worker.recognize(() -> recognizeFormula(capture.getImage()),
+        Read r = reads.get(capture.getId());
+        boolean known = r != null && r.revision == capture.getRevision();  // same ink, read it already
+        worker.recognize(known ? () -> r.latex : () -> reader.read(capture),
                 (latex, problem) -> recognized(capture, gen, latex, problem));
     }
 
     private void recognized(FormulaCapture capture, long gen, String latex, String problem) {
-        reading--;
         if (!getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
             return;  // ink changed while we were reading it
         }
         reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));  // for hovering later
+        if (problem == null && definitionCheck.test(latex)) {
+            define(capture, latex, saved -> {
+                if (!saved) {
+                    offer(capture, gen, latex, problem);  // bad body, popup's Calculate shows why
+                } else if (gen == generation && inFront()) {
+                    offerNext(gen);
+                }
+            });
+            return;
+        }
+        offer(capture, gen, latex, problem);
+    }
+
+    private void offer(FormulaCapture capture, long gen, String latex, String problem) {
         if (gen != generation || !inFront()) {
             return;  // user moved on
         }
         if (!gate.allows(formula(capture.getId()), latex)) {
-            hover.forget();
-            FormulaCapture next = nextWaiting();  // no "=" yet, quietly try the next one
-            if (next != null) {
-                recognize(next, gen);
+            if (hover.offered() == capture.getId()) {
+                hover.forget();  // hovered one has no "=" after all
             }
+            if (problem == null && faintCheck.test(latex)) {
+                faint.queue(capture.getId(), gen);
+            }
+            offerNext(gen);  // no "=" yet, quietly try the next one
             return;
         }
         present(capture, latex, problem);
+    }
+
+    private void offerNext(long gen) {
+        FormulaCapture next = nextWaiting();
+        if (next != null) {
+            recognize(next, gen);
+        }
+    }
+
+    // read the queued ones now too, so a f(x)=... among them is saved before the newest gets Calculate
+    private void readAhead() {
+        for (long id : waiting) {
+            FormulaCapture capture = getSharedCanvas().captureForRecalculation(id);
+            Read r = reads.get(id);
+            if (capture == null || r != null && r.revision == capture.getRevision()) {
+                continue;  // answered, or read already
+            }
+            worker.recognize(() -> reader.read(capture), (latex, problem) -> {
+                if (!getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
+                    return;
+                }
+                reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));
+                if (problem == null && definitionCheck.test(latex)) {
+                    define(capture, latex, saved -> { });  // its popup comes later in turn
+                }
+            });
+        }
+    }
+
+    private boolean isDefined(long id, long revision) {
+        return Objects.equals(defined.get(id), revision);
+    }
+
+    // save f(x)=... quietly; saved=false means the body was bad
+    private void define(FormulaCapture capture, String latex, Consumer<Boolean> then) {
+        if (isDefined(capture.getId(), capture.getRevision())) {
+            then.accept(true);  // same ink saved already
+            return;
+        }
+        worker.calculate(latex, outcome -> {
+            if (!outcome.definition) {
+                then.accept(false);
+                return;
+            }
+            defined.put(capture.getId(), capture.getRevision());
+            notices.success(outcome.result, outcome.definedLatex);
+            publishFormulaOnly(capture, latex);  // saved = done, so PDF Studio gets it
+            then.accept(true);
+        });
     }
 
     private Formula formula(long id) {
@@ -305,11 +517,18 @@ public class AnswerCanvasPage extends CanvasPage {
     }
 
     private void present(FormulaCapture capture, String latex, String problem) {
+        faint.hide();  // popup wins
         if (problem != null) {
-            popup.showProblem(problem);
+            hidePopup();
+            showError(capture, "Can't read formula", problem);
+            return;
+        } else if (phase != null && differential.test(latex)) {
+            popup.showFormula(latex, null, null, () -> phasePortrait(capture, latex));
         } else if (graphing != null) {
-            popup.showFormula(latex, () -> calculate(capture, latex), () -> graph(capture, latex),
-                    graphable.test(latex));
+            boolean canGraph = graphable.test(latex);
+            boolean canCalc = !canGraph || calculable.test(latex);  // neither -> Calculate says why
+            popup.showFormula(latex, canCalc ? () -> calculate(capture, latex) : null,
+                    canGraph ? () -> graph(capture, latex) : null);
         } else {
             popup.showFormula(latex, () -> calculate(capture, latex));
         }
@@ -328,10 +547,16 @@ public class AnswerCanvasPage extends CanvasPage {
             return;
         }
         JComponent area = getCanvasArea();
-        Rectangle f = SwingUtilities.convertRectangle(getSharedCanvas().getDrawingCanvas(),
-                getSharedCanvas().worldToScreen(world).getBounds(), area);
-        popup.setBounds(popup.spotBeside(f, area.getWidth(), area.getHeight()));
+        Rectangle f = toArea(world);
+        Rectangle eqWorld = hover.equalsOf(shown.getId());
+        Rectangle eq = eqWorld == null ? null : toArea(eqWorld);
+        popup.setBounds(popup.spotBeside(f, eq, area.getWidth(), area.getHeight()));
         area.repaint();
+    }
+
+    private Rectangle toArea(Rectangle world) {
+        return SwingUtilities.convertRectangle(getSharedCanvas().getDrawingCanvas(),
+                getSharedCanvas().worldToScreen(world).getBounds(), getCanvasArea());
     }
 
     // Calculate in the popup: use the latex we already have, no second read
@@ -340,11 +565,9 @@ public class AnswerCanvasPage extends CanvasPage {
         if (!waiting.isEmpty()) {
             restartPause();  // this one's handled, offer the next after a beat
         }
-        if (running == 0) {
-            ownMessage = false;
-        }
+        calculating.run();  // newest one gets the card
+        calculating = notices.progress("Calculating", latex);
         running++;
-        showMessage("Calculating " + latex + "…", false, 0);
         worker.calculate(latex, outcome -> deliver(capture, latex, outcome));
     }
 
@@ -353,6 +576,13 @@ public class AnswerCanvasPage extends CanvasPage {
         hidePopup();
         Rectangle world = getSharedCanvas().formulaBounds(capture.getId());
         graphing.graph(latex, world, capture);
+    }
+
+    // Phase Portrait in the popup: same latex, no second read
+    private void phasePortrait(FormulaCapture capture, String latex) {
+        hidePopup();
+        Rectangle world = getSharedCanvas().formulaBounds(capture.getId());
+        phase.draw(latex, world, capture);
     }
 
     /** Publish only after an explicit Calculate action, never while merely recognizing ink. */
@@ -368,36 +598,44 @@ public class AnswerCanvasPage extends CanvasPage {
     private void deliver(FormulaCapture capture, String latex, CalculationOutcome outcome) {
         AnswerKind kind = outcome.kind;
         String result = outcome.result;
-        List<TextRun> runs = outcome.answerRuns;
         String error = outcome.error;
+        if (--running == 0) {
+            calculating.run();  // all back, before the result card shows
+        }
         if (!error.isEmpty()) {
             // popup only, nothing drawn
             if (getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
-                ownMessage = true;
-                showMessage(error, true, ERROR_MESSAGE_MILLIS);
-                // y=3x is a valid graphable relation, but the numeric evaluator
-                // rejects its two variables. A user explicitly asked to Calculate;
-                // retain the recognized formula without inventing a numerical answer.
-                if (latex != null && graphable.test(latex)) publishFormulaOnly(capture, latex);
+                showError(capture, outcome.errorTitle, error);
+                // any Calculate goes to PDF Studio, errors just w/ no answer (y=3x, x+1=...)
+                publishFormulaOnly(capture, latex);
             }
         } else if (outcome.definition) {
-            ownMessage = true;
-            showMessage(result, false, DEFINED_MESSAGE_MILLIS);
+            notices.success(result, outcome.definedLatex);
             // Definitions have no numeric answer but are still explicitly requested work.
             publishFormulaOnly(capture, latex);
         } else {
-            boolean drawn = runs == null
-                    ? getSharedCanvas().showAnswer(capture.getId(), capture.getRevision(), kind, outcome.answerText, false)
-                    : getSharedCanvas().showAnswer(capture.getId(), capture.getRevision(), kind, runs, false);
+            boolean drawn = getSharedCanvas().showTypesetAnswer(capture.getId(), capture.getRevision(), kind,
+                    outcome.answerText, outcome.answerLatex);
+            if (drawn) {
+                notices.clearError();  // answer's on the canvas, that's the success
+            }
             if (drawn && latex != null && !latex.isBlank()
                     && !java.util.Objects.equals(exportedRevisions.get(capture.getId()), capture.getRevision())) {
                 exportedRevisions.put(capture.getId(), capture.getRevision());
                 pdfResultSink.accept(capture.getId(), latex, result);
             }
         }
-        if (--running == 0 && !ownMessage) {
-            hideMessage();
-        }
+    }
+
+    // error card stays till X or the formula gets fixed
+    private void showError(FormulaCapture capture, String title, String reason) {
+        errorFor = capture.getId();
+        notices.error(title, reason);
+    }
+
+    // tests peek at what the cards said
+    GlassPageNotices notices() {
+        return notices;
     }
 
     // what the popup said last for a formula
@@ -413,11 +651,59 @@ public class AnswerCanvasPage extends CanvasPage {
         }
     }
 
+    private final class FaintHost implements FaintOffer.Host {
+        @Override
+        public boolean stillWanted(long id, long gen) {
+            Formula f = formula(id);
+            return gen == generation && inFront() && !popup.isVisible() && f != null && f.getAnswer() == null;
+        }
+
+        @Override
+        public Rectangle spotFor(long id) {
+            Rectangle world = getSharedCanvas().formulaBounds(id);
+            Formula f = formula(id);
+            if (world == null || f == null) {
+                return null;
+            }
+            return FaintEquals.spot(toArea(world), f.getCharHeight() * getSharedCanvas().getZoom());
+        }
+
+        // same popup a lasso pick gets, w/ the read we have; one-shot, later edits still wait for an "="
+        @Override
+        public void tapped(long id) {
+            FormulaCapture capture = getSharedCanvas().captureForRecalculation(id);
+            Read r = reads.get(id);
+            if (!inFront() || capture == null || r == null || r.revision != capture.getRevision()) {
+                return;
+            }
+            generation++;
+            present(capture, r.latex, r.problem);
+        }
+    }
+
     private final class HoverHost implements PopupHover.Host {
         @Override
-        public boolean canOffer() {
-            return inFront() && !popup.isVisible() && !pauseTimer.isRunning() && reading == 0
-                    && !getSharedCanvas().isBusy();
+        public boolean canOffer(long id) {
+            boolean showingIt = popup.isVisible() && shown != null && shown.getId() == id;
+            return inFront() && !showingIt && !inkComingFor(id) && !getSharedCanvas().isBusy();
+        }
+
+        // wait only if the pending pause will change this formula, other ink doesn't matter
+        private boolean inkComingFor(long id) {
+            if (!pauseTimer.isRunning()) {
+                return false;
+            }
+            Formula f = formula(id);
+            Rectangle box = getSharedCanvas().formulaBounds(id);
+            if (targetPick || targetId == id || f == null || box == null) {
+                return true;
+            }
+            for (Stroke s : session) {
+                if (AnswerLayout.joins(box, f.getCharHeight(), AnswerLayout.bounds(List.of(s)))) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // read it again only if the ink changed since
@@ -430,6 +716,7 @@ public class AnswerCanvasPage extends CanvasPage {
             }
             Read r = reads.get(id);
             generation++;
+            closePopup();  // some other formula's popup gives way
             if (r != null && r.revision == capture.getRevision()) {
                 present(capture, r.latex, r.problem);
             } else {
@@ -445,7 +732,7 @@ public class AnswerCanvasPage extends CanvasPage {
 
         @Override
         public boolean wanted(Formula f) {
-            return gate.allows(f, latexOf(f.getId(), f.getRevision()));
+            return gate.allows(f, latexOf(f.getId(), f.getRevision()));  // saved f(x)=... too, for its Graph
         }
 
         @Override

@@ -14,6 +14,7 @@ import java.util.function.Consumer;
 
 // background jobs for the answer page, callbacks land on the EDT
 final class AnswerWorker {
+    private static final String CANT_READ = "Try writing it a bit clearer";
     private final EvaluateController controller;
     // one at a time so jobs don't fight over the view model
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -36,10 +37,10 @@ final class AnswerWorker {
             try {
                 latex = reader.call();  // fails if recognition is not connected
                 if (latex == null || latex.isBlank()) {
-                    problem = "Couldn't read the formula.";
+                    problem = CANT_READ;
                 }
-            } catch (Throwable e) {  // native model can throw Errors too
-                problem = reason(e);
+            } catch (Throwable e) {  // native model can throw Errors too, dont show their guts
+                problem = CANT_READ;
             }
             String l = latex;
             String p = problem;
@@ -53,7 +54,7 @@ final class AnswerWorker {
             try {
                 controller.execute(latex);
             } catch (Throwable e) {
-                finish(CalculationOutcome.failed(reason(e)));
+                finish(CalculationOutcome.failed("Can't calculate", "Something went wrong"));
             }
         });
     }
@@ -64,16 +65,13 @@ final class AnswerWorker {
         }
         MathLabState state = (MathLabState) event.getNewValue();
         finish(new CalculationOutcome(state.getResultText(), state.getAnswerKind(), state.getAnswerText(),
-                state.getAnswerRuns(), state.getErrorText(), state.isDefinition()));
+                state.getAnswerLatex(), state.getErrorTitle(), state.getErrorText(), state.isDefinition(),
+                state.getDefinedLatex()));
     }
 
     private void finish(CalculationOutcome outcome) {
         Consumer<CalculationOutcome> done = waiting;
         waiting = null;
         SwingUtilities.invokeLater(() -> done.accept(outcome));
-    }
-
-    private static String reason(Throwable e) {
-        return e.getMessage() == null ? e.toString() : e.getMessage();
     }
 }

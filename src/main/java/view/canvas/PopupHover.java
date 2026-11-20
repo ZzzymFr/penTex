@@ -20,11 +20,11 @@ import java.util.Objects;
 // mouse resting on an unanswered formula's "=" brings its popup back
 final class PopupHover {
     static final int SHOW_MILLIS = 300;
-    static final int HIDE_MILLIS = 300;
+    static final int HIDE_MILLIS = 1800;  // slow trip from "=" to the buttons still makes it
 
     // the answer page
     interface Host {
-        boolean canOffer();                  // nothing else going on
+        boolean canOffer(long formulaId);    // free to show this one now
         void offer(long formulaId);          // put the popup up for it (may read it first)
         void withdraw();                     // take it down
         boolean wanted(Formula f);           // may it pop up at all
@@ -57,6 +57,11 @@ final class PopupHover {
             public void mouseExited(MouseEvent e) {
                 moved(null);  // onto the popup, or out of the canvas
             }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                moved(e.getPoint());  // resting after a drag counts too
+            }
         });
     }
 
@@ -64,6 +69,15 @@ final class PopupHover {
     void forget() {
         offered = -1;
         hideTimer.stop();
+    }
+
+    // formula moved / resized, revision didn't change so its cached = spot is stale
+    void forgetSpot(long id) {
+        spots.remove(id);
+        if (under == id && offered != id) {
+            under = -1;  // it jumped away from the mouse, next move decides again
+            showTimer.stop();
+        }
     }
 
     long offered() {
@@ -91,7 +105,11 @@ final class PopupHover {
     }
 
     private void rested() {
-        if (under < 0 || offered >= 0 || !host.canOffer()) {
+        if (under < 0 || offered >= 0) {
+            return;
+        }
+        if (!host.canOffer(under)) {
+            showTimer.restart();  // busy rn, keep trying while the mouse sits there
             return;
         }
         offered = under;
@@ -114,6 +132,7 @@ final class PopupHover {
         offered = -1;
         under = -1;
         host.withdraw();
+        moved(onCanvas);  // may be on another "=" already
     }
 
     // area coords, null if unknown (headless)
@@ -128,6 +147,16 @@ final class PopupHover {
         Point p = info.getLocation();
         SwingUtilities.convertPointFromScreen(p, area);
         return p;
+    }
+
+    // world box of its "=", null if gone / no ink
+    Rectangle equalsOf(long id) {
+        for (Formula f : canvas.getFormulas()) {
+            if (f.getId() == id) {
+                return spotOf(f).world;
+            }
+        }
+        return null;
     }
 
     // unanswered formula whose "=" is under p, -1 if none

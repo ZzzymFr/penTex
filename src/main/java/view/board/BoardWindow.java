@@ -3,8 +3,8 @@ package view.board;
 import view.DrawingCanvas;
 import interface_adapter.history.HistoryItem;
 import javax.swing.JPopupMenu;
-import javax.swing.JMenuItem;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -40,16 +40,27 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private final GlassBar historyClose;
     private final GlassBar pdfBar;
     private final GlassBar pdfClose;
+    private final GlassBar fullscreenExit;
     private final Ghost ghost = new Ghost();
     private final JComponent titleStrip;
     private boolean historyOpen;
     private boolean pdfOpen;
+    private boolean pdfFullscreen;
+    private JComponent floatingToolbar;
     private double historyRatio = 0.24;  // kept while the app runs
     private double pdfRatio = 0.56;
     private boolean pdfOverlay;
     private int lastCanvasRight = -1;
     private int lastBoardWidth = -1;
     private final Function<String, Boolean> deleteHistory;
+    private final Runnable saveCanvas;
+    private final Runnable saveAsCanvas;
+    private final GlassBar.Item saveItem;
+    private final CanvasStatusChip saveStatusChip = new CanvasStatusChip();
+    private Supplier<SaveMenuState> saveState = SaveMenuState::newCanvas;
+    private SaveMenuState lastSaveState = SaveMenuState.newCanvas();
+    // Coalesce rapid pen/pan events: serializing image assets for the dirty check is expensive.
+    private final javax.swing.Timer saveStateDebounce = new javax.swing.Timer(150, e -> refreshSaveState());
 
     public BoardWindow(JComponent page, DrawingCanvas canvas,
                        java.util.function.Function<HistoryPanel.DragHost, HistoryPanel> history, JComponent pdf) {
@@ -60,7 +71,31 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     public BoardWindow(JComponent page, DrawingCanvas canvas,
                        java.util.function.Function<HistoryPanel.DragHost, HistoryPanel> history,
                        JComponent pdf, Function<String, Boolean> deleteHistory) {
+        this(page, canvas, history, pdf, deleteHistory, () -> {}, () -> {});
+    }
+
+    /** Composition-root commands own Save/Open, not the layout view. */
+    public BoardWindow(JComponent page, DrawingCanvas canvas,
+                       java.util.function.Function<HistoryPanel.DragHost, HistoryPanel> history,
+                       JComponent pdf, Function<String, Boolean> deleteHistory,
+                       Runnable saveCanvas, Runnable openCanvas) {
+        this(page, canvas, history, pdf, deleteHistory, saveCanvas, saveCanvas, openCanvas);
+    }
+
+    /** Distinct Save / Save As callbacks supplied by the composition root. */
+    public BoardWindow(JComponent page, DrawingCanvas canvas,
+                       java.util.function.Function<HistoryPanel.DragHost, HistoryPanel> history,
+                       JComponent pdf, Function<String, Boolean> deleteHistory,
+                       Runnable saveCanvas, Runnable saveAsCanvas, Runnable openCanvas) {
         super(null);
+        saveStateDebounce.setRepeats(false);
+        saveStatusChip.setGlassBackdrop(this::paintBackdrop, this::backdropVersion);
+        saveStatusChip.setRenameAction(() -> {
+            openCanvas.run(); // Open's existing glass chooser exposes Rename; no shared wiring changes.
+            refreshSaveState();
+        });
+        this.saveCanvas = java.util.Objects.requireNonNull(saveCanvas);
+        this.saveAsCanvas = java.util.Objects.requireNonNull(saveAsCanvas);
         this.page = page;
         this.canvas = canvas;
         this.history = history.apply(this);
@@ -88,20 +123,39 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             setHistoryOpen(!historyOpen);
             return historyOpen;
         });
+        saveItem = historyBar.action("Save…", Icons::save, () -> {
+            if (lastSaveState.phase() != SaveMenuState.Phase.SAVED) {
+                runSaveWithStatus(this.saveCanvas);
+            }
+        }, () -> true);
+        saveItem.setEnabled(() -> lastSaveState.phase() != SaveMenuState.Phase.SAVED);
+        saveItem.setSplitGroup(1);
+        historyBar.action(null, Icons::chevronDown, this::showSaveChoices, () -> true).setSplitGroup(1);
+        historyBar.action("Open", Icons::openFolder, () -> {
+            openCanvas.run();
+            refreshSaveState();
+        }, () -> true);
         historyBar.finish();
         historyClose = bar(15f);
         historyClose.action(null, Icons::close, () -> setHistoryOpen(false), () -> true);
         historyClose.finish();
         pdfBar = bar(15f);
-        pdfBar.action("PDF", Icons::document, this::showPdfChoices, () -> true);
+        // Default to real split view, with no second overlay mode in the UI.
+        pdfBar.action("PDF", Icons::document, () -> {pdfOverlay = false; setPdfOpen(true);}, () -> true);
         pdfBar.finish();
         pdfClose = bar(15f);
         pdfClose.action(null, Icons::close, () -> setPdfOpen(false), () -> true);
         pdfClose.finish();
+        fullscreenExit = bar(15f);
+        fullscreenExit.action(null, Icons::close, () -> setPdfFullscreen(false), () -> true);
+        fullscreenExit.finish();
+        fullscreenExit.setToolTipText("Exit PDF fullscreen (Esc)");
         titleStrip = BoardTheme.MAC ? new TitleStrip() : null;
 
         // first added = drawn on top
         add(ghost);
+        add(fullscreenExit);
+        add(saveStatusChip);
         add(historyBar);
         add(historyClose);
         add(pdfBar);
@@ -115,6 +169,61 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         add(pdf);
         add(page);
         relayout();
+    }
+
+    /** Wire the adapter-provided canvas state after the composition root has built both objects. */
+    public void setSaveStateSupplier(Supplier<SaveMenuState> supplier) {
+        saveState = java.util.Objects.requireNonNull(supplier);
+        refreshSaveState();
+    }
+
+    /** Coalesce rapid mouse events; the visible Saved/Edited status settles after the gesture. */
+    public void scheduleSaveStateRefresh() {
+        saveStateDebounce.restart();
+    }
+
+    /** Called immediately after Open, Save and keyboard actions. */
+    public void refreshSaveState() {
+        SaveMenuState next = java.util.Objects.requireNonNull(saveState.get());
+        if (next.equals(lastSaveState)) {
+            // A cancelled synchronous save restores the previous visual status as well.
+            saveStatusChip.setState(next);
+            return;
+        }
+        lastSaveState = next;
+        saveStatusChip.setState(next);
+        switch (next.phase()) {
+            case NEW -> saveItem.setDisplay("Save…", Icons::save);
+            case MODIFIED -> saveItem.setDisplay("Save", Icons::save);
+            case SAVING -> saveItem.setDisplay("Saving…", Icons::save);
+            case SAVED -> saveItem.setDisplay("Saved", Icons::check);
+        }
+        historyBar.finish();
+        relayout();
+    }
+
+    /** Show saving feedback immediately, then restore the workspace's authoritative state. */
+    private void runSaveWithStatus(Runnable action) {
+        saveStatusChip.setState(new SaveMenuState(lastSaveState.name(), SaveMenuState.Phase.SAVING));
+        if (saveStatusChip.isShowing())
+            saveStatusChip.paintImmediately(0, 0, saveStatusChip.getWidth(), saveStatusChip.getHeight());
+        try { action.run(); }
+        finally { refreshSaveState(); }
+    }
+
+    /** The menu always opens from the chevron, with options appropriate to the current state. */
+    JPopupMenu createSaveMenu() {
+        return new GlassSaveMenu(lastSaveState,
+                () -> runSaveWithStatus(saveCanvas),
+                () -> runSaveWithStatus(saveAsCanvas));
+    }
+
+    private void showSaveChoices() {
+        // GlassBar includes a generous shadow margin. Anchor below the visible capsule.
+        // Align with the Save/chevron group, not an old hard-coded offset.
+        createSaveMenu().show(historyBar,
+                GlassBar.MARGIN + GlassBar.PAD + Math.round(saveItem.x),
+                GlassBar.MARGIN + GlassBar.CAP_H);
     }
 
     private GlassBar bar(float size) {
@@ -141,6 +250,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     }
 
     public void setPdfOpen(boolean open) {
+        if (!open) pdfFullscreen = false;
         boolean firstOpen = open && !pdfOpen;
         pdfOpen = open;
         relayout();
@@ -149,20 +259,22 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         }
     }
 
+    public boolean isPdfFullscreen() { return pdfFullscreen; }
+    /** Full PDF focus mode, escaped with Esc or the View ribbon control. */
+    public void setPdfFullscreen(boolean fullscreen) {
+        if (fullscreen) pdfOpen = true;
+        pdfFullscreen = fullscreen;
+        relayout();
+        if (fullscreen && pdf instanceof PdfWorkspacePort port) SwingUtilities.invokeLater(port::fitWhenOpened);
+    }
+    public void addFloatingToolbar(JComponent toolbar) {
+        floatingToolbar = java.util.Objects.requireNonNull(toolbar);
+        add(toolbar, 0); // Swing index 0 paints over both panes
+        revalidate();repaint();
+    }
     public boolean isPdfOverlay() { return pdfOverlay; }
     /** Overlay keeps the canvas at full width behind the PDF pane; split reserves its own width. */
     public void setPdfOverlay(boolean overlay) { pdfOverlay = overlay; relayout(); }
-
-    private void showPdfChoices() {
-        JPopupMenu choices = new JPopupMenu();
-        JMenuItem split = new JMenuItem("PDF · Split view (side by side)");
-        split.addActionListener(e -> { pdfOverlay = false; setPdfOpen(true); });
-        JMenuItem overlay = new JMenuItem("PDF · Overlay on canvas");
-        overlay.addActionListener(e -> { pdfOverlay = true; setPdfOpen(true); });
-        // Closing is the responsibility of the adjacent X capsule.
-        choices.add(split); choices.add(overlay);
-        choices.show(pdfBar, 0, pdfBar.getHeight());
-    }
 
     double getHistoryRatio() {
         return historyRatio;
@@ -197,6 +309,28 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         int w = getWidth();
         int h = getHeight();
         int half = SplitDivider.HIT / 2;
+        if (pdfFullscreen) {
+            history.setVisible(false);historyDivider.setVisible(false);
+            pdf.setVisible(true);pdfDivider.setVisible(false);
+            page.setVisible(false);
+            historyBar.setVisible(false);historyClose.setVisible(false);saveStatusChip.setVisible(false);
+            pdfBar.setVisible(false);pdfClose.setVisible(false);
+            fullscreenExit.setVisible(true);
+            int margin = GlassBar.MARGIN;
+            Dimension closeSize = fullscreenExit.getPreferredSize();
+            fullscreenExit.setBounds(w - BoardTheme.SIDE - fullscreenExit.capsuleWidth() - margin,
+                    BoardTheme.TOP - margin, closeSize.width, closeSize.height);
+            if (floatingToolbar != null) floatingToolbar.setVisible(false);
+            if (titleStrip != null) titleStrip.setVisible(false);
+            pdf.setBounds(0, 0, w, h);
+            ghost.setBounds(0, 0, w, h);
+            return;
+        }
+        page.setVisible(true);
+        fullscreenExit.setVisible(false);
+        historyBar.setVisible(true);pdfBar.setVisible(true);
+        if (floatingToolbar != null) floatingToolbar.setVisible(true);
+        if (titleStrip != null) titleStrip.setVisible(true);
         history.setVisible(historyOpen);
         historyDivider.setVisible(historyOpen);
         pdf.setVisible(pdfOpen);
@@ -230,10 +364,19 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
         int m = GlassBar.MARGIN;
         Dimension hb = historyBar.getPreferredSize();
-        historyBar.setBounds(BoardTheme.HISTORY_LEFT - m, BoardTheme.TOP - m, hb.width, hb.height);
+        boolean showStatus = w >= 1050 && !pdfFullscreen;
+        saveStatusChip.setVisible(showStatus);
+        int historyStart = BoardTheme.HISTORY_LEFT;
+        if (showStatus) {
+            Dimension state = saveStatusChip.getPreferredSize();
+            saveStatusChip.setBounds(BoardTheme.HISTORY_LEFT - 35, BoardTheme.TOP + 2,
+                    state.width, state.height);
+            historyStart = BoardTheme.HISTORY_LEFT + state.width - 18;
+        }
+        historyBar.setBounds(historyStart - m, BoardTheme.TOP - m, hb.width, hb.height);
         Dimension hc = historyClose.getPreferredSize();
         historyClose.setVisible(historyOpen);
-        historyClose.setBounds(BoardTheme.HISTORY_LEFT + historyBar.capsuleWidth() + 8 - m, BoardTheme.TOP - m,
+        historyClose.setBounds(historyStart + historyBar.capsuleWidth() + 8 - m, BoardTheme.TOP - m,
                 hc.width, hc.height);
         Dimension pb = pdfBar.getPreferredSize();
         pdfBar.setVisible(true);
@@ -283,18 +426,49 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         }
     }
     @Override public void deleteHistory(HistoryItem item) { deleteHistory.apply(item.getId()); }
+    @Override public void importIntoLibrary(HistoryItem item) {
+        if (pdf instanceof PdfWorkspacePort panel) {
+            panel.addHistoryToLibrary(item);
+            setPdfOpen(true);
+        }
+    }
 
     @Override public boolean dropped(HistoryItem item, BufferedImage picture, Point screenTopLeft) {
-        ghost.clear();
-        if (pdf instanceof PdfWorkspacePort panel && pdfOpen && pdf.isShowing()) {
-            Point onPdf = new Point(screenTopLeft);
-            SwingUtilities.convertPointFromScreen(onPdf, pdf);
-            if (onPdf.x >= 0 && onPdf.x < pdf.getWidth() && onPdf.y >= 0 && onPdf.y < pdf.getHeight()) {
-                return panel.dropHistoryItem(item, screenTopLeft);
-            }
-        }
-        return dropped(picture, screenTopLeft);
+        return droppedAt(item, picture, screenTopLeft, screenTopLeft);
     }
+
+    @Override public boolean droppedAt(HistoryItem item, BufferedImage picture,
+                                       Point previewTopLeft, Point cursorScreen) {
+        ghost.clear();
+        // Hit-test against the board's actual PDF bounds, not the nested editor's
+        // transient Swing showing state (which can change while dragging).
+        Point onBoard = new Point(cursorScreen);
+        SwingUtilities.convertPointFromScreen(onBoard, this);
+        if (pdf instanceof PdfWorkspacePort panel && isPdfDropTarget(onBoard)) {
+            return panel.dropHistoryItem(item, cursorScreen);
+        }
+        Point onPage = new Point(cursorScreen);
+        SwingUtilities.convertPointFromScreen(onPage, page);
+        if (!canvas.isShowing() || onPage.x < 0 || onPage.x >= page.getWidth()
+                || onPage.y < 0 || onPage.y >= page.getHeight()) return false;
+        // Preserve the pointer's grab offset inside the placed object when there is room.
+        Point position = new Point(previewTopLeft);
+        SwingUtilities.convertPointFromScreen(position, canvas);
+        Point cursor = new Point(cursorScreen);
+        SwingUtilities.convertPointFromScreen(cursor, canvas);
+        position.x = Math.max(0, Math.min(position.x, cursor.x));
+        position.y = Math.max(0, Math.min(position.y, cursor.y));
+        canvas.addHistoryAsset(picture, item.isGraph() ? "" : item.getLatex(),
+                item.isGraph() ? "" : item.getAnswer(), position);
+        return true;
+    }
+
+    /** Package-private for regression tests: PDF takes precedence over Canvas. */
+    boolean isPdfDropTarget(Point boardPoint) {
+        return pdfOpen && pdf.isVisible() && pdf.getBounds().contains(boardPoint);
+    }
+
+    @Override public void cancelDrag() { ghost.clear(); }
 
     // ---- dragging a history row onto the canvas
 
@@ -323,17 +497,37 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     // picture following the mouse while a history row is dragged
     private static final class Ghost extends JComponent {
         private BufferedImage picture;
+
+        Ghost() { setOpaque(false); }
         private Point at;
 
         void showPicture(BufferedImage picture, Point at) {
+            java.awt.Rectangle previous = dirtyBounds();
             this.picture = picture;
             this.at = at;
-            repaint();
+            repaintDirty(previous);
+            repaintDirty(dirtyBounds());
         }
 
         void clear() {
+            if (picture == null) return;
+            java.awt.Rectangle previous = dirtyBounds();
             picture = null;
-            repaint();
+            at = null;
+            repaintDirty(previous);
+            if (getParent() != null && previous != null) getParent().repaint(
+                    previous.x, previous.y, previous.width, previous.height);
+        }
+
+        private java.awt.Rectangle dirtyBounds() {
+            if (picture == null || at == null) return null;
+            return new java.awt.Rectangle(at.x - 3, at.y - 3,
+                    Math.max(1, picture.getWidth() / 2) + 6,
+                    Math.max(1, picture.getHeight() / 2) + 6);
+        }
+
+        private void repaintDirty(java.awt.Rectangle bounds) {
+            if (bounds != null) repaint(bounds.x, bounds.y, bounds.width, bounds.height);
         }
 
         @Override

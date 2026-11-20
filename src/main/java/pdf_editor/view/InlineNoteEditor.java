@@ -18,6 +18,7 @@ public final class InlineNoteEditor extends JTextPane {
     private boolean finished;
     private final double zoom;
     private final Runnable textChanged;
+    private java.util.function.Predicate<Point> passThroughHit = point -> false;
 
     public InlineNoteEditor(PdfDocument.Placement note, Consumer<List<PdfDocument.NoteSpan>> commit) {
         this(note, 1.0, commit, () -> { });
@@ -29,8 +30,10 @@ public final class InlineNoteEditor extends JTextPane {
         this.zoom = zoom;
         this.textChanged = Objects.requireNonNull(textChanged);
         setStyledDocument(NoteTextDocumentFactory.createEditable(note, zoom).getStyledDocument());
-        setFont(new Font("Segoe UI", Font.PLAIN, Math.max(1, (int) Math.round(note.noteSize() * zoom))));
-        setOpaque(true);
+        setFont(new Font("Times New Roman", Font.PLAIN, Math.max(1, (int) Math.round(note.noteSize() * zoom))));
+        // Keep the edited text visible while allowing top-layer History materials
+        // to show through the body editor instead of hiding them behind white.
+        setOpaque(false);
         setBackground(Color.WHITE);
         // PPT-like text frame: border marks the box, with the same inner text margins as export.
         setBorder(BorderFactory.createLineBorder(new Color(60, 126, 216, 180), 1, true));
@@ -56,6 +59,13 @@ public final class InlineNoteEditor extends JTextPane {
         bindStyle("control I", StyleConstants.Italic);
         bindStyle("control U", StyleConstants.Underline);
     }
+    /** Allow the page to receive clicks on materials layered above the edited note. */
+    public void setPassThroughHit(java.util.function.Predicate<Point> predicate) {
+        passThroughHit = Objects.requireNonNull(predicate);
+    }
+    @Override public boolean contains(int x, int y) {
+        return !passThroughHit.test(new Point(x, y)) && super.contains(x, y);
+    }
     private void bindStyle(String key, Object style) {
         String name = "inline-" + key;
         getInputMap().put(KeyStroke.getKeyStroke(key), name);
@@ -64,6 +74,12 @@ public final class InlineNoteEditor extends JTextPane {
         });
     }
     public void toggleStyle(Object style) { NoteTextFormatting.toggle(this, style); }
+    public void fontFamily(String family) {
+        if (family == null || family.isBlank()) throw new IllegalArgumentException("Font required");
+        SimpleAttributeSet attrs = new SimpleAttributeSet();
+        StyleConstants.setFontFamily(attrs, family);
+        NoteTextFormatting.apply(this, attrs);
+    }
     public void fontSize(int size) {
         if (size < 8 || size > 72) throw new IllegalArgumentException("Font size out of range");
         SimpleAttributeSet attrs = new SimpleAttributeSet();

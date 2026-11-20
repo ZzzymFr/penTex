@@ -1,7 +1,6 @@
 package view.canvas;
 
 import view.DrawingCanvas;
-import view.glass.Glass;
 import view.glass.GlassButton;
 import view.glass.GlassDock;
 import view.glass.GlassLabel;
@@ -13,7 +12,6 @@ import javax.swing.Box;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -27,7 +25,7 @@ import java.awt.image.BufferedImage;
 /**
  * A page of the app: its own function area at the top, and the shared handwriting canvas below.
  *
- * <p>Subclasses ({@link GraphCanvasPage}, {@link PdfCanvasPage}, {@link AnswerCanvasPage}) put their
+ * <p>Subclasses (e.g. {@link AnswerCanvasPage}) put their
  * controls in the function area with {@link #setFunctionArea}. They all write on the same
  * {@link SharedCanvas}, so switching pages keeps the ink. To work with what was written, a subclass
  * calls {@link #captureFormula()} (the image) or {@link #recognizeFormula()} (the LaTeX).
@@ -36,7 +34,6 @@ public abstract class CanvasPage extends JPanel {
     private static final Color LINE = new Color(226, 232, 240);
     private static final Color HINT = new Color(100, 116, 139);
     private static final int FLOAT_INSET = 10;  // gap between the floating glass and the canvas edges
-    private static final Color ERROR_TEXT = new Color(185, 28, 28);
 
     private final SharedCanvas sharedCanvas;
     private final JPanel functionArea = new JPanel(new BorderLayout());
@@ -45,12 +42,7 @@ public abstract class CanvasPage extends JPanel {
     private final GlassDock hintDock = new GlassDock();
     private final GlassDock toolDock = new GlassDock();
     private final GlassDock zoomDock = new GlassDock();
-    private final GlassLabel message = new GlassLabel("");
-    private final GlassDock messageDock = new GlassDock();
-    private final Timer messageTimer = new Timer(0, e -> hideMessage());
-    private boolean messageIsError;
     private CanvasArea canvasArea;
-    private int boardMessageTop = -1;  // one-board look: message sits under the top capsules
 
     protected CanvasPage(SharedCanvas sharedCanvas) {
         super(new BorderLayout());
@@ -68,49 +60,11 @@ public abstract class CanvasPage extends JPanel {
         hintDock.add(hint);
         buildTools();
         buildZoomBadge();
-        messageDock.add(message);
-        messageDock.setVisible(false);
-        messageTimer.setRepeats(false);
         hintDock.setBackdrop(sharedCanvas::paintInkCopy);
         toolDock.setBackdrop(sharedCanvas::paintInkCopy);
         zoomDock.setBackdrop(sharedCanvas::paintInkCopy);
-        messageDock.setBackdrop(sharedCanvas::paintInkCopy);
         canvasArea = new CanvasArea();
         add(canvasArea, BorderLayout.CENTER);
-    }
-
-    /**
-     * Shows a short message floating at the top of the canvas, in red for errors.
-     * Call on the Swing event thread.
-     *
-     * @param hideAfterMillis hide it after this long; 0 keeps it until the next message or hideMessage()
-     */
-    protected final void showMessage(String text, boolean error, int hideAfterMillis) {
-        messageTimer.stop();
-        message.setText(text);
-        message.setForeground(error ? ERROR_TEXT : Glass.TEXT_MUTED);
-        messageIsError = error;
-        messageDock.setVisible(true);
-        messageDock.revalidate();
-        messageDock.repaint();
-        if (hideAfterMillis > 0) {
-            messageTimer.setInitialDelay(hideAfterMillis);
-            messageTimer.start();
-        }
-    }
-
-    protected final void hideMessage() {
-        messageTimer.stop();
-        messageDock.setVisible(false);
-    }
-
-    /** The message on show, or null if there is none. */
-    String currentMessage() {
-        return messageDock.isVisible() ? message.getText() : null;
-    }
-
-    boolean isMessageError() {
-        return messageDock.isVisible() && messageIsError;
     }
 
     /** Shows the zoom of the infinite canvas; click it to go back to 100% with the ink in the middle. */
@@ -141,6 +95,12 @@ public abstract class CanvasPage extends JPanel {
     // floats over the canvas, on top; caller sets its bounds
     protected final void addCanvasOverlay(JComponent overlay) {
         canvasArea.add(overlay, 0);
+        canvasArea.repaint();
+    }
+
+    // floats over the ink but under the docks + popups (the live graph card)
+    protected final void addCanvasUnderlay(JComponent underlay) {
+        canvasArea.add(underlay, canvasArea.getComponentZOrder(canvasSlot));
         canvasArea.repaint();
     }
 
@@ -176,8 +136,8 @@ public abstract class CanvasPage extends JPanel {
         return sharedCanvas.recognizeFormula(formulaImage);
     }
 
-    // one board: no function area, no old docks, message below the top capsules
-    protected final void useBoardLook(Color background, int messageTop) {
+    // one board: no function area, no old docks
+    protected final void useBoardLook(Color background) {
         functionArea.setVisible(false);
         canvasArea.remove(toolDock);
         canvasArea.remove(hintDock);
@@ -185,7 +145,6 @@ public abstract class CanvasPage extends JPanel {
         setBackground(background);
         canvasArea.setBackground(background);
         canvasSlot.setBackground(background);
-        boardMessageTop = messageTop;
         revalidate();
         repaint();
     }
@@ -269,7 +228,6 @@ public abstract class CanvasPage extends JPanel {
         CanvasArea() {
             super(null);
             setBackground(Color.WHITE);
-            add(messageDock);  // added first = drawn last = on top
             add(toolDock);
             add(hintDock);
             add(zoomDock);
@@ -295,14 +253,6 @@ public abstract class CanvasPage extends JPanel {
             hintDock.setBounds(FLOAT_INSET, h - FLOAT_INSET - hintSize.height, hintSize.width, hintSize.height);
             Dimension zoomSize = zoomDock.getPreferredSize();
             zoomDock.setBounds(w - FLOAT_INSET - zoomSize.width, FLOAT_INSET, zoomSize.width, zoomSize.height);
-            // the message sits top centre, kept clear of the zoom badge (long text is shortened with …)
-            Dimension messageSize = messageDock.getPreferredSize();
-            int messageWidth = Math.max(0, Math.min(messageSize.width, w - 2 * (zoomSize.width + 2 * FLOAT_INSET)));
-            messageDock.setBounds((w - messageWidth) / 2, FLOAT_INSET, messageWidth, messageSize.height);
-            if (boardMessageTop >= 0) {
-                int mw = Math.max(0, Math.min(messageSize.width, w - 2 * FLOAT_INSET));
-                messageDock.setBounds((w - mw) / 2, boardMessageTop, mw, messageSize.height);
-            }
         }
     }
 

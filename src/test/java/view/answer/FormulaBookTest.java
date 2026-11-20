@@ -98,6 +98,25 @@ class FormulaBookTest {
         assertTrue(book.get(bottom.getId()).getStrokes().contains(added));
     }
 
+    // "lim" 40 tall, then x→0 put under it after the pause: judged as a whole row at the next pause, not stroke by stroke
+    @Test
+    void limitWrittenLaterWaitsForThePause() {
+        answered(stroke(100, 100, 100, 140), stroke(115, 110, 115, 140), stroke(130, 110, 160, 140));
+        Stroke x = stroke(105, 165, 125, 185);  // 25 below, 20 tall
+
+        assertTrue(book.strokesReplaced(List.of(), List.of(x), revisions).isEmpty());
+        assertFalse(book.isBound(x));
+    }
+
+    @Test
+    void dashStartingTheNextLineStaysLoose() {
+        answered(stroke(100, 100, 100, 140), stroke(115, 110, 115, 140), stroke(130, 110, 160, 140));
+        Stroke dash = stroke(105, 175, 135, 175);
+
+        assertTrue(book.strokesReplaced(List.of(), List.of(dash), revisions).isEmpty());
+        assertFalse(book.isBound(dash));
+    }
+
     @Test
     void writingFarAwayChangesNothing() {
         Formula f = answered(stroke(100, 100, 100, 140));
@@ -120,6 +139,37 @@ class FormulaBookTest {
         assertEquals(Set.of(f.getId()), changed);
         assertEquals(3, book.get(f.getId()).getStrokes().size());
         assertFalse(book.get(f.getId()).getStrokes().contains(s));
+    }
+
+    // "5 3 - 4" 40 tall, the "-" sits 26 past the "3", more than 0.6 char
+    private final Stroke five = stroke(100, 100, 120, 140);
+    private final Stroke three = stroke(140, 100, 160, 140);
+    private final Stroke dash = stroke(186, 120, 210, 120);
+    private final Stroke four = stroke(230, 100, 230, 140);
+
+    @Test
+    void inkWrittenBackWhereItWasErasedJoinsAgain() {
+        Formula f = book.add(List.of(five, three, dash, four), 1);
+        book.strokesReplaced(List.of(dash, four), List.of(), revisions);
+
+        Stroke dashAgain = stroke(186, 120, 210, 120);
+        Stroke fourAgain = stroke(230, 100, 230, 140);
+        book.strokesReplaced(List.of(), List.of(dashAgain), revisions);
+        book.strokesReplaced(List.of(), List.of(fourAgain), revisions);
+
+        assertEquals(Set.of(five, three, dashAgain, fourAgain), book.get(f.getId()).getStrokes());
+        assertEquals(1, book.all().size());
+    }
+
+    @Test
+    void answeredFormulaForgetsWhereInkWasErased() {
+        Formula f = book.add(List.of(five, three, dash, four), 1);
+        book.strokesReplaced(List.of(dash, four), List.of(), revisions);
+        book.put(book.get(f.getId()).withAnswer(ANSWER));
+
+        Stroke dashAgain = stroke(186, 120, 210, 120);
+        assertTrue(book.strokesReplaced(List.of(), List.of(dashAgain), revisions).isEmpty());
+        assertFalse(book.isBound(dashAgain));
     }
 
     @Test
@@ -190,5 +240,38 @@ class FormulaBookTest {
         assertEquals(80, a.getHeight(), 0.01);
         assertEquals(100f, a.getFontSize(), 0.01);
         assertEquals(40, a.getBox().getWidth(), 0.01);
+    }
+
+    @Test
+    void barsAloneInTheirFormulas() {
+        Stroke top = stroke(135, 101, 165, 101);
+        Stroke bottom = stroke(135, 115, 165, 115);
+        book.add(List.of(top), 1);
+        book.add(List.of(bottom), 2);
+        assertTrue(book.holdsOnly(top, bottom));
+        book.add(List.of(top, bottom, stroke(170, 100, 170, 116)), 3);
+        assertFalse(book.holdsOnly(top, bottom), "something else is in there");
+    }
+
+    @Test
+    void formulaLeftOfAPairOnItsRow() {
+        Formula left = book.add(List.of(stroke(100, 100, 100, 116), stroke(110, 100, 110, 116)), 1);
+        Stroke top = stroke(135, 101, 165, 101);
+        Stroke bottom = stroke(135, 115, 165, 115);
+        book.add(List.of(top, bottom), 2);
+        assertEquals(left.getId(), book.leftOfPair(top, bottom).getId());
+    }
+
+    @Test
+    void noFormulaLeftOfAPairOnAnotherRowOrFarOff() {
+        book.add(List.of(stroke(100, 100, 100, 116), stroke(110, 100, 110, 116)), 1);
+        assertNull(book.leftOfPair(stroke(135, 201, 165, 201), stroke(135, 215, 165, 215)));
+        assertNull(book.leftOfPair(stroke(300, 101, 330, 101), stroke(300, 115, 330, 115)));
+    }
+
+    @Test
+    void answeredFormulaIsNeverLeftOfAPair() {
+        answered(stroke(100, 100, 100, 116), stroke(110, 100, 110, 116));
+        assertNull(book.leftOfPair(stroke(135, 101, 165, 101), stroke(135, 115, 165, 115)));
     }
 }

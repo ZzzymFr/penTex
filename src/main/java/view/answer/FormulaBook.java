@@ -18,7 +18,9 @@ import java.util.function.UnaryOperator;
 
 // which strokes are calculated formulas and what their answers are
 public class FormulaBook {
+    static final double REGROUP_REACH = 1.5;  // chars around new ink that a pause's guesses get regrouped
     private final Map<Long, Formula> formulas = new LinkedHashMap<>();
+    private final Set<Long> guesses = new LinkedHashSet<>();  // grouped by a pause, not a lasso / calculate
     private final AtomicLong ids;  // shared with copies so undo never reuses an id
 
     public FormulaBook() {
@@ -33,9 +35,81 @@ public class FormulaBook {
     public Formula add(Collection<Stroke> strokes, long revision) {
         Set<Stroke> picked = new LinkedHashSet<>(strokes);
         formulas.values().removeIf(f -> !Collections.disjoint(f.getStrokes(), picked));
+        guesses.retainAll(formulas.keySet());
         Formula f = new Formula(ids.incrementAndGet(), picked, revision, null);
         formulas.put(f.getId(), f);
         return f;
+    }
+
+    // same, but just a pause's guess at the grouping, later ink can still regroup it
+    public Formula addGuess(Collection<Stroke> strokes, long revision) {
+        Formula f = add(strokes, revision);
+        guesses.add(f.getId());
+        return f;
+    }
+
+    // unanswered guesses near box taken out so they get grouped again w/ the new ink, h = new ink's char
+    public List<Formula> takeGuessesNear(Rectangle box, double h) {
+        List<Formula> taken = new ArrayList<>();
+        for (Formula f : formulas.values()) {
+            Rectangle reach = f.reach();
+            double r = REGROUP_REACH * Math.max(h, f.getCharHeight());
+            if (f.getAnswer() == null && guesses.contains(f.getId()) && reach != null && box != null
+                    && reach.getMinX() <= box.getMaxX() + r && reach.getMaxX() >= box.getMinX() - r
+                    && reach.getMinY() <= box.getMaxY() + r && reach.getMaxY() >= box.getMinY() - r) {
+                taken.add(f);
+            }
+        }
+        for (Formula f : taken) {
+            remove(f.getId());
+        }
+        takeTiedTo(box, h, taken);
+        return taken;
+    }
+
+    // guesses the regroup would grow into come too: beside all the taken ink, or a limit stacked on a taken one
+    private void takeTiedTo(Rectangle box, double h, List<Formula> taken) {
+        Rectangle all = box == null ? null : new Rectangle(box);
+        List<Stroke> ink = new ArrayList<>();
+        for (Formula t : taken) {
+            all = all == null ? t.reach() : all.union(t.reach());
+            ink.addAll(t.getStrokes());
+        }
+        boolean grew = all != null;
+        while (grew) {
+            grew = false;
+            double row = ink.isEmpty() ? h : Math.max(h, AnswerLayout.strokeHeight(ink));  // a lone "=" isnt the char size
+            for (Formula f : new ArrayList<>(formulas.values())) {
+                Rectangle reach = f.reach();
+                if (f.getAnswer() == null && guesses.contains(f.getId()) && reach != null
+                        && (AnswerLayout.sameNewFormula(all, Math.max(row, f.getCharHeight()), reach) || stackedOnAny(taken, f))) {
+                    remove(f.getId());
+                    taken.add(f);
+                    all = all.union(reach);
+                    ink.addAll(f.getStrokes());
+                    grew = true;
+                }
+            }
+        }
+    }
+
+    private static boolean stackedOnAny(List<Formula> taken, Formula f) {
+        for (Formula t : taken) {
+            if (Scripts.stackedOn(t.getStrokes(), f.getStrokes()) || Scripts.stackedOn(f.getStrokes(), t.getStrokes())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean isGuess(long id) {
+        return formulas.containsKey(id) && guesses.contains(id);
+    }
+
+    // a taken guess came out the same, back as it was (id + revision, so its read still counts)
+    public void putBack(Formula f) {
+        formulas.put(f.getId(), f);
+        guesses.add(f.getId());
     }
 
     public Formula get(long id) {
@@ -60,17 +134,56 @@ public class FormulaBook {
         return null;
     }
 
+    // a + b's formulas hold nothing but them (an "=" written on its own)
+    public boolean holdsOnly(Stroke a, Stroke b) {
+        for (Stroke bar : List.of(a, b)) {
+            Formula f = holding(bar);
+            if (f == null) {
+                return false;
+            }
+            for (Stroke s : f.getStrokes()) {
+                if (s != a && s != b) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // nearest unanswered formula on the bars' row ending just left of them (up to 3 bar widths), null if none
+    public Formula leftOfPair(Stroke a, Stroke b) {
+        Rectangle pair = AnswerLayout.bounds(List.of(a, b));
+        double w = (AnswerLayout.bounds(List.of(a)).width + AnswerLayout.bounds(List.of(b)).width) / 2.0;
+        Formula best = null;
+        double bestGap = 0;
+        for (Formula f : formulas.values()) {
+            if (f.getAnswer() != null || f.getStrokes().contains(a) || f.getStrokes().contains(b)) {
+                continue;
+            }
+            Rectangle box = AnswerLayout.bounds(f.getStrokes());
+            double gap = pair.x - box.getMaxX();
+            boolean sameRow = box.getMinY() <= pair.getCenterY() && pair.getCenterY() <= box.getMaxY();
+            if (sameRow && gap >= -0.5 * w && gap <= 3 * w && (best == null || gap < bestGap)) {
+                best = f;
+                bestGap = gap;
+            }
+        }
+        return best;
+    }
+
     public void put(Formula f) {
         formulas.put(f.getId(), f);
     }
 
     public void remove(long id) {
         formulas.remove(id);
+        guesses.remove(id);
     }
 
     public FormulaBook copy() {
         FormulaBook copy = new FormulaBook(ids);
         copy.formulas.putAll(formulas);
+        copy.guesses.addAll(guesses);
         return copy;
     }
 
@@ -81,7 +194,7 @@ public class FormulaBook {
         Map<Long, Set<Stroke>> after = new LinkedHashMap<>();
         Set<Long> changed = new LinkedHashSet<>();
         for (Formula f : formulas.values()) {
-            before.put(f.getId(), AnswerLayout.bounds(f.getStrokes()));
+            before.put(f.getId(), f.reach());
             Set<Stroke> kept = new LinkedHashSet<>(f.getStrokes());
             if (kept.removeAll(gone)) {
                 changed.add(f.getId());
@@ -104,7 +217,7 @@ public class FormulaBook {
             if (strokes.isEmpty()) {
                 formulas.remove(id);
             } else {
-                formulas.put(id, formulas.get(id).with(strokes, revisions.getAsLong(), null));
+                formulas.put(id, formulas.get(id).edited(strokes, revisions.getAsLong()));
             }
         }
         return changed;
@@ -117,7 +230,7 @@ public class FormulaBook {
         for (Formula f : formulas.values()) {
             // judge against the old box so erased pieces still count
             Rectangle old = before.get(f.getId());
-            if (!AnswerLayout.joins(old, f.getCharHeight(), box)) {
+            if (!AnswerLayout.joins(old, f.getCharHeight(), box)) {  // limits wait for the pause, judged as a row
                 continue;
             }
             if (wasCutFrom(f, gone, box)) {

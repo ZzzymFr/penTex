@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class UncalculableReasonTest {
     private static void reason(String reason, String... inputs) {
         for (String input : inputs) {
-            assertEquals("Uncalculable — " + reason, Calc.once(input), input);
+            assertEquals("Can't calculate — " + reason, Calc.once(input), input);
         }
     }
 
@@ -17,13 +17,13 @@ class UncalculableReasonTest {
         reason("Has \"…\"", "1+...+n", "v=(x_1,...x_n)");
         reason("Not a calculation", "f:\\mathbb{R}\\rightarrow\\mathbb{R}", "1;2", "a:b");
         reason("Not a calculation", "\\\\", "1\\\\2", "x+1=3\\\\x=2");
-        reason("Integrals not supported", "\\int_0^1 x dx");
+        reason("Only ∫ f(x) dx on its own", "\\int_0^1 x dx");
         reason("∂ needs a function", "\\partial x");
     }
 
     @Test
     void newVocabularyWithNoValue() {
-        reason("Integrals not supported", "\\iint", "\\iiint_D f", "\\oint_C x", "1+\\iint x");
+        reason("Only ∫ f(x) dx on its own", "\\iint", "\\iiint_D f", "\\oint_C x", "1+\\iint x");
         reason("Has \"…\"", "\\vdots", "\\ddots", "1+\\vdots");
         reason("Not a calculation", "\\nabla f", "\\sup x", "\\inf_{x}x", "\\limsup a_n", "\\liminf a_n",
                 "\\det A", "\\dim V", "\\ker T", "\\Pr(A)", "\\dot x", "\\ddot x", "2\\det A", "1+\\nabla");
@@ -36,7 +36,7 @@ class UncalculableReasonTest {
         reason("Function not defined", "z'(1)", "f'(x)=\\cos(e^{x})");
         Calc calc = new Calc();
         calc.show("f(x)=x^2");
-        assertEquals("Uncalculable — Max 4th derivative", calc.show("f^{(5)}(3)"));
+        assertEquals("Can't calculate — Max 4th derivative", calc.show("f^{(5)}(3)"));
         reason("Max 4th derivative", "\\frac{d^5}{dx^5}x=1");
         reason("sin⁻¹ is ambiguous", "\\sin^{-1} 1");
     }
@@ -100,9 +100,9 @@ class UncalculableReasonTest {
         reason("Can't decide", "\\forall x\\in\\mathbb{Q}, x^2\\neq2");
         Calc calc = new Calc();
         calc.show("s(x)=\\sin x");
-        assertEquals("Uncalculable — Derivative unstable", calc.show("s'(10^{12})"));
+        assertEquals("Can't calculate — Derivative unstable", calc.show("s'(10^{12})"));
         calc.show("T(x,y)=x+y");
-        assertEquals("Uncalculable — Not a function input", calc.show("\\frac{\\partial T}{\\partial z}(1,2)"));
+        assertEquals("Can't calculate — Not a function input", calc.show("\\frac{\\partial T}{\\partial z}(1,2)"));
     }
 
     @Test

@@ -8,6 +8,7 @@ import use_case.evaluate.EvaluateOutputBoundary;
 import use_case.evaluate.ExprOutputData;
 import use_case.evaluate.FormulaShape;
 import use_case.evaluate.IntervalOutputData;
+import use_case.evaluate.InvalidOutputData;
 import use_case.evaluate.UncalculableOutputData;
 import use_case.evaluate.ValueOutputData;
 
@@ -56,43 +57,52 @@ public class EvaluatePresenter implements EvaluateOutputBoundary {
 
     @Override
     public void prepareFunctionDefinedView(String definition) {
-        publish(AnswerFormatter.defined(definition), null, "", true);
+        publish(AnswerFormatter.defined(), AnswerFormatter.defined(), "", "", "", definition);
     }
 
     @Override
     public void prepareExpressionView(ExprOutputData expression) {
         List<TextRun> runs = ExprWriter.runs(expression);
         if (TextRun.plain(runs).length() > MAX_ANSWER_LENGTH) {
-            prepareFailView(UncalculableText.answerTooLong());
+            fail(UncalculableText.TITLE, UncalculableText.answerTooLong());
             return;
         }
-        publish("= " + ExprWriter.latex(expression), AnswerFormatter.canvasRuns(kind, runs), "", false);
+        String result = "= " + ExprWriter.latex(expression);
+        publish(result, TextRun.plain(AnswerFormatter.canvasRuns(kind, runs)), CanvasLatex.ofLatex(kind, result), "",
+                "", null);
     }
 
     @Override
     public void prepareUncalculableView(UncalculableOutputData why) {
-        prepareFailView(UncalculableText.of(why.getReason(), why.getDetail()));
+        fail(UncalculableText.TITLE, UncalculableText.of(why.getReason(), why.getDetail()));
     }
 
     @Override
-    public void prepareFailView(String errorMessage) {
-        publish("", null, errorMessage, false);
+    public void prepareInvalidView(InvalidOutputData why) {
+        fail(InvalidText.TITLE, InvalidText.of(why.getProblem(), why.getDetails()));
+    }
+
+    // title on top, reason under it
+    private void fail(String title, String reason) {
+        publish("", "", "", title, reason, null);
     }
 
     private void showResult(String text) {
-        // 5×10^20 gets its 20 raised
-        publish(text, PowerOfTen.runs(AnswerFormatter.canvasText(kind, text)), "", false);
+        publish(text, AnswerFormatter.canvasText(kind, text), CanvasLatex.ofText(kind, text), "", "", null);
     }
 
-    // canvasRuns null = plain text answer
-    private void publish(String resultText, List<TextRun> canvasRuns, String errorText, boolean definition) {
+    // answerLatex "" = nothing to typeset, definedLatex null = not a definition
+    private void publish(String resultText, String answerText, String answerLatex, String errorTitle,
+                         String errorText, String definedLatex) {
         MathLabState state = viewModel.getState();
         state.setResultText(resultText);
         state.setAnswerKind(kind);
-        state.setAnswerText(AnswerFormatter.canvasText(kind, resultText));
-        state.setAnswerRuns(canvasRuns);
+        state.setAnswerText(answerText);
+        state.setAnswerLatex(answerLatex);
+        state.setErrorTitle(errorTitle);
         state.setErrorText(errorText);
-        state.setDefinition(definition);
+        state.setDefinition(definedLatex != null);
+        state.setDefinedLatex(definedLatex == null ? "" : definedLatex);
         viewModel.firePropertyChanged(MathLabViewModel.RESULT);
     }
 }

@@ -1,7 +1,9 @@
 package data_access;
 
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.util.Arrays;
@@ -10,30 +12,38 @@ import java.util.Arrays;
  * Turns a picture of a handwritten formula into the input the model was trained on, the same
  * way as {@code src/neutral network/preprocess.py} ({@code load_formula_image}) with
  * {@code IMAGE_INVERT = False} from {@code train.py}:
- * RGB colours and light/dark kept as they are, cropped to the ink, scaled so the ink fits 128 px
- * high with an 8 px margin (at most 1024 px wide), centred on a canvas 128 px high whose width
- * is a multiple of 16 (at least 64), the background filled with the original background colour.
+ * RGB colours and light/dark kept as they are, cropped to the ink, scaled by the rule in
+ * {@link FormulaLayout} (the tallest line of ink 112 px high, so every line of a multi-line formula
+ * keeps the size a single line has), centred with an 8 px margin on a canvas whose height (at least
+ * 128) and width (at least 64) are multiples of 16, the background filled with the original
+ * background colour.
  *
- * <p>{@code vital_pixel.forward} only accepts {@code [B,3,128,W]} with W a multiple of 16, so an
+ * <p>{@code vital_pixel.forward} only accepts {@code [B,3,H,W]} with H and W multiples of 16, so an
  * image straight from the canvas must go through here first.
  */
 final class FormulaImagePreprocessor {
-    static final int HEIGHT = 128;
-    static final int MARGIN = 8;
-    static final int STRIDE = 16;
-    static final int MAX_WIDTH = 1024;
-    static final int MIN_WIDTH = 64;
     private static final int INK_THRESHOLD = 32;  // difference in any RGB channel from black/white background
+    // bands thinner than this many pens are just dots / dashes, not a line of chars (BandRule path only)
+    static final double MARK_PENS = 3;
+    // made-up line height (in pens) for ink thats only marks, about a normal handwritten char
+    static final double GLYPH_PENS = 8;
 
     private FormulaImagePreprocessor() {
     }
 
+    /** {@link #prepare(BufferedImage, CropScale)} with the scale model training used. */
+    static BufferedImage prepare(BufferedImage source) {
+        return prepare(source, CropScale.defaultModel());
+    }
+
     /**
-     * @return an RGB image {@value #HEIGHT} px high, width a multiple of {@value #STRIDE},
+     * @param cropScale picks the factor m on the tallest band, like {@code band_scale} in training;
+     *                  {@link CropScale#RULE} keeps the plain rule
+     * @return an RGB image at least 128 px high, height and width multiples of 16,
      *         preserving the source RGB colours like the training images
      * @throws IllegalArgumentException if there is no ink in the image
      */
-    static BufferedImage prepare(BufferedImage source) {
+    static BufferedImage prepare(BufferedImage source, CropScale cropScale) {
         int width = source.getWidth();
         int height = source.getHeight();
         int[] rgb = toRgb(source);
@@ -44,6 +54,8 @@ final class FormulaImagePreprocessor {
         int top = height;
         int right = -1;
         int bottom = -1;
+        boolean[] rowHasInk = new boolean[height];
+        boolean[] isInk = new boolean[width * height];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int pixel = rgb[y * width + x];
@@ -57,6 +69,8 @@ final class FormulaImagePreprocessor {
                     top = Math.min(top, y);
                     right = Math.max(right, x);
                     bottom = Math.max(bottom, y);
+                    rowHasInk[y] = true;
+                    isInk[y * width + x] = true;
                 }
             }
         }
@@ -68,23 +82,67 @@ final class FormulaImagePreprocessor {
         BufferedImage ink = new BufferedImage(inkWidth, inkHeight, BufferedImage.TYPE_INT_RGB);
         ink.setRGB(0, 0, inkWidth, inkHeight, rgb, top * width + left, width);
 
-        // Same scaling as training: very flat ink (a long line) is measured as 20% of its width high.
-        double scale = Math.min((HEIGHT - 2.0 * MARGIN) / Math.max(inkHeight, 0.2 * inkWidth),
-                (MAX_WIDTH - 2.0 * MARGIN) / inkWidth);
-        int resizedWidth = Math.max(1, (int) Math.round(inkWidth * scale));
-        int resizedHeight = Math.max(1, (int) Math.round(inkHeight * scale));
+        // Same scale and canvas as training (formula_layout.py, band_scale from crop_scale.py).
+        boolean[] mask = new boolean[inkWidth * inkHeight];
+        for (int y = 0; y < inkHeight; y++) {
+            System.arraycopy(isInk, (top + y) * width + left, mask, y * inkWidth, inkWidth);
+        }
+        double tallest = FormulaLayout.tallestBand(
+                FormulaLayout.rowSpans(Arrays.copyOfRange(rowHasInk, top, bottom + 1)),
+                inkHeight, FormulaLayout.GAP_MIN_PX) * cropScale.bandScale(mask, inkWidth, inkHeight);
+        FormulaLayout.Size layout = FormulaLayout.size(inkWidth, inkHeight, tallest);
+        int resizedWidth = Math.max(1, FormulaLayout.roundHalfUp(inkWidth * layout.scale()));
+        int resizedHeight = Math.max(1, FormulaLayout.roundHalfUp(inkHeight * layout.scale()));
         BufferedImage resized = resize(ink, resizedWidth, resizedHeight);
 
-        int canvasWidth = Math.max(MIN_WIDTH,
-                (int) Math.ceil((resizedWidth + 2.0 * MARGIN) / STRIDE) * STRIDE);
-        BufferedImage canvas = new BufferedImage(canvasWidth, HEIGHT, BufferedImage.TYPE_INT_RGB);
+        int canvasWidth = layout.width();
+        int canvasHeight = layout.height();
+        BufferedImage canvas = new BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = canvas.createGraphics();
         int background = lightBackground ? 255 : 0;  // not inverted, so the background keeps its colour
         g.setColor(new java.awt.Color(background, background, background));
-        g.fillRect(0, 0, canvasWidth, HEIGHT);
-        g.drawImage(resized, (canvasWidth - resizedWidth) / 2, (HEIGHT - resizedHeight) / 2, null);
+        g.fillRect(0, 0, canvasWidth, canvasHeight);
+        g.drawImage(resized, (canvasWidth - resizedWidth) / 2, (canvasHeight - resizedHeight) / 2, null);
         g.dispose();
         return canvas;
+    }
+
+    /**
+     * The plain gray-on-white path with a {@link BandRule} (no scale model): dark backgrounds are
+     * flipped, coloured ink turns dark gray, and ink that is only dots / dashes is sized like a normal
+     * character instead of being blown up to a full line. The recognizer does not use it: the shipped
+     * weights are trained with {@link #prepare(BufferedImage, CropScale)}.
+     *
+     * @return a gray-on-white RGB image (r=g=b) at least 128 px high, sides multiples of 16
+     * @throws IllegalArgumentException if there is no ink in the image
+     */
+    static BufferedImage prepare(BufferedImage source, BandRule rule) {
+        GrayInk gray = GrayInk.of(source);
+        Rectangle box = gray.bounds();
+        if (box == null) {
+            throw new IllegalArgumentException("The image has no handwriting in it.");
+        }
+        double tallest = lineHeight(gray, box, rule);
+        FormulaLayout.Size layout = FormulaLayout.size(box.width, box.height, tallest);
+        int resizedWidth = Math.max(1, FormulaLayout.roundHalfUp(box.width * layout.scale()));
+        int resizedHeight = Math.max(1, FormulaLayout.roundHalfUp(box.height * layout.scale()));
+        BufferedImage resized = resize(gray.crop(box), resizedWidth, resizedHeight);
+
+        BufferedImage canvas = new BufferedImage(layout.width(), layout.height(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = canvas.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, layout.width(), layout.height());
+        g.drawImage(resized, (layout.width() - resizedWidth) / 2, (layout.height() - resizedHeight) / 2, null);
+        g.dispose();
+        return canvas;
+    }
+
+    // rule's line height (tallest band by default), unless its all dots/dashes, then a normal char height
+    private static double lineHeight(GrayInk gray, Rectangle box, BandRule rule) {
+        double tallest = rule.lineHeight(FormulaLayout.tallestBand(
+                FormulaLayout.rowSpans(gray.rowsWithInk(box)), box.height, FormulaLayout.GAP_MIN_PX), box.height);
+        double pen = gray.penWidth(box);
+        return tallest < MARK_PENS * pen ? GLYPH_PENS * pen : tallest;
     }
 
     /** Composite transparency onto white without discarding RGB colour information. */

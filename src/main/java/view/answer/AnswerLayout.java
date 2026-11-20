@@ -21,6 +21,7 @@ public final class AnswerLayout {
     public static final double NEW_INK_GAP_X = 1.5;
     public static final double NEW_INK_GAP_Y = 0.35;
     private static final double DOT = 6;
+    private static final double LINE = 0.5;  // a stacked line needs a stroke this tall (x char), an i's dot isnt one
 
     private AnswerLayout() {
     }
@@ -48,9 +49,12 @@ public final class AnswerLayout {
         return glyphs;
     }
 
-    // median height of the tall glyphs, skips "-", "=", dots
+    // median height of the tall glyphs, skips "-", "=", dots; a fraction's top + bottom are chars of their own
     public static double charHeight(Collection<Stroke> strokes) {
-        List<Integer> heights = tallHeights(glyphs(strokes));
+        List<Integer> heights = new ArrayList<>();
+        for (List<Stroke> part : unstacked(strokes)) {
+            heights.addAll(tallHeights(glyphs(part)));
+        }
         if (heights.isEmpty()) {
             Rectangle all = bounds(strokes);
             return clamped(all == null ? 0 : all.height);
@@ -58,12 +62,85 @@ public final class AnswerLayout {
         return clamped(median(heights));
     }
 
+    // fractions + lines over lines pulled apart (x overlap merged 2 over 3, lim over x->inf into one glyph), just the ink if there's no real char
+    private static List<List<Stroke>> unstacked(Collection<Stroke> strokes) {
+        if (tallHeights(strokeBoxes(strokes)).isEmpty()) {
+            return List.of(new ArrayList<>(strokes));
+        }
+        double h = strokeHeight(strokes);
+        List<List<Stroke>> parts = new ArrayList<>();
+        for (List<Stroke> layer : Fractions.layers(strokes, h)) {
+            parts.addAll(lines(layer, h));
+        }
+        return parts;
+    }
+
+    // ink cut where no stroke spans the y gap, each band w/ a char half as tall as h is a line; dots + bars go w/ the closest
+    private static List<List<Stroke>> lines(List<Stroke> layer, double h) {
+        List<Stroke> byTop = new ArrayList<>();
+        for (Stroke s : layer) {
+            if (bounds(List.of(s)) != null) {
+                byTop.add(s);
+            }
+        }
+        byTop.sort(Comparator.comparingInt(s -> bounds(List.of(s)).y));
+        List<List<Stroke>> bands = new ArrayList<>();
+        double bottom = Double.NEGATIVE_INFINITY;
+        for (Stroke s : byTop) {
+            Rectangle b = bounds(List.of(s));
+            if (b.getMinY() > bottom) {
+                bands.add(new ArrayList<>());
+            }
+            bands.get(bands.size() - 1).add(s);
+            bottom = Math.max(bottom, b.getMaxY());
+        }
+        List<List<Stroke>> lines = new ArrayList<>();
+        for (List<Stroke> band : bands) {
+            if (tallHeights(strokeBoxes(band)).stream().anyMatch(t -> t >= LINE * h)) {
+                lines.add(band);
+            }
+        }
+        if (lines.size() < 2) {
+            return List.of(layer);
+        }
+        for (List<Stroke> band : bands) {
+            if (!lines.contains(band)) {
+                closest(lines, bounds(band)).addAll(band);
+            }
+        }
+        return lines;
+    }
+
+    private static List<Stroke> closest(List<List<Stroke>> lines, Rectangle box) {
+        List<Stroke> best = lines.get(0);
+        double gap = Double.MAX_VALUE;
+        for (List<Stroke> line : lines) {
+            Rectangle b = bounds(line);
+            double g = Math.max(b.getMinY() - box.getMaxY(), box.getMinY() - b.getMaxY());
+            if (g < gap) {
+                gap = g;
+                best = line;
+            }
+        }
+        return best;
+    }
+
+    // any real char in there, not just "-" "=" dots
+    public static boolean hasChars(Collection<Stroke> strokes) {
+        return !tallHeights(glyphs(strokes)).isEmpty();
+    }
+
     // top-left of an answer right of the formula, centred on its last glyph
     public static Point2D.Double rightOf(Collection<Stroke> formula, double charHeight, double answerHeight) {
+        return rightOfAt(formula, charHeight, answerHeight / 2);
+    }
+
+    // same, but this far down the answer lands on the last glyph's middle (a fraction bar, not the box centre)
+    public static Point2D.Double rightOfAt(Collection<Stroke> formula, double charHeight, double answerMiddle) {
         Rectangle all = bounds(formula);
         List<Rectangle> glyphs = glyphs(formula);
         Rectangle last = glyphs.get(glyphs.size() - 1);
-        return new Point2D.Double(all.getMaxX() + GAP_RIGHT * charHeight, last.getCenterY() - answerHeight / 2);
+        return new Point2D.Double(all.getMaxX() + GAP_RIGHT * charHeight, last.getCenterY() - answerMiddle);
     }
 
     // top-left of an answer under the formula
@@ -86,8 +163,26 @@ public final class AnswerLayout {
         return Math.hypot(dx, dy);
     }
 
-    // median height of tall single strokes; lines stacked above each other don't add up
+    // 3/4 up the tall single strokes, lowercase + "+" don't shrink it; lines stacked above each other don't add up
     public static double strokeHeight(Collection<Stroke> strokes) {
+        List<Integer> heights = tallHeights(strokeBoxes(strokes));
+        if (heights.isEmpty()) {
+            return charHeight(strokes);
+        }
+        heights.sort(null);
+        return clamped(heights.get((int) (0.75 * (heights.size() - 1))));
+    }
+
+    // tallest single stroke = a full char, a fraction doesn't stack up, lowercase doesn't drag it down
+    public static double tallestStroke(Collection<Stroke> strokes) {
+        List<Integer> heights = tallHeights(strokeBoxes(strokes));
+        if (heights.isEmpty()) {
+            return charHeight(strokes);
+        }
+        return clamped(java.util.Collections.max(heights));
+    }
+
+    private static List<Rectangle> strokeBoxes(Collection<Stroke> strokes) {
         List<Rectangle> boxes = new ArrayList<>();
         for (Stroke s : strokes) {
             Rectangle b = bounds(List.of(s));
@@ -95,11 +190,7 @@ public final class AnswerLayout {
                 boxes.add(b);
             }
         }
-        List<Integer> heights = tallHeights(boxes);
-        if (heights.isEmpty()) {
-            return charHeight(strokes);
-        }
-        return clamped(median(heights));
+        return boxes;
     }
 
     // fresh loose ink: same formula if on the same line, gaps up to 1.5 chars

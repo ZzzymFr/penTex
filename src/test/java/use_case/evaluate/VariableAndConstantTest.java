@@ -20,8 +20,8 @@ class VariableAndConstantTest {
         assertEquals("r = 1", Calc.once("2\\pi r=2\\pi"));
         assertEquals("x_2 = 3", Calc.once("2x_2=6"));
         assertEquals("\\vec{v} = 2", Calc.once("3\\vec{v}=6"));
-        assertTrue(Calc.once("\\alpha\\beta=1").contains("more than one unknown"));
-        assertTrue(Calc.once("x_1x_2=1").contains("more than one unknown"));
+        assertTrue(Calc.once("\\alpha\\beta=1").contains("Too many unknowns"));
+        assertTrue(Calc.once("x_1x_2=1").contains("Too many unknowns"));
     }
 
     @Test
@@ -40,7 +40,7 @@ class VariableAndConstantTest {
         assertEquals("= 1 or -1", Calc.once("\\pm1"));
         assertEquals("= 2", Calc.once("2\\pm0"));
         assertEquals("x = -1 or x = 3", Calc.once("x=1\\pm2"));
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("1\\pm1\\pm1\\pm1\\pm1\\pm1")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("1\\pm1\\pm1\\pm1\\pm1\\pm1")));
     }
 
     @Test
@@ -58,6 +58,6 @@ class VariableAndConstantTest {
 
     @Test
     void plusMinusInFunctionDefinitionIsUncalculable() {
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("f(x)=x\\pm1")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("f(x)=x\\pm1")));
     }
 }

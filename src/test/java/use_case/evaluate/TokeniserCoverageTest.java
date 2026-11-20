@@ -3,7 +3,7 @@ package use_case.evaluate;
 import entity.Context;
 import entity.MathLexer;
 import entity.MathParser;
-import entity.MathSyntaxException;
+import entity.MathException;
 import entity.UserFunction;
 import entity.node.Node;
 import org.junit.jupiter.api.Test;
@@ -38,7 +38,7 @@ class TokeniserCoverageTest {
         for (String s : new String[] {"\\text{Let }A", "\\square", "\\begin{pmatrix}1\\end{pmatrix}", "1;2",
                 "f:\\mathbb{R}\\rightarrow\\mathbb{R}", "g:\\mathbb{N}\\rightarrow\\mathbb{R}", "v=(x_1,...x_n)",
                 "\\mathbb{R}", "1\\oplus2", "\\sum_{i=1}^{25}ix_i=x_1+2x_2+...+24x_{24}+25x_{25}"}) {
-            assertEquals("Uncalculable", Calc.withoutReason(Calc.once(s)), s);
+            assertEquals("Can't calculate", Calc.withoutReason(Calc.once(s)), s);
         }
     }
 
@@ -49,7 +49,7 @@ class TokeniserCoverageTest {
         for (String t : vocabulary) {
             for (String s : new String[] {t, "1" + t + "2", t + "{1}"}) {
                 String answer = safeAnswer(s);
-                assertFalse(answer.contains("is not supported"), s + " gave " + answer);
+                assertFalse(answer.endsWith("\" not supported"), s + " gave " + answer);
             }
         }
     }
@@ -75,8 +75,8 @@ class TokeniserCoverageTest {
         assertEquals("true", Calc.once("\\frac{5\\times6\\times7\\times8}{2}=840"));
         assertEquals("x = 2", Calc.once("8x+4=20"));
         assertEquals("true", Calc.once("\\lim_{x\\rightarrow\\infty}8x+3=\\infty"));
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("\\forall x\\in\\mathbb{R}^{n}")));
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("f'(x)=\\cos(e^{x})")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("\\forall x\\in\\mathbb{R}^{n}")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("f'(x)=\\cos(e^{x})")));
     }
 
     @Test
@@ -104,7 +104,7 @@ class TokeniserCoverageTest {
         assertEquals(Calc.once("\\sec(2x)=2"), Calc.once("\\sec 2x=2"));
         assertEquals(Calc.once("(\\sinh 1)^2"), Calc.once("\\sinh^2 1"));
         assertEquals("= 2", Calc.once("\\sec 0\\cosh 0+1"));
-        assertEquals("Uncalculable — arcsin⁻¹ is ambiguous", Calc.once("\\arcsin^{-1}(1)"));
+        assertEquals("Can't calculate — arcsin⁻¹ is ambiguous", Calc.once("\\arcsin^{-1}(1)"));
     }
 
     @Test
@@ -132,21 +132,21 @@ class TokeniserCoverageTest {
 
     @Test
     void floorCeilAndListsMisused() {
-        assertEquals("Uncalculable — Wrong kind of value", Calc.once("\\max(\\{1\\},2)"));
-        assertEquals("Uncalculable — Wrong kind of value", Calc.once("\\lfloor(1,2)\\rfloor"));
-        assertEquals("Uncalculable — Can't differentiate this", Calc.once("\\frac{d}{dx}\\max(x,1)"));
-        assertEquals("Uncalculable — Can't differentiate this", Calc.once("\\frac{d}{dx}\\lfloor x\\rfloor"));
-        assertEquals("Unexpected \"\\rfloor\".", Calc.once("\\rfloor"));
-        assertEquals("Unexpected \"\\rceil\".", Calc.once("1\\rceil2"));
-        assertEquals("Expected \"\\rfloor\".", Calc.once("1\\lfloor2"));
-        assertEquals("Expected \"(\".", Calc.once("\\max{1}"));
+        assertEquals("Can't calculate — Wrong kind of value", Calc.once("\\max(\\{1\\},2)"));
+        assertEquals("Can't calculate — Wrong kind of value", Calc.once("\\lfloor(1,2)\\rfloor"));
+        assertEquals("Can't calculate — Can't differentiate this", Calc.once("\\frac{d}{dx}\\max(x,1)"));
+        assertEquals("Can't calculate — Can't differentiate this", Calc.once("\\frac{d}{dx}\\lfloor x\\rfloor"));
+        assertEquals("Invalid formula — Unexpected \"⌋\"", Calc.once("\\rfloor"));
+        assertEquals("Invalid formula — Unexpected \"⌉\"", Calc.once("1\\rceil2"));
+        assertEquals("Invalid formula — Missing \"⌋\"", Calc.once("1\\lfloor2"));
+        assertEquals("Invalid formula — Missing \"(\"", Calc.once("\\max{1}"));
     }
 
     @Test
     void integralsAreUncalculable() {
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("\\int")));
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("\\int_a^x g=\\lim_{n\\rightarrow\\infty}\\int_a^x f_n'")));
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("\\int_{0}^{1}x")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("\\int")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("\\int_a^x g=\\lim_{n\\rightarrow\\infty}\\int_a^x f_n'")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("\\int_{0}^{1}x")));
     }
 
     // go thru interactor + parser directly so catch cant hide crashes
@@ -165,7 +165,7 @@ class TokeniserCoverageTest {
             if (free.isEmpty()) {
                 node.evaluate(new Context(functions));
             }
-        } catch (MathSyntaxException e) {
+        } catch (MathException e) {
             // error msg or uncalc is fine
         } catch (RuntimeException | StackOverflowError e) {
             fail(s + " threw " + e);

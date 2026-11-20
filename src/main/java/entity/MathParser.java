@@ -46,6 +46,8 @@ public final class MathParser {
     private static final Map<String, String> MIRRORED = Map.of("\\supseteq", "\\subset", "=", "=",
             "\\neq", "\\neq", "\\approx", "\\approx", "\\perp", "\\perp", "<", ">", ">", "<",
             "\\leq", "\\geq", "\\geq", "\\leq");
+    private static final Set<String> RELATIONS = Set.of("=", "<", ">", "\\leq", "\\geq", "\\neq", "\\approx",
+            "\\in", "\\notin", "\\subset", "\\supseteq", "\\perp");
     // a bare arg like \sin 2x ends before these
     private static final List<String> NAMED_FUNCTIONS = namedFunctions();
 
@@ -63,16 +65,14 @@ public final class MathParser {
 
     public Node parse() {
         if (tokens.isEmpty()) {
-            throw new MathSyntaxException("The expression is empty.");
+            throw new MathSyntaxException(SyntaxProblem.EMPTY);
         }
         try {
             Node result = parseStatement();
             if (position < tokens.size()) {
-                throw new MathSyntaxException("Unexpected \"" + peek() + "\".");
+                throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, peek());
             }
             return result;
-        } catch (UncalculableException e) {
-            throw e;
         } catch (MathSyntaxException e) {
             for (String token : PROSE) {
                 if (tokens.contains(token)) {
@@ -158,7 +158,7 @@ public final class MathParser {
         int plusMinusBefore = plusMinusCount;
         String letter = next();
         if (!MathLexer.isLetter(letter)) {
-            throw new MathSyntaxException("Unexpected \"" + letter + "\".");
+            throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, letter);
         }
         String variable = parseName(letter);
         Node domain = null;
@@ -196,13 +196,13 @@ public final class MathParser {
 
     private Node parseRelation() {
         Node first = parseSetExpression();
-        if (!isRelationOperator(peek())) {
+        if (!isRelation(peek())) {
             return first;
         }
         List<Node> operands = new ArrayList<>();
         List<String> operators = new ArrayList<>();
         operands.add(first);
-        while (isRelationOperator(peek())) {
+        while (isRelation(peek())) {
             operators.add(next());
             operands.add(parseSetExpression());
         }
@@ -220,7 +220,7 @@ public final class MathParser {
         for (int i = operators.size() - 1; i >= 0; i--) {
             String operator = operators.get(i);
             if (!MIRRORED.containsKey(operator)) {
-                throw new MathSyntaxException("Unexpected \"\\supseteq\".");
+                throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, "\\supseteq");
             }
             flipped.add(MIRRORED.get(operator));
         }
@@ -417,12 +417,12 @@ public final class MathParser {
             throw new UncalculableException(meaninglessReason(token));
         }
         if (OPERATORS.contains(token) || NamedFunction.isClosing(token)) {
-            throw new MathSyntaxException("Unexpected \"" + token + "\".");
+            throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, token);
         }
         if (token.startsWith("\\") && token.length() > 1) {
-            throw new MathSyntaxException("\"" + token + "\" is not supported.");
+            throw new MathSyntaxException(SyntaxProblem.NOT_SUPPORTED, token);
         }
-        throw new MathSyntaxException("Unexpected \"" + token + "\".");
+        throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, token);
     }
 
     private Node parseParenthesized() {
@@ -524,7 +524,7 @@ public final class MathParser {
         } catch (NumberFormatException e) {
             // reported below
         }
-        throw new MathSyntaxException("The dimension of a number set must be a positive integer.");
+        throw new MathSyntaxException(SyntaxProblem.SET_DIMENSION);
     }
 
     private String parseName(String letter) {
@@ -552,7 +552,7 @@ public final class MathParser {
             subscript.add(next());
         }
         if (subscript.isEmpty()) {
-            throw new MathSyntaxException("The subscript of \"" + letter + "\" is empty.");
+            throw new MathSyntaxException(SyntaxProblem.EMPTY_SUBSCRIPT, letter);
         }
         if (subscript.size() == 1) {
             return letter + "_" + subscript.get(0);
@@ -601,7 +601,7 @@ public final class MathParser {
 
     private Node parseCall(String name, int derivativeOrder, int derivativeParameter) {
         if (!peekIs("(")) {
-            throw new MathSyntaxException("Write " + name + "(...) to use the function " + name + ".");
+            throw new MathSyntaxException(SyntaxProblem.NEEDS_BRACKETS, name);
         }
         next();
         List<Node> arguments = new ArrayList<>();
@@ -658,7 +658,7 @@ public final class MathParser {
         expect("{");
         String letter = next();
         if (!MathLexer.isLetter(letter)) {
-            throw new MathSyntaxException("Unexpected \"" + letter + "\".");
+            throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, letter);
         }
         String variable = parseName(letter);
         expect("\\rightarrow");
@@ -774,8 +774,8 @@ public final class MathParser {
                     plusMinusAtEnd = plusMinusCount;
                 }
             }
-        } catch (MathSyntaxException e) {
-            // bad term, the outside parse reports it
+        } catch (MathException e) {
+            // bad term (or uncalc one), the outside parse reports it
         }
         position = end;
         plusMinusCount = plusMinusAtEnd;
@@ -792,7 +792,7 @@ public final class MathParser {
     // bound inside the brackets, parsed on its own
     private Node parseBound(int from, int to) {
         if (from == to) {
-            throw new MathSyntaxException("Unexpected \"" + tokens.get(to) + "\".");
+            throw new MathSyntaxException(SyntaxProblem.UNEXPECTED, tokens.get(to));
         }
         MathParser boundParser = new MathParser(tokens.subList(from, to), functions);
         boundParser.boundNames.addAll(boundNames);
@@ -815,7 +815,7 @@ public final class MathParser {
                 }
             }
         }
-        throw new MathSyntaxException("Expected \"}\".");
+        throw new MathSyntaxException(SyntaxProblem.EXPECTED, "}");
     }
 
     private boolean endsWith(int start, int end, String... suffix) {
@@ -964,19 +964,16 @@ public final class MathParser {
         try {
             value = Double.parseDouble(token);
         } catch (NumberFormatException e) {
-            throw new MathSyntaxException("\"" + token + "\" is not a valid number.");
+            throw new MathSyntaxException(SyntaxProblem.BAD_NUMBER, token);
         }
         int point = token.indexOf('.');
         int decimals = point == -1 ? 0 : token.length() - point - 1;
         return new NumberNode(value, decimals);
     }
 
-    private boolean isRelationOperator(String token) {
-        return "=".equals(token) || "<".equals(token) || ">".equals(token)
-                || "\\leq".equals(token) || "\\geq".equals(token)
-                || "\\neq".equals(token) || "\\approx".equals(token)
-                || "\\in".equals(token) || "\\perp".equals(token)
-                || "\\notin".equals(token) || "\\subset".equals(token) || "\\supseteq".equals(token);
+    // the one list of relation tokens, use case reads it too
+    public static boolean isRelation(String token) {
+        return token != null && RELATIONS.contains(token);  // peek is null at the end
     }
 
     private boolean startsValue(String token) {
@@ -1020,7 +1017,7 @@ public final class MathParser {
 
     private String next() {
         if (position >= tokens.size()) {
-            throw new MathSyntaxException("The expression ends too early.");
+            throw new MathSyntaxException(SyntaxProblem.ENDS_EARLY);
         }
         String token = tokens.get(position);
         position++;
@@ -1029,7 +1026,7 @@ public final class MathParser {
 
     private void expect(String expected) {
         if (!peekIs(expected)) {
-            throw new MathSyntaxException("Expected \"" + expected + "\".");
+            throw new MathSyntaxException(SyntaxProblem.EXPECTED, expected);
         }
         next();
     }

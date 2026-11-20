@@ -12,13 +12,13 @@ class FunctionAndDerivativeTest {
         Calc c = new Calc();
         assertEquals("Defined T(x,y) = 3x+4y", c.show("T(x,y)=3x+4y"));
         assertEquals("= 11", c.show("T(1,2)"));
-        assertEquals("T needs 2 inputs.", c.show("T(1)"));
+        assertEquals("Invalid formula — T needs 2 inputs", c.show("T(1)"));
         assertEquals("Defined f(x) = x^3", c.show("f(x)=x^3"));
         assertEquals("= 12", c.show("f'(2)"));
         assertEquals("= 12", c.show("f''(2)"));
         assertEquals("= 6", c.show("f'''(2)"));
         assertEquals("= 0", c.show("f^{(4)}(2)"));
-        assertEquals("Uncalculable", Calc.withoutReason(c.show("f^{(5)}(2)")));
+        assertEquals("Can't calculate", Calc.withoutReason(c.show("f^{(5)}(2)")));
         assertEquals("x = 3", c.show("\\frac{d}{dx}x^2=6"));
         assertEquals("x = 2", c.show("\\frac{d^2}{dx^2}x^3=12"));
         assertEquals("x = 1", c.show("\\frac{\\partial}{\\partial x}(x^2+3x)=5"));
@@ -45,12 +45,12 @@ class FunctionAndDerivativeTest {
         c.show("m(x)=\\infty");
         assertEquals("= ∞", c.show("n(1)="));
         c.show("m(x)=10^{400}x");
-        assertEquals("Uncalculable — Number too big", c.show("n(1)="));
+        assertEquals("Can't calculate — Number too big", c.show("n(1)="));
     }
 
     @Test
     void derivativeSyntaxOutsideFunctions() {
-        assertEquals("Uncalculable", Calc.withoutReason(Calc.once("f'(x)=\\cos(e^{x})")));
+        assertEquals("Can't calculate", Calc.withoutReason(Calc.once("f'(x)=\\cos(e^{x})")));
         assertEquals("= 2x", Calc.once("\\frac{d}{dx}x^2"));
         assertEquals("d = 2", Calc.once("d+1=3"));
     }
@@ -58,9 +58,8 @@ class FunctionAndDerivativeTest {
     @Test
     void multiParameterDefinitionMessages() {
         Calc c = new Calc();
-        assertEquals("The formula of T(x,y) can only use the variables x, y, but it uses z.",
-                c.show("T(x,y)=x+y+z"));
-        assertEquals("The formula of f(x) can only use the variable x, but it uses y.", c.show("f(x)=x+y"));
+        assertEquals("Invalid formula — T(x,y) can only use x, y, not z", c.show("T(x,y)=x+y+z"));
+        assertEquals("Invalid formula — f(x) can only use x, not y", c.show("f(x)=x+y"));
         assertEquals("Defined r(x) = \\frac{1}{x-1}", c.show("r(x)=\\frac{1}{x-1}"));
         assertEquals("Defined q(x) = 2x", c.show("q(x)=2x"));
         assertEquals("= 2", c.show("\\frac{dq}{dx}(5)"));

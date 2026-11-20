@@ -1,5 +1,6 @@
 package view.canvas;
 
+import entity.EquationDisplay;
 import org.scilab.forge.jlatexmath.TeXConstants;
 import org.scilab.forge.jlatexmath.TeXFormula;
 import org.scilab.forge.jlatexmath.TeXIcon;
@@ -25,7 +26,7 @@ import java.awt.geom.RoundRectangle2D;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
-// glass capsule (Calculate, maybe Graph) + white card with the recognised formula
+// glass capsule (Calculate, Graph, both, or Phase Portrait for an ode) + white card with the recognised formula
 public class AnswerPopup extends JPanel {
     private static final float TEX_SIZE = 22f;
     private static final int CARD_SHIFT = 24;   // card sits a bit right of the button
@@ -39,20 +40,22 @@ public class AnswerPopup extends JPanel {
     private static final int POPUP_GAP = 8;    // between formula and popup
     private static final int POPUP_LEFT = 40;  // starts a bit left of the formula's right end
     private static final Color BORDER = new Color(203, 213, 225);
-    private static final Color ERROR_TEXT = new Color(185, 28, 28);
 
     private final GlassBar calcBar;   // Calculate only
+    private final GlassBar graphBar;  // Graph only
     private final GlassBar bothBar;   // Calculate + Graph
+    private final GlassBar phaseBar;  // Phase Portrait, for an ode
     private final GlassBar.Item calcOnly;
+    private final GlassBar.Item graphOnly;
     private final GlassBar.Item calcItem;
     private final GlassBar.Item graphItem;
+    private final GlassBar.Item phaseOnly;
     private GlassBar bar;             // the one on show, null for a problem
     private final Card card = new Card();
     private Runnable onCalculate = () -> { };
     private Runnable onGraph = () -> { };
-    private boolean graphable;
+    private Runnable onPhase = () -> { };
     private String latex;
-    private String problem;
     private TeXIcon icon;
 
     public AnswerPopup(Consumer<Graphics2D> backdrop) {
@@ -66,15 +69,25 @@ public class AnswerPopup extends JPanel {
         calcBar = newBar(backdrop, version);
         calcOnly = calcBar.action("Calculate", Icons::equalCircle, () -> onCalculate.run(), () -> true);
         calcBar.finish();
+        graphBar = newBar(backdrop, version);
+        graphOnly = graphBar.action("Graph", Icons::scribble, () -> onGraph.run(), () -> true);
+        graphBar.finish();
         bothBar = newBar(backdrop, version);
         calcItem = bothBar.action("Calculate", Icons::equalCircle, () -> onCalculate.run(), () -> true);
-        graphItem = bothBar.action("Graph", Icons::scribble, () -> onGraph.run(), () -> graphable);
+        graphItem = bothBar.action("Graph", Icons::scribble, () -> onGraph.run(), () -> true);
         bothBar.finish();
+        phaseBar = newBar(backdrop, version);
+        phaseOnly = phaseBar.action("Phase Portrait", Icons::phase, () -> onPhase.run(), () -> true);
+        phaseBar.finish();
         add(calcBar);
+        add(graphBar);
         add(bothBar);
+        add(phaseBar);
         add(card);
         calcBar.setVisible(false);
+        graphBar.setVisible(false);
         bothBar.setVisible(false);
+        phaseBar.setVisible(false);
         setVisible(false);
     }
 
@@ -86,40 +99,49 @@ public class AnswerPopup extends JPanel {
     }
 
     public void showFormula(String latex, Runnable onCalculate) {
-        show(latex, onCalculate, null, false);
+        showFormula(latex, onCalculate, null);
     }
 
-    // board popup: Graph next to Calculate, grey when the formula can't be plotted
-    public void showFormula(String latex, Runnable onCalculate, Runnable onGraph, boolean graphable) {
-        show(latex, onCalculate, onGraph, graphable);
+    // board popup: null = that button's left out, at least one of them is set
+    public void showFormula(String latex, Runnable onCalculate, Runnable onGraph) {
+        showFormula(latex, onCalculate, onGraph, null);
     }
 
-    private void show(String latex, Runnable onCalculate, Runnable onGraph, boolean graphable) {
+    // an ode gets its own Phase Portrait button, nothing else
+    public void showFormula(String latex, Runnable onCalculate, Runnable onGraph, Runnable onPhase) {
         this.latex = latex;
-        this.problem = null;
-        this.onCalculate = onCalculate;
+        this.onCalculate = onCalculate == null ? () -> { } : onCalculate;
         this.onGraph = onGraph == null ? () -> { } : onGraph;
-        this.graphable = graphable;
+        this.onPhase = onPhase == null ? () -> { } : onPhase;
         icon = typeset(latex);
-        bar = onGraph == null ? calcBar : bothBar;
+        if (onPhase != null) {
+            bar = phaseBar;
+        } else {
+            bar = onGraph == null ? calcBar : onCalculate == null ? graphBar : bothBar;
+        }
         relayout();
     }
 
-    public void showProblem(String reason) {
-        this.latex = null;
-        this.problem = reason;
-        this.onCalculate = () -> { };
-        this.onGraph = () -> { };
-        icon = null;
-        bar = null;
-        relayout();
-    }
-
-    // above-right of the formula, below if no room, always inside the canvas
+    // no "=" known: above-right of the formula, below if no room, always inside the canvas
     Rectangle spotBeside(Rectangle formula, int areaWidth, int areaHeight) {
+        return spotBeside(formula, null, areaWidth, areaHeight);
+    }
+
+    // right next to the "=", buttons level with it; above/below the formula if ink's in the way
+    Rectangle spotBeside(Rectangle formula, Rectangle equals, int areaWidth, int areaHeight) {
         Dimension d = getPreferredSize();
         int m = bar != null ? GlassBar.MARGIN : 0;  // clear shadow margin top-left
-        int x = formula.x + formula.width - POPUP_LEFT - m;
+        if (equals != null) {
+            int capH = bar != null ? GlassBar.CAP_H : d.height;
+            int x = equals.x + equals.width + POPUP_GAP - m;
+            int y = equals.y + equals.height / 2 - capH / 2 - m;
+            y = Math.max(EDGE - m, Math.min(y, areaHeight - d.height - EDGE));
+            Rectangle seen = new Rectangle(x + m, y + m, d.width - m, d.height - m);
+            if (x + d.width <= areaWidth - EDGE && !seen.intersects(formula)) {
+                return new Rectangle(x, y, d.width, d.height);
+            }
+        }
+        int x = equals != null ? equals.x - m : formula.x + formula.width - POPUP_LEFT - m;
         int y = formula.y - POPUP_GAP - d.height;
         if (y + m < EDGE) {
             // The whole popup (not just its visible glass capsule) must clear
@@ -145,29 +167,27 @@ public class AnswerPopup extends JPanel {
         return latex;
     }
 
-    String getProblem() {
-        return problem;
-    }
-
     boolean hasCalculate() {
-        return bar != null;
+        return bar == calcBar || bar == bothBar;
     }
 
     boolean hasGraph() {
-        return bar == bothBar;
+        return bar == graphBar || bar == bothBar;
     }
 
-    boolean isGraphEnabled() {
-        return bar == bothBar && graphItem.isEnabled();
+    boolean hasPhasePortrait() {
+        return bar == phaseBar;
     }
 
-    boolean isCalculateEnabled() {
-        return bar != null && (bar == bothBar ? calcItem : calcOnly).isEnabled();
+    void clickPhasePortrait() {
+        if (hasPhasePortrait()) {
+            bar.activate(phaseOnly);
+        }
     }
 
     void clickGraph() {
-        if (bar == bothBar) {
-            bothBar.activate(graphItem);
+        if (hasGraph()) {
+            bar.activate(bar == bothBar ? graphItem : graphOnly);
         }
     }
 
@@ -176,14 +196,14 @@ public class AnswerPopup extends JPanel {
     }
 
     void clickCalculate() {
-        if (bar != null) {
+        if (hasCalculate()) {
             bar.activate(bar == bothBar ? calcItem : calcOnly);
         }
     }
 
     private static TeXIcon typeset(String latex) {
         try {
-            return new TeXFormula(latex).createTeXIcon(TeXConstants.STYLE_DISPLAY, TEX_SIZE);
+            return new TeXFormula(EquationDisplay.typeset(latex)).createTeXIcon(TeXConstants.STYLE_DISPLAY, TEX_SIZE);
         } catch (RuntimeException | Error bad) {  // bad latex -> plain text
             return null;
         }
@@ -192,7 +212,9 @@ public class AnswerPopup extends JPanel {
     // the bar has a clear margin for its shadow, the card lines up with the capsule
     private void relayout() {
         calcBar.setVisible(bar == calcBar);
+        graphBar.setVisible(bar == graphBar);
         bothBar.setVisible(bar == bothBar);
+        phaseBar.setVisible(bar == phaseBar);
         Dimension c = card.getPreferredSize();
         if (bar != null) {
             Dimension d = bar.getPreferredSize();
@@ -224,12 +246,10 @@ public class AnswerPopup extends JPanel {
             addMouseMotionListener(new MouseAdapter() { });
         }
 
-        private Font textFont() {
-            return problem != null ? Fonts.ui(Font.PLAIN, 13f) : Fonts.ui(Font.PLAIN, 16f);
-        }
+        private Font textFont() { return Fonts.ui(Font.PLAIN, 16f); }
 
         private String text() {
-            return problem != null ? problem : latex == null ? "" : latex;
+            return latex == null ? "" : latex;
         }
 
         @Override
@@ -256,7 +276,8 @@ public class AnswerPopup extends JPanel {
             int h = getHeight() - SHADOW;
             for (int i = 1; i <= SHADOW; i++) {
                 g2.setColor(new Color(15, 23, 42, 7));
-                g2.fill(new RoundRectangle2D.Double(i * 0.4, i * 0.8, w + i * 0.2, h + i * 0.2, ARC + i, ARC + i));
+                g2.fill(new RoundRectangle2D.Double(i * 0.4, i * 0.8, w + i * 0.2,
+                        h + i * 0.2, ARC + i, ARC + i));
             }
             RoundRectangle2D shape = new RoundRectangle2D.Double(0, 0, w - 1, h - 1, ARC, ARC);
             g2.setColor(Color.WHITE);
@@ -269,12 +290,13 @@ public class AnswerPopup extends JPanel {
                 icon.paintIcon(this, g2, PAD_X, PAD_Y);
             } else {
                 g2.setFont(textFont());
-                g2.setColor(problem != null ? ERROR_TEXT : Color.DARK_GRAY);
+                g2.setColor(Color.DARK_GRAY);
                 FontMetrics fm = g2.getFontMetrics();
-                g2.clipRect(PAD_X, 0, w - 2 * PAD_X, h);
+                g2.clipRect(PAD_X, 0, Math.max(1, w - 2 * PAD_X), h);
                 g2.drawString(text(), PAD_X, PAD_Y + fm.getAscent());
             }
             g2.dispose();
         }
+
     }
 }

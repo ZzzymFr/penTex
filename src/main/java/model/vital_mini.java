@@ -3,6 +3,7 @@ package model;
 import ai.djl.Device;
 import ai.djl.MalformedModelException;
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
@@ -12,7 +13,6 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 
-import java.util.ArrayList;
 import ai.djl.modality.cv.ImageFactory;
 
 /**
@@ -22,7 +22,7 @@ import ai.djl.modality.cv.ImageFactory;
  */
 public final class vital_mini implements AutoCloseable {
     public static final int VOCAB_LENGTH = 234;
-    public static final int PAD_ID = 67, BOS_ID = 68, EOS_ID = 69, MAX_LEN = 200;
+    public static final int PAD_ID = 67, BOS_ID = 68, EOS_ID = 69, MAX_LEN = 300;
     private final Path modelPath;
     private ModelRuntime runtime;
     private vital_pixel cnn;
@@ -56,13 +56,17 @@ public final class vital_mini implements AutoCloseable {
             NDArray noMask = scope.create(new boolean[0]);
             loaded.callMini(scope, "encoder1", probe, noMask);
             loaded.callMini(scope, "encoder2", probe, noMask);
+            // generate 依赖带 KV 缓存的逐 token 解码，旧导出文件没有这两个方法。
+            NDList start = loaded.callMiniList(scope, "decoder_start", probe);
+            loaded.callMiniList(scope, "decoder_step", scope.create(new long[]{BOS_ID}).reshape(1, 1),
+                    scope.create(new long[]{0}), start.get(1), start.get(0), noMask);
             cnn = new vital_pixel(loaded);
             encoder1 = new encoder(loaded, "encoder1");
             encoder2 = new encoder(loaded, "encoder2");
             runtime = loaded;
         } catch (TranslateException e) {
             loaded.close();
-            throw new IOException("无法读取共享词嵌入或视觉编码器，请重新导出 model_ops.pt", e);
+            throw new IOException("无法读取共享词嵌入、视觉编码器或逐 token 解码方法，请重新导出 model_ops.pt", e);
         } catch (IOException | RuntimeException | Error e) {
             loaded.close();
             throw e;
@@ -240,9 +244,9 @@ public final class vital_mini implements AutoCloseable {
         }
     }
 
-    public String generate(BufferedImage image) throws TranslateException{
-        ArrayList<Integer> tokens = new ArrayList<>();
-        tokens.add(BOS_ID);
+    /** 束搜索生成 LaTeX；beam_width=1 等价于贪心，长度归一化指数为 0.7。 */
+    public String generate(BufferedImage image, int beam_width) throws TranslateException {
+        BeamSearch search = new BeamSearch(beam_width, MAX_LEN);
         try (NDManager scope = manager().newSubManager()) {
             NDArray image_tensor = ImageFactory.getInstance()
                     .fromImage(image)
@@ -251,26 +255,25 @@ public final class vital_mini implements AutoCloseable {
                     .div(255f)           // 像素归一化到 [0, 1]
                     .transpose(2, 0, 1)  // [H, W, 3] → [3, H, W]
                     .expandDims(0);      // → [1, 3, H, W]
-            // 图像编码只计算一次；所有 token 步骤复用 memory。
+            // 图像编码和各层交叉注意力的 K/V 只计算一次；之后每步只把各假设新选的 token 送进
+            // decoder_step，自注意力的 K/V 缓存记住前面的位置（model.incremental_decoder）。
             try (NDArray encoded = cnn.forward(image_tensor);
                  NDArray memory = encodeFeatures(encoded)) {
-                while (tokens.size() < MAX_LEN) {
-                    long[] ids = tokens.stream().mapToLong(Integer::longValue).toArray();
-                    try (NDArray tokens_tensor = scope.create(ids).reshape(1, ids.length);
-                         NDArray decoded = decode(memory, tokens_tensor);
-                         NDArray last = decoded.get("0,-1,:")) {
-                        float[] scores = last.toFloatArray();
-                        int next_token = -1;
-                        float max_score = Float.NEGATIVE_INFINITY;
-                        for (int i = 0; i < scores.length; ++i) {
-                            if (i == BOS_ID || i == PAD_ID) continue;
-                            if (scores[i] >= max_score) {
-                                max_score = scores[i];
-                                next_token = i;
-                            }
-                        }
-                        if (next_token == EOS_ID) break;
-                        tokens.add(next_token);
+                NDList start = runtime.callMiniList(scope, "decoder_start", memory);
+                NDArray crossCache = start.get(0);
+                NDArray selfCache = start.get(1);
+                NDArray noMask = scope.create(new boolean[0]);
+                while (!search.isDone()) {
+                    try (NDManager step = scope.newSubManager()) {
+                        NDArray tokens = step.create(search.lastTokenIds()).reshape(search.size(), 1);
+                        NDArray parents = step.create(search.parentIds());
+                        NDList outputs = runtime.callMiniList(step, "decoder_step",
+                                tokens, parents, selfCache, crossCache, noMask);
+                        search.advance(outputs.get(0).toFloatArray());
+                        NDArray next = outputs.get(1);
+                        next.attach(scope);                     // 留给下一步；旧缓存不再需要
+                        selfCache.close();
+                        selfCache = next;
                     }
                 }
             }
@@ -294,7 +297,7 @@ public final class vital_mini implements AutoCloseable {
 
             StringBuilder text = new StringBuilder();
             String previous = "";
-            for (int id : tokens) {
+            for (int id : search.best()) {
                 if (id == EOS_ID) break;
                 if (id == BOS_ID || id == PAD_ID) continue;
                 if (id < 0 || id >= table.length || table[id] == null) {

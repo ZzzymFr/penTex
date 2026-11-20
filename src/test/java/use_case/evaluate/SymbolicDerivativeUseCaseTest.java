@@ -2,7 +2,6 @@ package use_case.evaluate;
 
 import data_access.InMemoryFunctionDataAccessObject;
 import entity.Interval;
-import interface_adapter.TextRun;
 import entity.value.Value;
 import interface_adapter.MathLabState;
 import interface_adapter.MathLabViewModel;
@@ -13,8 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SymbolicDerivativeUseCaseTest {
@@ -25,7 +22,7 @@ class SymbolicDerivativeUseCaseTest {
     private String show(String input) {
         interactor.execute(new EvaluateInputData(input));
         MathLabState state = viewModel.getState();
-        return state.getErrorText().isEmpty() ? state.getResultText() : state.getErrorText();
+        return state.getErrorText().isEmpty() ? state.getResultText() : state.getErrorTitle() + " — " + state.getErrorText();
     }
 
     @Test
@@ -60,27 +57,25 @@ class SymbolicDerivativeUseCaseTest {
     @Test
     void numericUsesStayTheSame() {
         assertEquals("x = 3", show("\\frac{d}{dx}x^2=6"));
-        assertTrue(show("x+1").startsWith("Unknown variable \"x\""));
-        assertTrue(show("\\frac{d}{dx}(\\tan^{-1}x)").startsWith("Uncalculable — tan⁻¹ is ambiguous"));
+        assertEquals("Invalid formula — x has no value — write x = … first", show("x+1"));
+        assertTrue(show("\\frac{d}{dx}(\\tan^{-1}x)").startsWith("Can't calculate — tan⁻¹ is ambiguous"));
     }
 
     @Test
-    void runsComeWithTheAnswer() {
+    void texComesWithTheAnswer() {
         show("\\frac{d}{dx}(x^3)");
-        List<TextRun> runs = viewModel.getState().getAnswerRuns();
-        assertNotNull(runs);
-        assertEquals("= 3x2", TextRun.plain(runs));
-        assertTrue(runs.get(runs.size() - 1).isRaised());
+        assertEquals("= 3x^{2}", viewModel.getState().getAnswerLatex());
+        assertEquals("= 3x2", viewModel.getState().getAnswerText());
     }
 
     @Test
-    void numericAfterSymbolicHasNoRuns() {
+    void numericAfterSymbolicDropsItsTex() {
         show("\\frac{d}{dx}(x^3)");
         show("1+1");
-        assertNull(viewModel.getState().getAnswerRuns());
+        assertEquals("= 2", viewModel.getState().getAnswerLatex());
         show("\\frac{d}{dx}(x^3)");
         show("\\frac{d}{dx}|x|");
-        assertNull(viewModel.getState().getAnswerRuns());
+        assertEquals("", viewModel.getState().getAnswerLatex());
     }
 
     @Test
@@ -117,15 +112,15 @@ class SymbolicDerivativeUseCaseTest {
 
     @Test
     void failuresGiveAReason() {
-        assertEquals("Uncalculable — Can't differentiate |x|", show("\\frac{d}{dx}|x|"));
-        assertEquals("Uncalculable — Answer too long", show("\\frac{d}{dx}(\\frac{\\sin x}{\\ln x+x^x})"));
+        assertEquals("Can't calculate — Can't differentiate |x|", show("\\frac{d}{dx}|x|"));
+        assertEquals("Can't calculate — Answer too long", show("\\frac{d}{dx}(\\frac{\\sin x}{\\ln x+x^x})"));
     }
 
     @Test
     void constantWithNoValueIsUndefinedNotWrittenOut() {
-        assertEquals("Uncalculable — Has an undefined part", show("\\frac{d}{dx}x\\ln 0"));
-        assertEquals("Uncalculable — Has an undefined part", show("\\frac{d}{dx}x\\cot 0"));
-        assertEquals("Uncalculable — Has an undefined part", show("\\frac{d}{dx}x\\sqrt{-1}"));
+        assertEquals("Can't calculate — Has an undefined part", show("\\frac{d}{dx}x\\ln 0"));
+        assertEquals("Can't calculate — Has an undefined part", show("\\frac{d}{dx}x\\cot 0"));
+        assertEquals("Can't calculate — Has an undefined part", show("\\frac{d}{dx}x\\sqrt{-1}"));
         assertEquals("= \\sin 2", show("\\frac{d}{dx}x\\sin 2"));
         assertEquals("= \\ln 2", show("\\frac{d}{dx}x\\ln 2"));
     }

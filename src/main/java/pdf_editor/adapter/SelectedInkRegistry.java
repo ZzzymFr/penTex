@@ -23,10 +23,9 @@ public final class SelectedInkRegistry {
             sources.computeIfAbsent(materialId, id -> new java.util.ArrayList<>()).add(List.copyOf(ink));
     }
     public void synchronize() {
-        for (String id : List.copyOf(sources.keySet())) {
-            boolean present = sources.get(id).stream().anyMatch(canvas::containsAllInk);
-            if (present) library.resume(id);
-            else library.suspend(id);
-        }
+        // Only discard obsolete source bookkeeping. A saved material remains in
+        // the Library until its owner explicitly deletes it, even if ink is erased.
+        sources.entrySet().removeIf(entry -> library.find(entry.getKey()) == null
+                || entry.getValue().stream().noneMatch(canvas::containsAllInk));
     }
 }
