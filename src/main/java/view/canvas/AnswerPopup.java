@@ -58,6 +58,8 @@ public class AnswerPopup extends JPanel {
     private boolean pickGraph;
     private boolean pickPhase;
     private Runnable onRecognize = () -> { };
+    private final GlassBar recognizeBar;  // f(x)=... just gets Recognize
+    private final GlassBar.Item recognizeOnly;
     private GlassBar bar;             // the one on show, null for a problem
     private final Card card = new Card();
     private Runnable onCalculate = () -> { };
@@ -95,6 +97,11 @@ public class AnswerPopup extends JPanel {
         pickBar.finish();
         add(pickBar);
         pickBar.setVisible(false);
+        recognizeBar = newBar(backdrop, version);
+        recognizeOnly = recognizeBar.action("Recognize", Icons::history, () -> onRecognize.run(), () -> true);
+        recognizeBar.finish();
+        add(recognizeBar);
+        recognizeBar.setVisible(false);
         add(calcBar);
         add(graphBar);
         add(bothBar);
@@ -151,6 +158,15 @@ public class AnswerPopup extends JPanel {
         pickPhase = onPhase != null;
         icon = typeset(latex);
         bar = pickBar;
+        relayout();
+    }
+
+    // f(x)=...: one Recognize button, saving it is the user's call
+    public void showRecognize(String latex, Runnable onRecognize) {
+        this.latex = latex;
+        this.onRecognize = onRecognize == null ? () -> { } : onRecognize;
+        icon = typeset(latex);
+        bar = recognizeBar;
         relayout();
     }
 
@@ -231,6 +247,16 @@ public class AnswerPopup extends JPanel {
         }
     }
 
+    boolean hasRecognize() {
+        return bar == recognizeBar;
+    }
+
+    void clickRecognize() {
+        if (hasRecognize()) {
+            bar.activate(recognizeOnly);
+        }
+    }
+
     boolean isPick() {
         return bar == pickBar;
     }
@@ -271,6 +297,7 @@ public class AnswerPopup extends JPanel {
         bothBar.setVisible(bar == bothBar);
         phaseBar.setVisible(bar == phaseBar);
         pickBar.setVisible(bar == pickBar);
+        recognizeBar.setVisible(bar == recognizeBar);
         Dimension c = card.getPreferredSize();
         if (bar != null) {
             Dimension d = bar.getPreferredSize();

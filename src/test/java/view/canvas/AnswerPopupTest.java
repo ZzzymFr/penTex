@@ -126,6 +126,18 @@ class AnswerPopupTest {
     }
 
     @Test
+    void definitionGetsOnlyRecognize() {
+        AtomicInteger clicks = new AtomicInteger();
+        popup.showRecognize("f(x)=x^{2}", clicks::incrementAndGet);
+        assertTrue(popup.hasRecognize());
+        assertFalse(popup.hasCalculate());
+        assertFalse(popup.hasGraph());
+        assertFalse(popup.isPick());
+        popup.clickRecognize();
+        assertEquals(1, clicks.get());
+    }
+
+    @Test
     void pickBarFitsInsideTheCanvas() {
         popup.showPick("y=3x", () -> { }, () -> { }, () -> { }, () -> { });
         Rectangle spot = popup.spotBeside(new Rectangle(700, 300, 150, 50), 900, 560);
