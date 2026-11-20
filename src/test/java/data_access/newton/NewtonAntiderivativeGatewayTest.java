@@ -44,16 +44,18 @@ class NewtonAntiderivativeGatewayTest {
     @Test
     void resultsToTex() throws Exception {
         assertEquals("\\frac{1}{3} x^{3}", find("\\int x^2 dx", "1/3 x^3").getLatex());
-        assertEquals("-\\cos\\left(x\\right)", find("\\int \\sin x dx", "-cos(x)").getLatex());
-        assertEquals("\\ln\\left(x\\right)", find("\\int \\frac{1}{x} dx", "log(x)").getLatex());
+        assertEquals("-\\cos(x)", find("\\int \\sin x dx", "-cos(x)").getLatex());
+        assertEquals("\\ln(x)", find("\\int \\frac{1}{x} dx", "log(x)").getLatex());
         assertEquals("-e^{x} + x e^{x}", find("\\int x e^x dx", "-exp(x) + x exp(x)").getLatex());
-        assertEquals("\\frac{1}{2} \\sin\\left(2 x\\right)", find("\\int \\cos(2x) dx", "1/2 sin(2 x)").getLatex());
-        assertEquals("\\frac{2^{x}}{\\ln\\left(2\\right)}", find("\\int 2^x dx", "2^x / log(2)").getLatex());
+        assertEquals("\\frac{1}{2} \\sin(2 x)", find("\\int \\cos(2x) dx", "1/2 sin(2 x)").getLatex());
+        assertEquals("\\frac{2^{x}}{\\ln(2)}", find("\\int 2^x dx", "2^x / log(2)").getLatex());
         assertEquals("\\frac{3}{4} x^{\\frac{4}{3}}", find("\\int \\sqrt[3]{x} dx", "3/4 x^(4/3)").getLatex());
-        assertEquals("\\frac{1}{2} x - \\frac{1}{4} \\sin\\left(2 x\\right)",
+        assertEquals("\\frac{1}{2} x - \\frac{1}{4} \\sin(2 x)",
                 find("\\int \\sin^2 x dx", "1/2 x - 1/4 sin(2 x)").getLatex());
-        assertEquals("\\left(\\sin\\left(x\\right)\\right)^{2}", find("\\int x dx", "sin(x)^2").getLatex());
+        assertEquals("(\\sin(x))^{2}", find("\\int x dx", "sin(x)^2").getLatex());
         assertEquals("2 \\cdot 3", find("\\int x dx", "2 3").getLatex());
+        // tall brackets only when theres a fraction inside
+        assertEquals("\\sin\\left(\\frac{x}{2}\\right)", find("\\int x dx", "sin(x/2)").getLatex());
     }
 
     @Test
@@ -64,7 +66,7 @@ class NewtonAntiderivativeGatewayTest {
     @Test
     void variableComesBack() throws Exception {
         Antiderivative f = find("\\int \\sin t dt", "-cos(x)");
-        assertEquals("-\\cos\\left(t\\right)", f.getLatex());
+        assertEquals("-\\cos(t)", f.getLatex());
         assertEquals("-cos(t)", f.getText());
         // ∫ x t dt went over as "t x", newton says 1/2 x^2 t, which is really 1/2 t^2 x
         assertEquals("\\frac{1}{2} t^{2} x", find("\\int x t dt", "1/2 x^2 t").getLatex());

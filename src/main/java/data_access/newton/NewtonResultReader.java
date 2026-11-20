@@ -188,8 +188,9 @@ final class NewtonResultReader {
         pos++;
     }
 
+    // \left( \right) pads itself in jlatexmath (cos (t)), so only use it when a fraction needs tall ones
     private static String brackets(String latex) {
-        return "\\left(" + latex + "\\right)";
+        return latex.contains("\\frac") ? "\\left(" + latex + "\\right)" : "(" + latex + ")";
     }
 
     private static boolean endsWithDigit(String s) {
