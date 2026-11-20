@@ -338,6 +338,7 @@ abstract class PopupCardTool<K> {
         private void place() {
             Rectangle2D on = canvas.getDrawingCanvas().getGraphCardOnScreen(this);
             if (on == null) {
+                canvas.getDrawingCanvas().setGraphCovered(this, false);
                 hide(card);
                 hide(ranges);
                 return;
@@ -347,6 +348,8 @@ abstract class PopupCardTool<K> {
                     (int) Math.round(on.getWidth()), (int) Math.round(on.getHeight())), area);
             card.setBounds(at);
             card.setVisible(true);
+            // card sits exactly on the slot now, canvas can stop drawing the picture under it
+            canvas.getDrawingCanvas().setGraphCovered(this, true);
             // boxes go in the header right after the function, at the header's scale
             Rectangle slot = ranges.placeIn(card);
             if (slot != null) {
