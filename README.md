@@ -80,7 +80,7 @@ The actor in every use case is the **student**.
 - **Finished equation or inequality:** a formula with something on both sides of the sign, such as `x^2=4` or `2x>5`, gets a popup without a trailing "=". An unfinished one such as `2x>` does not.
 - **Still writing:** while the pen is down, no popup appears. The system waits for the next pause.
 - **Formula edited:** if the student adds to or erases part of a formula, its old answer is removed and the formula is read again after the next pause.
-- **Function definition:** if the formula reads as `f(x)=…`, it is saved straight away (see Use Case 2) and no popup is needed.
+- **Function definition:** if the formula reads as `f(x)=…`, nothing is saved on its own. The popup offers only **Recognize**, which saves the function (see Use Case 2). To graph it instead, lasso it: the lasso popup has **Graph** too.
 - **Recognition fails:** the popup shows the problem instead of a formula, and nothing is calculated.
 - **Photo upload:** not implemented yet. Only canvas ink is recognized for now.
 
