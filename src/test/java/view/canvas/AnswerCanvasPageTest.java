@@ -318,7 +318,7 @@ class AnswerCanvasPageTest {
         waitPopup("\\int");
         clickCalculate();
 
-        waitFor(() -> errorShown("Integrals not supported"), "the reason");
+        waitFor(() -> errorShown("Only ∫ f(x) dx on its own"), "the reason");
         assertTrue(answers().isEmpty(), "no red ?");
     }
 

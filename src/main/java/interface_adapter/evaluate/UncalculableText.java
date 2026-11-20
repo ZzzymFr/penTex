@@ -10,7 +10,7 @@ final class UncalculableText {
             Map.entry("TEXT", "Contains text"),
             Map.entry("ELLIPSIS", "Has \"…\""),
             Map.entry("NOT_CALCULATION", "Not a calculation"),
-            Map.entry("INTEGRAL", "Integrals not supported"),
+            Map.entry("INTEGRAL", "Only ∫ f(x) dx on its own"),
             Map.entry("PARTIAL", "∂ needs a function"),
             Map.entry("NOT_DEFINED", "Function not defined"),
             Map.entry("NOT_AN_INPUT", "Not a function input"),
