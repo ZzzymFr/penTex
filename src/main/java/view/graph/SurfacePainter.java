@@ -21,7 +21,13 @@ final class SurfacePainter {
     private SurfacePainter() {
     }
 
-    static void paint(Graphics2D g0, GraphState s, SurfaceScene scene, float ui, GraphTrace hover, GraphTrace pinned) {
+    static void paint(Graphics2D g, GraphState s, SurfaceScene scene, float ui, GraphTrace hover, GraphTrace pinned) {
+        paintBody(g, s, scene, ui);
+        paintTraces(g, scene, ui, hover, pinned);
+    }
+
+    // the slow part (~3000 shaded quads), live cards run this on the render thread not the edt
+    static void paintBody(Graphics2D g0, GraphState s, SurfaceScene scene, float ui) {
         Graphics2D g = (Graphics2D) g0.create();
         try {
             g.clip(scene.area());
@@ -34,6 +40,19 @@ final class SurfacePainter {
             zEdge(g, scene, zCorner, ui);
             mesh(g, scene, ui);
             labels(g, s, scene, ui, xEdge, yEdge, zCorner);
+        } finally {
+            g.dispose();
+        }
+    }
+
+    // just the cursor / pin readouts, cheap so they stay on the edt and follow the mouse right away
+    static void paintTraces(Graphics2D g0, SurfaceScene scene, float ui, GraphTrace hover, GraphTrace pinned) {
+        if (pinned == null && hover == null) {
+            return;
+        }
+        Graphics2D g = (Graphics2D) g0.create();
+        try {
+            g.clip(scene.area());
             if (pinned != null) {
                 trace(g, scene, pinned, ui);
             }

@@ -9,9 +9,11 @@ import javax.swing.SwingUtilities;
 import java.awt.Cursor;
 import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.RenderingHints;
 import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
+import java.util.function.Consumer;
 
 /**
  * The live function graph card. Plot: drag pans (2d) or spins (3d), wheel zooms, hover reads the real
@@ -23,6 +25,7 @@ public final class GraphCard extends PlotCard {
     private final GraphViewModel viewModel;
     private final GraphExploreController explore;
     private final OrbitCamera camera = new OrbitCamera();
+    private final SurfaceRenderer surfaces = new SurfaceRenderer(this::repaint);
     private GraphTrace pinned;
     private long revision = -1;
     // scene cache: rebuilt when the data, camera or size changes
@@ -84,8 +87,45 @@ public final class GraphCard extends PlotCard {
     @Override
     void paintCard(Graphics2D g, int hotButton) {
         GraphState s = viewModel.getState();
-        GraphCardRenderer.paint(g, s, getWidth(), getHeight(), camera, sceneFor(s), s.getTrace(), pinned, true,
-                hotButton, headerControls());
+        if (s.getKind() != GraphState.Kind.SURFACE) {
+            GraphCardRenderer.paint(g, s, getWidth(), getHeight(), camera, null, s.getTrace(), pinned, true,
+                    hotButton, headerControls());
+            return;
+        }
+        // 3d: the mesh is a picture from the render thread, edt only blits it + draws the cursor readout
+        GraphCardRenderer.paintLiveSurface(g, s, getWidth(), getHeight(), hotButton, headerControls(),
+                (pg, plot, ui) -> {
+                    BufferedImage picture = surfaces.picture(s, camera, plot, ui, deviceScale(pg));
+                    if (picture != null) {
+                        pg.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                                RenderingHints.VALUE_INTERPOLATION_BILINEAR);   // only matters mid resize
+                        pg.drawImage(picture, (int) Math.round(plot.getX()), (int) Math.round(plot.getY()),
+                                (int) Math.round(plot.getWidth()), (int) Math.round(plot.getHeight()), null);
+                    }
+                    SurfacePainter.paintTraces(pg, sceneFor(s), ui, s.getTrace(), pinned);
+                });
+    }
+
+    // 2 on retina, so the picture is drawn at real pixels and stays sharp
+    private static double deviceScale(Graphics2D g) {
+        double scale = Math.abs(g.getTransform().getScaleX());
+        return scale > 0 ? Math.min(scale, 3) : 1;
+    }
+
+    // saving a 3d card is as slow as drawing it, so that goes on the render thread too
+    @Override
+    public void snapshotLater(int width, int height, Consumer<BufferedImage> done) {
+        if (!surface()) {
+            super.snapshotLater(width, height, done);
+            return;
+        }
+        GraphState state = new GraphState(viewModel.getState());
+        OrbitCamera frozen = camera.copy();
+        GraphTrace pin = pinned;
+        SurfaceRenderer.background(() -> {
+            BufferedImage image = GraphSnapshot.render(state, width, height, frozen, pin);
+            SwingUtilities.invokeLater(() -> done.accept(image));
+        });
     }
 
     private SurfaceScene sceneFor(GraphState s) {
