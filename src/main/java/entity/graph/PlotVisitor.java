@@ -5,4 +5,6 @@ public interface PlotVisitor<T> {
     T visitCurve(CurvePlot plot);
 
     T visitSurface(SurfacePlot plot);
+
+    T visitImplicit(ImplicitPlot plot);
 }
