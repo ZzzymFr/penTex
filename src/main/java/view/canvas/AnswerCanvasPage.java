@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 // answer page: pause after an "=" -> popup with the read formula -> Calculate -> answer on the canvas
@@ -69,7 +68,6 @@ public class AnswerCanvasPage extends CanvasPage {
     private Predicate<String> differential = latex -> false;
     private PopupHover hover;         // mouse on an unanswered "=" brings the popup back
     private final Map<Long, Read> reads = new HashMap<>();  // last read per formula
-    private final Map<Long, Long> defined = new HashMap<>();  // id -> revision saved as a f(x)=...
     private Predicate<String> graphable = latex -> false;
     private Predicate<String> definitionCheck = latex -> false;
     private Predicate<String> calculable = latex -> true;
@@ -208,7 +206,7 @@ public class AnswerCanvasPage extends CanvasPage {
         addCanvasOverlay(overlay);
     }
 
-    // f(x)=... lines get saved right away, no Calculate click
+    // f(x)=... lines get a Recognize button, saved only when clicked
     public void setDefinitionCheck(Predicate<String> definitionCheck) {
         this.definitionCheck = definitionCheck;
     }
@@ -390,7 +388,6 @@ public class AnswerCanvasPage extends CanvasPage {
             capture = nextWaiting();  // a pick is on purpose, never swap in another formula
         }
         if (capture != null) {
-            readAhead();
             recognize(capture, generation);
         }
     }
@@ -439,20 +436,6 @@ public class AnswerCanvasPage extends CanvasPage {
             return;  // ink changed while we were reading it
         }
         reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));  // for hovering later
-        if (capture.getId() == pickedId) {
-            offer(capture, gen, latex, problem);  // lasso: buttons, no auto-save
-            return;
-        }
-        if (problem == null && definitionCheck.test(latex)) {
-            define(capture, latex, saved -> {
-                if (!saved) {
-                    offer(capture, gen, latex, problem);  // bad body, popup's Calculate shows why
-                } else if (gen == generation && inFront()) {
-                    offerNext(gen);
-                }
-            });
-            return;
-        }
         offer(capture, gen, latex, problem);
     }
 
@@ -480,48 +463,6 @@ public class AnswerCanvasPage extends CanvasPage {
         }
     }
 
-    // read the queued ones now too, so a f(x)=... among them is saved before the newest gets Calculate
-    private void readAhead() {
-        for (long id : waiting) {
-            FormulaCapture capture = getSharedCanvas().captureForRecalculation(id);
-            Read r = reads.get(id);
-            if (capture == null || r != null && r.revision == capture.getRevision()) {
-                continue;  // answered, or read already
-            }
-            worker.recognize(() -> reader.read(capture), (latex, problem) -> {
-                if (!getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
-                    return;
-                }
-                reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));
-                if (problem == null && definitionCheck.test(latex)) {
-                    define(capture, latex, saved -> { });  // its popup comes later in turn
-                }
-            });
-        }
-    }
-
-    private boolean isDefined(long id, long revision) {
-        return Objects.equals(defined.get(id), revision);
-    }
-
-    // save f(x)=... quietly; saved=false means the body was bad
-    private void define(FormulaCapture capture, String latex, Consumer<Boolean> then) {
-        if (isDefined(capture.getId(), capture.getRevision())) {
-            then.accept(true);  // same ink saved already
-            return;
-        }
-        worker.calculate(latex, outcome -> {
-            if (!outcome.definition) {
-                then.accept(false);
-                return;
-            }
-            defined.put(capture.getId(), capture.getRevision());
-            notices.success(outcome.result, outcome.definedLatex);
-            publishFormulaOnly(capture, latex);  // saved = done, so PDF Studio gets it
-            then.accept(true);
-        });
-    }
-
     private Formula formula(long id) {
         for (Formula f : getSharedCanvas().getFormulas()) {
             if (f.getId() == id) {
@@ -539,6 +480,8 @@ public class AnswerCanvasPage extends CanvasPage {
             return;
         } else if (capture.getId() == pickedId) {
             showPick(capture, latex);
+        } else if (definitionCheck.test(latex)) {
+            popup.showRecognize(latex, () -> saveToHistory(capture, latex));  // f(x)=... saves only if asked
         } else if (phase != null && differential.test(latex)) {
             popup.showFormula(latex, null, null, () -> phasePortrait(capture, latex));
         } else if (graphing != null) {

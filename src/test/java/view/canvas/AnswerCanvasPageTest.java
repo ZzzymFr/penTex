@@ -350,7 +350,7 @@ class AnswerCanvasPageTest {
         shared.setFormulaRecognizer(image -> image.getHeight() < 200 ? "f(2)=" : "f(x)=x^{2}+2x");
     }
 
-    private void autoDefine() throws Exception {
+    private void checkDefinitions() throws Exception {
         DefinitionCheckController check = new DefinitionCheckController(new DefinitionCheckInteractor());
         onEdt(() -> page.setDefinitionCheck(check::isDefinition));
     }
@@ -360,14 +360,23 @@ class AnswerCanvasPageTest {
         return page.notices().shownError() == null && done != null && done.startsWith("Defined");
     }
 
+    private void clickRecognize() throws Exception {
+        onEdt(() -> page.visiblePopup().clickRecognize());
+    }
+
     @Test
-    void definitionIsSavedWithoutCalculate() throws Exception {
+    void definitionWaitsForRecognize() throws Exception {
+        AtomicInteger results = countResults();
         defineThenCall();
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
+        waitPopup("f(x)=x^{2}+2x");
+        assertTrue(popup().hasRecognize());
+        Thread.sleep(200);
+        assertEquals(0, results.get(), "not saved behind your back");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
-        assertNull(popup(), "nothing to click");
 
         drag(400, 300, 420, 330);
         waitPopup("f(2)=");
@@ -376,38 +385,26 @@ class AnswerCanvasPageTest {
     }
 
     @Test
-    void definitionWrittenRightBeforeTheCallIsSavedFirst() throws Exception {
-        defineThenCall();
-        openPage();
-        autoDefine();
-        onEdt(() -> page.setPopupDelay(400));
-        write();                                     // f(x)=...
-        drag(400, 300, 420, 330);                    // f(2)= right after, no pause
-        waitPopup("f(2)=");
-        clickCalculate();
-        waitFor(() -> answerIs("8"), "f(2)");
-        Thread.sleep(400);
-        assertNull(popup(), "f(x) line doesn't pop up after");
-    }
-
-    @Test
     void badDefinitionStillGetsThePopup() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=x+y");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         waitPopup("f(x)=x+y");
-        assertFalse(errorShown("f(x)"), "no error till Calculate");
-        clickCalculate();
+        assertFalse(errorShown("f(x)"), "no error till Recognize");
+        clickRecognize();
         waitFor(() -> errorShown("f(x) can only use x, not y"), "the error");
     }
 
     @Test
-    void autoSavedDefinitionGoesToPdfStudio() throws Exception {
+    void recognizedDefinitionGoesToPdfStudio() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=x^{2}+2x");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
+        waitPopup("f(x)=x^{2}+2x");
+        assertTrue(sent.isEmpty(), "nothing till the click");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
         waitFor(() -> sent.equals(List.of("f(x)=x^{2}+2x|")), "sent once, no answer");
     }
@@ -427,7 +424,7 @@ class AnswerCanvasPageTest {
     void halfWrittenInkNeverGoesToPdfStudio() throws Exception {
         shared.setFormulaRecognizer(image -> "1+");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         Thread.sleep(400);
         assertNull(popup());
@@ -438,7 +435,7 @@ class AnswerCanvasPageTest {
     void definitionWithNoBodyYetWaitsQuietly() throws Exception {
         shared.setFormulaRecognizer(image -> "f(x)=");
         openPage();
-        autoDefine();
+        checkDefinitions();
         write();
         waitPopup("f(x)=");
         assertNull(page.notices().shownError());
@@ -848,14 +845,17 @@ class AnswerCanvasPageTest {
     void savedDefinitionStillPopsUpOnHover() throws Exception {
         shared.setFormulaRecognizer(image -> image.getWidth() > 200 ? "f(x)=2x+3x^{2}" : ".");
         openPage();
-        autoDefine();
+        checkDefinitions();
         writeQuadratic();
+        waitPopup("f(x)=2x+3x^{2}");
+        clickRecognize();
         waitFor(this::definedShown, "the Defined message");
         assertNull(popup());
         Thread.sleep(400);
 
-        hover(130, 120);                    // on the "=", Graph lives in this popup
+        hover(130, 120);                    // on the "=", Recognize again
         waitPopup("f(x)=2x+3x^{2}");
+        assertTrue(popup().hasRecognize());
     }
 
     @Test
@@ -1227,16 +1227,16 @@ class AnswerCanvasPageTest {
         AtomicInteger results = countResults();
         shared.setFormulaRecognizer(image -> "f(x)=x^{2}");
         openBoard();
-        autoDefine();
+        checkDefinitions();
         write();
-        waitFor(() -> results.get() == 1, "saved once when written");
+        waitPopup("f(x)=x^{2}");
         lasso(80, 80, 220, 170);
         waitPick();
         assertLit(false, true, true, false);
         Thread.sleep(200);
-        assertEquals(1, results.get(), "no auto-save on a lasso");
+        assertEquals(0, results.get(), "no auto-save");
         clickInPick("Recognize");
-        waitFor(() -> results.get() == 2, "saved again on Recognize");
+        waitFor(() -> results.get() == 1, "saved on Recognize");
     }
 
     @Test
@@ -1245,11 +1245,15 @@ class AnswerCanvasPageTest {
         shared.setFormulaRecognizer(image -> latex.get());
         AtomicInteger results = countResults();
         openBoard();
-        autoDefine();
+        checkDefinitions();
         write();
+        waitPopup("f(x)=x^{2}");
+        clickRecognize();
         waitFor(() -> results.get() == 1, "x^2 saved");
         latex.set("f(x)=x^{3}");
         drag(400, 300, 420, 330);
+        waitPopup("f(x)=x^{3}");
+        clickRecognize();
         waitFor(() -> results.get() == 2, "x^3 saved");
         lasso(80, 80, 220, 170);
         waitPick();
@@ -1544,25 +1548,6 @@ class AnswerCanvasPageTest {
         drag(130, 125, 330, 275);
         Thread.sleep(400);
         assertNull(popup());
-    }
-
-    @Test
-    void reusedReadStillWaitsForThePendingDefinition() throws Exception {
-        shared.setFormulaRecognizer(image -> image.getHeight() < 200 ? "1+1" : "f(x)=x^{2}+2x");
-        AtomicInteger results = new AtomicInteger();
-        viewModel.addPropertyChangeListener(e -> {
-            if (MathLabViewModel.RESULT.equals(e.getPropertyName())) {
-                results.incrementAndGet();
-            }
-        });
-        openPage();
-        autoDefine();
-        onEdt(() -> page.setPopupDelay(400));
-        write();                   // f(x)=...
-        drag(400, 300, 420, 330);  // 1+1 right after, no pause
-        waitFor(this::definedShown, "the Defined message");
-        Thread.sleep(500);
-        assertEquals(1, results.get(), "saved once");
     }
 
     private static final class NoPhaseExplore implements use_case.explore_phase.ExplorePhaseInputBoundary {
