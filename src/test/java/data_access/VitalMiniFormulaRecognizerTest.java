@@ -26,9 +26,9 @@ class VitalMiniFormulaRecognizerTest {
     }
 
     @Test
-    void fractionReachesTheModelOneLineTall() throws Exception {
+    void fractionReachesTheModelScaledAsTrainingDid() throws Exception {
         recognizer.recognize(fraction());
-        assertEquals(128, seen.get(0).getHeight());
+        assertSamePixels(FormulaImagePreprocessor.prepare(fraction()), seen.get(0));
     }
 
     @Test

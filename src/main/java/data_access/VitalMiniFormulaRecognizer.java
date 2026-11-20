@@ -25,10 +25,9 @@ public class VitalMiniFormulaRecognizer implements FormulaRecognizer {
     }
 
     // the model takes height and width in multiples of 16, so scale and pad like training did
-    // whole ink = one line, band rule blew fractions up past what these weights can read
+    // the scale model training used picks the size per formula, so no whole-ink rule here
     @Override
     public String recognize(BufferedImage formulaImage) throws Exception {
-        BufferedImage prepared = FormulaImagePreprocessor.prepare(formulaImage, BandRule.WHOLE_INK);
-        return model.read(ReadableWidth.fit(prepared));  // too wide and the model drops the tail
+        return model.read(FormulaImagePreprocessor.prepare(formulaImage));
     }
 }

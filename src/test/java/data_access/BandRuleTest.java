@@ -21,8 +21,8 @@ class BandRuleTest {
     }
 
     @Test
-    void plainPrepareIsStillTrainingsRule() {
-        assertSamePixels(FormulaImagePreprocessor.prepare(fraction()),
+    void tallestBandIsTheTrainingRuleWithoutTheScaleModel() {
+        assertSamePixels(FormulaImagePreprocessor.prepare(fraction(), CropScale.RULE),
                 FormulaImagePreprocessor.prepare(fraction(), BandRule.TALLEST_BAND));
     }
 
