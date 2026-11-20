@@ -101,7 +101,12 @@ public final class GlassDialogs {
 
     /** Order is stable: red destructive choice, neutral Cancel, blue Save. */
     public static UnsavedDecision unsavedChanges(Component parent, String canvasName) {
-        int choice = present(parent, "Save changes to “" + canvasName + "” before opening another canvas?",
+        return unsavedChanges(parent, canvasName, "opening another canvas");
+    }
+
+    /** {@code beforeWhat} completes "Save changes to … before ___?", e.g. "closing Math Lab". */
+    public static UnsavedDecision unsavedChanges(Component parent, String canvasName, String beforeWhat) {
+        int choice = present(parent, "Save changes to “" + canvasName + "” before " + beforeWhat + "?",
                 "If you don’t save, your latest drawing will be lost.", Tone.WARNING, null,
                 new String[]{"Don’t Save", "Cancel", "Save"});
         return choice == 0 ? UnsavedDecision.DONT_SAVE :
@@ -139,13 +144,13 @@ public final class GlassDialogs {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { dialog.dispose(); }
         });
         if (!pane.buttons.isEmpty()) {
-            int defaultOption = labels.length == 3 && labels[0].contains("Save") && labels[2].equals("Save")
-                    ? 2 : 0;
+            boolean destructive = labels.length == 2 && labels[0].equals("Clear All");
+            int defaultOption = destructive ? 1
+                    : labels.length == 3 && labels[0].contains("Save") && labels[2].equals("Save") ? 2 : 0;
             dialog.getRootPane().setDefaultButton(pane.buttons.get(defaultOption));
         }
         dialog.pack();
         dialog.setLocationRelativeTo(parent);
-        useOpaqueBackdrop(dialog, owner, pane);
         if (content instanceof JTextField field) {
             SwingUtilities.invokeLater(() -> { field.requestFocusInWindow(); field.selectAll(); });
         }
@@ -153,37 +158,9 @@ public final class GlassDialogs {
         return selected.get();
     }
 
-    /**
-     * A see-through window flashes on macOS: whenever anything inside it repaints (a button hover,
-     * the blinking caret) that patch is cleared to transparent for a frame and the canvas behind
-     * shows through. So when the dialog sits over our own window, it is made opaque instead, and
-     * the bit of that window behind the rounded corners and shadow is painted in as a snapshot.
-     * It looks the same, but nothing is ever cleared to transparent on screen.
-     */
-    private static void useOpaqueBackdrop(JDialog dialog, Window owner, DialogPane pane) {
-        if (owner == null || !owner.isShowing() || dialog.getBackground().getAlpha() == 255) return;
-        int w = dialog.getWidth(), h = dialog.getHeight();
-        if (w <= 0 || h <= 0) return;
-        double scale = dialog.getGraphicsConfiguration().getDefaultTransform().getScaleX();
-        BufferedImage snapshot = new BufferedImage((int) Math.ceil(w * scale), (int) Math.ceil(h * scale),
-                BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = snapshot.createGraphics();
-        try {
-            g.setColor(owner.getBackground() == null ? new Color(242, 242, 247) : owner.getBackground());
-            g.fillRect(0, 0, snapshot.getWidth(), snapshot.getHeight());
-            g.scale(scale, scale);
-            g.translate(owner.getX() - dialog.getX(), owner.getY() - dialog.getY());
-            owner.paint(g);
-        } catch (RuntimeException paintFailed) {
-            return;  // keep the transparent window rather than show a broken backdrop
-        } finally {
-            g.dispose();
-        }
-        pane.backdrop = snapshot;
-        dialog.setBackground(new Color(242, 242, 247));
-        pane.setOpaque(false);  // an opaque window background marks its content pane opaque again
-        dialog.getRootPane().putClientProperty("Window.shadow", Boolean.FALSE);  // we draw our own
-    }
+    // Keep the undecorated dialog transparent: an opaque top-level window paints a
+    // rectangular plate outside the rounded glass card, especially visible on macOS.
+    // Only the rounded card itself is painted by DialogPane.
 
     /** Package-visible, window-free presentation: easily tested in headless mode. */
     static final class DialogPane extends JPanel {
@@ -244,7 +221,7 @@ public final class GlassDialogs {
             for (int i = 0; i < labels.length; i++) {
                 final int index = i;
                 Style style = labels[i].equals("Cancel") ? Style.SECONDARY :
-                        unsaved && i == 0 ? Style.DESTRUCTIVE :
+                        (unsaved && i == 0) || (labels[i].equals("Clear All")) ? Style.DESTRUCTIVE :
                                 (unsaved ? i == 2 : i == 0) ? Style.PRIMARY : Style.SECONDARY;
                 GlassButton button = new ActionButton(labels[i], style);
                 button.setName("glass-option-" + i);

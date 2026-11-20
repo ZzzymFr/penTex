@@ -25,7 +25,6 @@ import java.util.stream.Collectors;
 public final class PdfStudioLauncher implements Us4InputBoundary {
     private final MathLibrary library = new MathLibrary();
     private final MathLabCollector collector;
-    private final history.use_case.CanvasHistoryLifecycle canvasHistory;
     private final PdfEditorController controller;
     private Runnable showPdf = () -> { };
     private CanvasAnswerRecovery answerRecovery;
@@ -46,8 +45,8 @@ public final class PdfStudioLauncher implements Us4InputBoundary {
     public PdfStudioLauncher() { this(null); }
     public PdfStudioLauncher(history.use_case.HistoryInteractor history) {
         this.history = history;
-        canvasHistory = history == null ? null : new history.use_case.CanvasHistoryLifecycle(history);
-        collector = new MathLabCollector(library, history, canvasHistory);
+        // History is a user-owned archive, not a mirror of live canvas strokes.
+        collector = new MathLabCollector(library, history);
         DocumentEditor editing = new DocumentEditor();
         PdfBoxOutputAdapter pdfOutput = new PdfBoxOutputAdapter();
         controller = new PdfEditorController(library, editing, new AutoLayoutInteractor(editing),
@@ -87,19 +86,16 @@ public final class PdfStudioLauncher implements Us4InputBoundary {
     }
     public void synchronizeCanvas(SharedCanvas canvas) {
         if (canvas == null) return;
-        Runnable prune = () -> {
+        Runnable refreshRecovery = () -> {
             // Formula definitions do not have an answer; they are still valid source ink.
             Set<Long> active = canvas.getDrawingCanvas().getFormulas().stream()
                     .map(formula -> formula.getId()).collect(Collectors.toSet());
             if (answerRecovery != null) answerRecovery.synchronize(active);
-            library.retainActiveSources(active);
-            if (canvasHistory != null) {
-                try { canvasHistory.synchronize(active); }
-                catch (IOException ex) { System.err.println("Canvas/history synchronization failed: " + ex.getMessage()); }
-            }
+            // Deliberately do NOT prune Library or History when ink disappears.
+            // Erasing or clearing a canvas must never delete saved materials.
         };
-        if (SwingUtilities.isEventDispatchThread()) prune.run();
-        else SwingUtilities.invokeLater(prune);
+        if (SwingUtilities.isEventDispatchThread()) refreshRecovery.run();
+        else SwingUtilities.invokeLater(refreshRecovery);
     }
     public void addFormulaResult(String latex, String result) { addCalculation(latex, result); }
     @Override public void addGraph(String latex, BufferedImage image) { collector.acceptGraph(latex, image); }

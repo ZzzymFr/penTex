@@ -55,6 +55,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private final Set<Long> waiting = new LinkedHashSet<>();    // written in the same go, popup still owed
     private Stroke targetStroke;      // new ink to pop up for, or
     private long targetId = -1;       // an edited formula, or
+    private boolean targetEdited;     // its ink changed (not just moved), regroups w/ guesses next to it
     private boolean targetPick;       // the lasso pick
     private long generation;          // bumps on every user action, old results check it
     private FormulaCapture shown;     // formula the popup is about
@@ -136,35 +137,65 @@ public class AnswerCanvasPage extends CanvasPage {
         setFunctionArea(tools);
     }
 
-    // one board: popup has Calculate + Graph, no function area
+    // one board: popup has Calculate + Graph, no function area. One shared graph session: one live graph.
     public AnswerCanvasPage(SharedCanvas sharedCanvas, EvaluateController controller, MathLabViewModel viewModel,
                             FormulaResultSink resultSink, GraphController graphController,
                             GraphExploreController graphExplore,
                             GraphViewModel graphViewModel, Predicate<String> graphable,
                             java.awt.Color background) {
+        this(sharedCanvas, controller, viewModel, resultSink,
+                sharedSession(new GraphSession(graphController, graphExplore, graphViewModel)), graphable, background);
+    }
+
+    /**
+     * One board where every Graph gets a fresh session from {@code graphSessions}, so several graphs
+     * stay live on the canvas at the same time, each with its own card and x / y boxes.
+     */
+    public AnswerCanvasPage(SharedCanvas sharedCanvas, EvaluateController controller, MathLabViewModel viewModel,
+                            FormulaResultSink resultSink, java.util.function.Supplier<GraphSession> graphSessions,
+                            Predicate<String> graphable, java.awt.Color background) {
         this(sharedCanvas, controller, viewModel, resultSink);
         this.graphable = graphable;
-        graphing = new PopupGraphing(sharedCanvas, graphController, graphExplore, graphViewModel, notices,
-                getCanvasArea(), this::publishFormulaOnly);
-        addCanvasUnderlay(graphing.graphCard());
-        addCanvasOverlay(graphing.rangeBar());
+        graphing = new PopupGraphing(sharedCanvas, graphSessions, notices, getCanvasArea(), this::publishFormulaOnly);
+        graphing.setLayers(cardLayers());
         useBoardLook(background);
     }
 
-    // ode -> Phase Portrait in the popup, its own use case + card next to Graph's
+    private static <T> java.util.function.Supplier<T> sharedSession(T session) {
+        return () -> session;
+    }
+
+    // live cards float over the ink but under the docks, their range boxes above everything
+    private PopupCardTool.Layers cardLayers() {
+        return new PopupCardTool.Layers() {
+            @Override
+            public void underlay(JComponent card) {
+                addCanvasUnderlay(card);
+            }
+
+            @Override
+            public void overlay(JComponent ranges) {
+                addCanvasOverlay(ranges);
+            }
+        };
+    }
+
+    // ode -> Phase Portrait in the popup, its own use case + card next to Graph's (one shared session)
     public void enablePhasePortrait(PhaseController controller, PhaseExploreController explore,
                                     PhaseViewModel viewModel, Predicate<String> isDifferentialEquation) {
+        enablePhasePortrait(sharedSession(new PhaseSession(controller, explore, viewModel)), isDifferentialEquation);
+    }
+
+    /** Phase Portrait with a fresh session per portrait, so several stay live next to the graphs. */
+    public void enablePhasePortrait(java.util.function.Supplier<PhaseSession> phaseSessions,
+                                    Predicate<String> isDifferentialEquation) {
         if (graphing == null || phase != null) {
             return;   // board only, once
         }
-        phase = new PopupPhasePortrait(getSharedCanvas(), controller, explore, viewModel, notices,
-                getCanvasArea(), this::publishFormulaOnly);
+        phase = new PopupPhasePortrait(getSharedCanvas(), phaseSessions, notices, getCanvasArea(),
+                this::publishFormulaOnly);
+        phase.setLayers(cardLayers());
         differential = isDifferentialEquation;
-        // one card slot on the canvas: whoever shows last keeps it, the other steps aside
-        graphing.setOnShown(phase::placeRanges);
-        phase.setOnShown(graphing::placeRanges);
-        addCanvasUnderlay(phase.card());
-        addCanvasOverlay(phase.rangeBar());
     }
 
     // the area the board floats things over (same coords as the canvas)
@@ -248,6 +279,7 @@ public class AnswerCanvasPage extends CanvasPage {
             return;
         }
         offerAgain(id);
+        targetEdited = true;
     }
 
     // whole formula dragged / resized: same ink, offer it again like an edit, error card stays
@@ -264,6 +296,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private void offerAgain(long id) {
         targetStroke = null;
         targetId = id;
+        targetEdited = false;
         targetPick = false;
         restartPause();
     }
@@ -330,7 +363,8 @@ public class AnswerCanvasPage extends CanvasPage {
             session.clear();
         } else if (targetId >= 0) {
             FormulaCapture loose = registerLeftovers();  // first, it may fold into the edited one
-            capture = getSharedCanvas().captureForRecalculation(targetId);
+            capture = targetEdited ? getSharedCanvas().captureEdited(targetId)
+                    : getSharedCanvas().captureForRecalculation(targetId);
             if (capture == null) {
                 capture = loose;
             }

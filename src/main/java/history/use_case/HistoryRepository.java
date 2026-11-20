@@ -10,4 +10,10 @@ public interface HistoryRepository {
     boolean saveIfAbsent(HistoryEntry entry) throws IOException;
     List<HistoryEntry> findAll() throws IOException;
     boolean deleteById(String id) throws IOException;
+    /** Permanently remove the records owned by this repository (never unrelated files). */
+    default int clearAll() throws IOException {
+        int removed = 0;
+        for (HistoryEntry record : findAll()) if (deleteById(record.id())) removed++;
+        return removed;
+    }
 }
