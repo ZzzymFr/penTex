@@ -60,7 +60,32 @@ class SurfaceNetsTest {
         assertFalse(mesh.isEmpty());
         for (double[] q : mesh.getQuads()) {
             for (int c = 0; c < 4; c++) {
-                assertEquals(1, q[3 * c] + q[3 * c + 1] + q[3 * c + 2], 1e-9);
+                assertEquals(1, q[3 * c] + q[3 * c + 1] + q[3 * c + 2], 1e-9, "wall ones too");
+            }
+        }
+    }
+
+    @Test
+    void planeRunsRightUpToTheWallsAndNotPast() {
+        SurfaceMesh mesh = SurfaceNets.mesh(surface((x, y, z) -> x + y + z - 1), FLOOR, -2, 2, 12);
+        double[] b = mesh.bounds();
+        for (int i = 0; i < 6; i++) {
+            assertEquals(i % 2 == 0 ? -2 : 2, b[i], 1e-9);
+        }
+    }
+
+    @Test
+    void noFlatSkirtPastTheWalls() {
+        SurfaceMesh mesh = SurfaceNets.mesh(surface((x, y, z) -> x + y + z - 1), FLOOR, -2, 2, 12);
+        for (double[] q : mesh.getQuads()) {
+            for (int a = 0; a < 3; a++) {
+                for (double wall : new double[]{-2, 2}) {
+                    boolean flat = true;
+                    for (int c = 0; c < 4; c++) {
+                        flat &= q[3 * c + a] == wall;
+                    }
+                    assertFalse(flat, "quad flattened onto a wall");
+                }
             }
         }
     }

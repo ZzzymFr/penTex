@@ -6,9 +6,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 // surface nets: a point per cell the surface goes through, a quad round every grid edge where F flips sign
+// grid runs a cell past each wall, cells out there only use crossings on the wall, so a surface ends flush on it
 public final class SurfaceNets {
     private final ImplicitSurface f;
-    private final int n;
+    private final int n;                  // cells a side incl. the one past each wall
+    private final double[] low;           // box corners
+    private final double[] high;
     private final double[] xs;
     private final double[] ys;
     private final double[] zs;
@@ -21,15 +24,17 @@ public final class SurfaceNets {
 
     private SurfaceNets(ImplicitSurface f, Viewport floor, double zMin, double zMax, int n) {
         this.f = f;
-        this.n = n;
+        this.n = n + 2;
+        low = new double[]{floor.getXMin(), floor.getYMin(), zMin};
+        high = new double[]{floor.getXMax(), floor.getYMax(), zMax};
         xs = axis(floor.getXMin(), floor.getXMax(), n);
         ys = axis(floor.getYMin(), floor.getYMax(), n);
         zs = axis(zMin, zMax, n);
-        value = new double[n + 1][n + 1][n + 1];
-        ex = new double[n][n + 1][n + 1];
-        ey = new double[n + 1][n][n + 1];
-        ez = new double[n + 1][n + 1][n];
-        point = new double[n][n][n][];
+        value = new double[this.n + 1][this.n + 1][this.n + 1];
+        ex = new double[this.n][this.n + 1][this.n + 1];
+        ey = new double[this.n + 1][this.n][this.n + 1];
+        ez = new double[this.n + 1][this.n + 1][this.n];
+        point = new double[this.n][this.n][this.n][];
     }
 
     // n cells a side over the floor x the z range
@@ -41,10 +46,11 @@ public final class SurfaceNets {
         return new SurfaceMesh(nets.quads());
     }
 
+    // n cells lo..hi plus one more each side
     private static double[] axis(double lo, double hi, int n) {
-        double[] a = new double[n + 1];
-        for (int i = 0; i <= n; i++) {
-            a[i] = lo + (hi - lo) * i / n;
+        double[] a = new double[n + 3];
+        for (int i = 0; i < a.length; i++) {
+            a[i] = lo + (hi - lo) * (i - 1) / n;
         }
         return a;
     }
@@ -92,7 +98,7 @@ public final class SurfaceNets {
         return a / (a - b);
     }
 
-    // cell point = average of where its 12 edges cross
+    // cell point = average of where its 12 edges cross, the ones inside the box
     private void points() {
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
@@ -114,14 +120,29 @@ public final class SurfaceNets {
         }
     }
 
-    private static int add(double[] sum, double t, double x0, double x1, double y0, double y1, double z0, double z1) {
+    private int add(double[] sum, double t, double x0, double x1, double y0, double y1, double z0, double z1) {
         if (Double.isNaN(t)) {
             return 0;
         }
-        sum[0] += x0 + (x1 - x0) * t;
-        sum[1] += y0 + (y1 - y0) * t;
-        sum[2] += z0 + (z1 - z0) * t;
+        double[] p = {x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t};
+        if (!inBox(p)) {
+            return 0;
+        }
+        for (int a = 0; a < 3; a++) {
+            sum[a] += p[a];
+        }
         return 1;
+    }
+
+    // on the wall counts as in
+    private boolean inBox(double[] p) {
+        for (int a = 0; a < 3; a++) {
+            double slack = (high[a] - low[a]) * 1e-12;
+            if (p[a] < low[a] - slack || p[a] > high[a] + slack) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // the 4 cells round a crossing edge, in order round it; edges on the box wall have no 4th cell
@@ -149,11 +170,38 @@ public final class SurfaceNets {
         return index > 0 && index < n;
     }
 
-    private static void quad(List<double[]> out, double[]... corners) {
+    private void quad(List<double[]> out, double[]... corners) {
+        for (double[] c : corners) {
+            if (c == null) {
+                return;   // a cell out past the walls the surface never reaches inside
+            }
+        }
+        if (flatOnAWall(corners)) {
+            return;
+        }
         double[] q = new double[12];
         for (int c = 0; c < 4; c++) {
             System.arraycopy(corners[c], 0, q, 3 * c, 3);
         }
         out.add(q);
+    }
+
+    // all 4 cells past the same wall, it'd just be a flat skirt on that wall
+    private boolean flatOnAWall(double[][] corners) {
+        for (int a = 0; a < 3; a++) {
+            if (allAt(corners, a, low[a]) || allAt(corners, a, high[a])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean allAt(double[][] corners, int axis, double wall) {
+        for (double[] c : corners) {
+            if (c[axis] != wall) {
+                return false;
+            }
+        }
+        return true;
     }
 }
