@@ -1067,6 +1067,13 @@ class AnswerCanvasPageTest {
     }
 
     @Test
+    void xyzEquationGetsGraphNotCalculate() throws Exception {
+        boardPopupFor("x+y+z=1");
+        assertFalse(popup().hasCalculate());
+        assertTrue(popup().hasGraph());
+    }
+
+    @Test
     void flatLineGetsBoth() throws Exception {
         boardPopupFor("y=2+3");
         assertTrue(popup().hasCalculate());
