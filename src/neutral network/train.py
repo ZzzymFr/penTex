@@ -28,7 +28,7 @@ from formula_layout import MAX_TOKENS, STRIDE, formula_layout, tallest_band
 from crop_scale import CANDIDATES, DEFAULT_PATH as CROP_SCALE_PATH, CropScale, crop_to_ink
 from augmentation import augment_formula_image, DEFAULT_AUGMENT_PROBABILITY, AUGMENTATION_VERSION
 
-Learning_rate = 8e-5
+Learning_rate = 1e-4
 minimum_learning_rate = 3e-6
 EPOCHS = 5
 

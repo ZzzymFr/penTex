@@ -6,22 +6,24 @@ import java.awt.Image;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
 
 /**
- * Turns a picture of a handwritten formula into the model's input. Scale and canvas follow
- * {@link FormulaLayout} (shared with {@code src/neutral network/formula_layout.py}): the tallest line
- * of ink 112 px high so every line of a multi-line formula keeps single-line size, one uniform scale,
- * centred with at least 8 px of margin on a canvas whose sides are multiples of 16 (padding only).
- * Java-only extra: ink that is nothing but marks (every band under {@value #MARK_PENS} pen widths
- * tall: a dot, a minus, an equals sign) is sized as if it sat in a line {@value #GLYPH_PENS} pens
- * tall instead of being blown up to fill it. Anything with a real character in it is untouched.
+ * Turns a picture of a handwritten formula into the input the model was trained on, the same
+ * way as {@code src/neutral network/preprocess.py} ({@code load_formula_image}) with
+ * {@code IMAGE_INVERT = False} from {@code train.py}:
+ * RGB colours and light/dark kept as they are, cropped to the ink, scaled by the rule in
+ * {@link FormulaLayout} (the tallest line of ink 112 px high, so every line of a multi-line formula
+ * keeps the size a single line has), centred with an 8 px margin on a canvas whose height (at least
+ * 128) and width (at least 64) are multiples of 16, the background filled with the original
+ * background colour.
  *
- * <p>The output is gray dark ink on white with its antialiasing kept, never thresholded, and resized
- * exactly once. Canvas formulas come in already drawn from the strokes at a high fixed scale, so this
- * normally only shrinks; a small outside picture is the one case that still gets enlarged.
+ * <p>{@code vital_pixel.forward} only accepts {@code [B,3,H,W]} with H and W multiples of 16, so an
+ * image straight from the canvas must go through here first.
  */
 final class FormulaImagePreprocessor {
-    // bands thinner than this many pens are just dots / dashes, not a line of chars
+    private static final int INK_THRESHOLD = 32;  // difference in any RGB channel from black/white background
+    // bands thinner than this many pens are just dots / dashes, not a line of chars (BandRule path only)
     static final double MARK_PENS = 3;
     // made-up line height (in pens) for ink thats only marks, about a normal handwritten char
     static final double GLYPH_PENS = 8;
@@ -93,6 +95,39 @@ final class FormulaImagePreprocessor {
         int resizedHeight = Math.max(1, FormulaLayout.roundHalfUp(inkHeight * layout.scale()));
         BufferedImage resized = resize(ink, resizedWidth, resizedHeight);
 
+        int canvasWidth = layout.width();
+        int canvasHeight = layout.height();
+        BufferedImage canvas = new BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = canvas.createGraphics();
+        int background = lightBackground ? 255 : 0;  // not inverted, so the background keeps its colour
+        g.setColor(new java.awt.Color(background, background, background));
+        g.fillRect(0, 0, canvasWidth, canvasHeight);
+        g.drawImage(resized, (canvasWidth - resizedWidth) / 2, (canvasHeight - resizedHeight) / 2, null);
+        g.dispose();
+        return canvas;
+    }
+
+    /**
+     * The plain gray-on-white path with a {@link BandRule} (no scale model): dark backgrounds are
+     * flipped, coloured ink turns dark gray, and ink that is only dots / dashes is sized like a normal
+     * character instead of being blown up to a full line. The recognizer does not use it: the shipped
+     * weights are trained with {@link #prepare(BufferedImage, CropScale)}.
+     *
+     * @return a gray-on-white RGB image (r=g=b) at least 128 px high, sides multiples of 16
+     * @throws IllegalArgumentException if there is no ink in the image
+     */
+    static BufferedImage prepare(BufferedImage source, BandRule rule) {
+        GrayInk gray = GrayInk.of(source);
+        Rectangle box = gray.bounds();
+        if (box == null) {
+            throw new IllegalArgumentException("The image has no handwriting in it.");
+        }
+        double tallest = lineHeight(gray, box, rule);
+        FormulaLayout.Size layout = FormulaLayout.size(box.width, box.height, tallest);
+        int resizedWidth = Math.max(1, FormulaLayout.roundHalfUp(box.width * layout.scale()));
+        int resizedHeight = Math.max(1, FormulaLayout.roundHalfUp(box.height * layout.scale()));
+        BufferedImage resized = resize(gray.crop(box), resizedWidth, resizedHeight);
+
         BufferedImage canvas = new BufferedImage(layout.width(), layout.height(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = canvas.createGraphics();
         g.setColor(Color.WHITE);
@@ -110,11 +145,52 @@ final class FormulaImagePreprocessor {
         return tallest < MARK_PENS * pen ? GLYPH_PENS * pen : tallest;
     }
 
-    // area averaging to shrink (close to training's lanczos), bicubic only for a too-small outside pic
-    private static BufferedImage resize(BufferedImage image, int width, int height) {
-        if (width == image.getWidth() && height == image.getHeight()) {
-            return image;
+    /** Composite transparency onto white without discarding RGB colour information. */
+    private static int[] toRgb(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        int[] rgb = new int[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int argb = source.getRGB(x, y);
+                double alpha = ((argb >>> 24) & 0xFF) / 255.0;
+                double r = ((argb >> 16) & 0xFF) * alpha + 255 * (1 - alpha);
+                double gr = ((argb >> 8) & 0xFF) * alpha + 255 * (1 - alpha);
+                double b = (argb & 0xFF) * alpha + 255 * (1 - alpha);
+                rgb[y * width + x] = ((int) Math.round(r) << 16)
+                        | ((int) Math.round(gr) << 8) | (int) Math.round(b);
+            }
         }
+        return rgb;
+    }
+
+    private static int[] border(int[] rgb, int width, int height) {
+        int[] values = new int[3 * (2 * width + 2 * height)];
+        int n = 0;
+        for (int x = 0; x < width; x++) {
+            for (int shift = 16; shift >= 0; shift -= 8) {
+                values[n++] = (rgb[x] >>> shift) & 0xFF;
+                values[n++] = (rgb[(height - 1) * width + x] >>> shift) & 0xFF;
+            }
+        }
+        for (int y = 0; y < height; y++) {
+            for (int shift = 16; shift >= 0; shift -= 8) {
+                values[n++] = (rgb[y * width] >>> shift) & 0xFF;
+                values[n++] = (rgb[y * width + width - 1] >>> shift) & 0xFF;
+            }
+        }
+        return values;
+    }
+
+    private static double median(int[] values) {
+        int[] sorted = values.clone();
+        Arrays.sort(sorted);
+        int middle = sorted.length / 2;
+        return sorted.length % 2 == 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2.0;
+    }
+
+    /** Smooth resizing: area averaging when shrinking (close to training's Lanczos), bicubic when enlarging. */
+    private static BufferedImage resize(BufferedImage image, int width, int height) {
         BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = out.createGraphics();
         if (width < image.getWidth() || height < image.getHeight()) {

@@ -1,6 +1,6 @@
 {
   "checkpoint": "model.pt",
-  "checkpoint_sha256": "978c6c9c56a5f03c1106a9f350fcda512703d83ea240dc10d9466b1d1f640f80",
+  "checkpoint_sha256": "268c64e36dec6349a354e8fb7c9d26f494e03e2d1b3060decc0c701175b90025",
   "torch_version": "2.11.0+cu128",
   "mode": "eval (inference only; dropout is identity, BN uses saved statistics)",
   "vocab_size": 234,
