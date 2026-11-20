@@ -1117,7 +1117,7 @@ public class DrawingCanvas extends JPanel {
         }
         Rectangle bounds = boundsOf(selectionPreview());
         for (Picture picture : selectedPictures) {
-            Rectangle image = picture.box.getBounds();
+            Rectangle image = picturePreviewBounds(picture).getBounds();
             if (bounds == null) bounds = image; else bounds.add(image);
         }
         for (CanvasAnswer a : answerPreview()) {
@@ -2151,20 +2151,30 @@ public class DrawingCanvas extends JPanel {
         }
     }
 
+    /** The same in-progress History geometry drives both the artwork and its selection outline. */
+    private Rectangle2D picturePreviewBounds(Picture picture) {
+        Rectangle2D box = picture.box;
+        if (!selectedPictures.contains(picture)) {
+            return box;
+        }
+        if (resizeHandle >= 0 && resizeFactor != 1) {
+            return new Rectangle2D.Double(
+                    resizeAnchor.getX() + (box.getX() - resizeAnchor.getX()) * resizeFactor,
+                    resizeAnchor.getY() + (box.getY() - resizeAnchor.getY()) * resizeFactor,
+                    box.getWidth() * resizeFactor, box.getHeight() * resizeFactor);
+        }
+        if (moveDx != 0 || moveDy != 0) {
+            return new Rectangle2D.Double(box.getX() + moveDx, box.getY() + moveDy,
+                    box.getWidth(), box.getHeight());
+        }
+        return box;
+    }
+
     private void paintPictures(Graphics2D world) {
         for (Picture p : pictures) {
             Graphics2D g = (Graphics2D) world.create();
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            Rectangle2D r = p.box;
-            if (selectedPictures.contains(p)) {
-                if (resizeHandle >= 0 && resizeFactor != 1) {
-                    r = new Rectangle2D.Double(resizeAnchor.getX() + (r.getX()-resizeAnchor.getX())*resizeFactor,
-                            resizeAnchor.getY() + (r.getY()-resizeAnchor.getY())*resizeFactor,
-                            r.getWidth()*resizeFactor, r.getHeight()*resizeFactor);
-                } else if (moveDx != 0 || moveDy != 0) {
-                    r = new Rectangle2D.Double(r.getX()+moveDx,r.getY()+moveDy,r.getWidth(),r.getHeight());
-                }
-            }
+            Rectangle2D r = picturePreviewBounds(p);
             BufferedImage source = p.image;
             if (mathAssetRenderer != null && !p.latex.isBlank()) {
                 int rasterW = Math.min(2400, Math.max(20, (int)Math.round(r.getWidth() * scale)));
