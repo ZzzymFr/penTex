@@ -1611,6 +1611,17 @@ public class DrawingCanvas extends JPanel {
         return capture(mine);
     }
 
+    // pick is exactly one answered formula: its capture anyway, null if not
+    public FormulaCapture capturePickedAnswered() {
+        Set<Stroke> picked = new HashSet<>(selectedInkSnapshot());
+        for (Formula f : book.all()) {
+            if (f.getAnswer() != null && !picked.isEmpty() && f.getStrokes().equals(picked)) {
+                return capture(f);
+            }
+        }
+        return null;
+    }
+
     // seed's row, plus any limits stacked over/under it (or the row it's a limit of), or a fraction's other half
     private Set<Stroke> looseGroup(Stroke seed, double h) {
         Set<Stroke> group = looseRow(seed, h, Set.of());

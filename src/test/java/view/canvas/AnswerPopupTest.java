@@ -101,6 +101,37 @@ class AnswerPopupTest {
         assertFalse(popup.hasGraph());
     }
 
+    @Test
+    void pickShowsAllFourGrayingTheMissing() {
+        AtomicInteger clicks = new AtomicInteger();
+        popup.showPick("y=3x", null, clicks::incrementAndGet, () -> clicks.addAndGet(10), null);
+        assertTrue(popup.isPick());
+        assertFalse(popup.hasCalculate());
+        assertFalse(popup.pickEnabled("Calculate"));
+        assertTrue(popup.pickEnabled("Graph"));
+        assertTrue(popup.pickEnabled("Recognize"));
+        assertFalse(popup.pickEnabled("Phase Portrait"));
+        popup.clickInPick("Calculate");  // gray, nothing
+        popup.clickInPick("Graph");
+        popup.clickInPick("Recognize");
+        assertEquals(11, clicks.get());
+    }
+
+    @Test
+    void normalPopupAfterAPickIsNotAPick() {
+        popup.showPick("1+1", () -> { }, null, () -> { }, null);
+        popup.showFormula("1+1=", () -> { }, null);
+        assertFalse(popup.isPick());
+        assertTrue(popup.hasCalculate());
+    }
+
+    @Test
+    void pickBarFitsInsideTheCanvas() {
+        popup.showPick("y=3x", () -> { }, () -> { }, () -> { }, () -> { });
+        Rectangle spot = popup.spotBeside(new Rectangle(700, 300, 150, 50), 900, 560);
+        assertTrue(spot.x + spot.width <= 900 - 10, "inside the canvas");
+    }
+
     private Rectangle seenAt(Rectangle placed) {
         popup.setBounds(placed);
         return popup.visibleBounds();

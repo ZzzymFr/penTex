@@ -240,6 +240,10 @@ public class SharedCanvas {
         return canvas.registerSelection();
     }
 
+    public FormulaCapture capturePickedAnswered() {
+        return canvas.capturePickedAnswered();
+    }
+
     public long formulaIdOf(Stroke s) {
         return canvas.formulaIdOf(s);
     }

@@ -57,6 +57,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private long targetId = -1;       // an edited formula, or
     private boolean targetEdited;     // its ink changed (not just moved), regroups w/ guesses next to it
     private boolean targetPick;       // the lasso pick
+    private long pickedId = -1;       // board: formula the lasso picked, gets all 4 buttons
     private long generation;          // bumps on every user action, old results check it
     private FormulaCapture shown;     // formula the popup is about
     private final GlassPageNotices notices = new GlassPageNotices(this);
@@ -313,6 +314,7 @@ public class AnswerCanvasPage extends CanvasPage {
     }
 
     private void restartPause() {
+        pickedId = -1;
         hidePopup();
         generation++;
         pauseTimer.restart();
@@ -324,6 +326,7 @@ public class AnswerCanvasPage extends CanvasPage {
         targetStroke = null;
         targetId = -1;
         targetPick = false;
+        pickedId = -1;
         generation++;
         hidePopup();
     }
@@ -354,8 +357,12 @@ public class AnswerCanvasPage extends CanvasPage {
         FormulaCapture capture = null;
         if (targetPick) {
             capture = getSharedCanvas().registerSelection();
+            if (capture == null && graphing != null) {
+                capture = getSharedCanvas().capturePickedAnswered();  // board: answered ones too
+            }
             if (capture != null) {
                 gate.picked(capture.getId());
+                pickedId = graphing != null ? capture.getId() : -1;
             }
         } else if (targetStroke != null) {
             capture = getSharedCanvas().registerNewInk(targetStroke, session);
@@ -428,6 +435,10 @@ public class AnswerCanvasPage extends CanvasPage {
             return;  // ink changed while we were reading it
         }
         reads.put(capture.getId(), new Read(capture.getRevision(), latex, problem));  // for hovering later
+        if (capture.getId() == pickedId) {
+            offer(capture, gen, latex, problem);  // lasso: buttons, no auto-save
+            return;
+        }
         if (problem == null && definitionCheck.test(latex)) {
             define(capture, latex, saved -> {
                 if (!saved) {
@@ -522,6 +533,8 @@ public class AnswerCanvasPage extends CanvasPage {
             hidePopup();
             showError(capture, "Can't read formula", problem);
             return;
+        } else if (capture.getId() == pickedId) {
+            showPick(capture, latex);
         } else if (phase != null && differential.test(latex)) {
             popup.showFormula(latex, null, null, () -> phasePortrait(capture, latex));
         } else if (graphing != null) {
@@ -537,6 +550,31 @@ public class AnswerCanvasPage extends CanvasPage {
         placePopup();
     }
 
+    // lasso: all 4, gray where it doesn't fit; Calculate stays lit if nothing else is, it says why
+    private void showPick(FormulaCapture capture, String latex) {
+        Formula f = formula(capture.getId());
+        boolean canGraph = graphable.test(latex);
+        boolean canPhase = phase != null && differential.test(latex);
+        boolean canCalc = (f == null || f.getAnswer() == null)
+                && (calculable.test(latex) || !canGraph && !canPhase);
+        popup.showPick(latex, canCalc ? () -> calculate(capture, latex) : null,
+                canGraph ? () -> graph(capture, latex) : null,
+                () -> saveToHistory(capture, latex),
+                canPhase ? () -> phasePortrait(capture, latex) : null);
+    }
+
+    // Recognize: f(x)=... saves like Calculate (again, so an older f wins back), the rest just goes to History
+    private void saveToHistory(FormulaCapture capture, String latex) {
+        if (definitionCheck.test(latex)) {
+            calculate(capture, latex);
+            return;
+        }
+        hidePopup();
+        boolean sentAlready = Objects.equals(exportedRevisions.get(capture.getId()), capture.getRevision());
+        publishFormulaOnly(capture, latex);
+        notices.success(sentAlready ? "Already in History" : "Added to History", latex);
+    }
+
     private void placePopup() {
         if (shown == null || !popup.isVisible()) {
             return;
@@ -550,6 +588,12 @@ public class AnswerCanvasPage extends CanvasPage {
         Rectangle f = toArea(world);
         Rectangle eqWorld = hover.equalsOf(shown.getId());
         Rectangle eq = eqWorld == null ? null : toArea(eqWorld);
+        Formula answered = formula(shown.getId());
+        if (answered != null && answered.getAnswer() != null) {
+            f = f.union(toArea(answered.getAnswer().getBox().getBounds()));  // lasso'd answered one: keep the answer clear
+            eq = null;
+        }
+        popup.fitWidth(area.getWidth());
         popup.setBounds(popup.spotBeside(f, eq, area.getWidth(), area.getHeight()));
         area.repaint();
     }

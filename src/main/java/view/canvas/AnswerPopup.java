@@ -23,6 +23,8 @@ import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.geom.RoundRectangle2D;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
@@ -50,6 +52,12 @@ public class AnswerPopup extends JPanel {
     private final GlassBar.Item calcItem;
     private final GlassBar.Item graphItem;
     private final GlassBar.Item phaseOnly;
+    private final GlassBar pickBar;   // lasso: all 4, the ones that don't fit are gray
+    private final Map<String, GlassBar.Item> pickItems = new HashMap<>();
+    private boolean pickCalc;
+    private boolean pickGraph;
+    private boolean pickPhase;
+    private Runnable onRecognize = () -> { };
     private GlassBar bar;             // the one on show, null for a problem
     private final Card card = new Card();
     private Runnable onCalculate = () -> { };
@@ -79,6 +87,14 @@ public class AnswerPopup extends JPanel {
         phaseBar = newBar(backdrop, version);
         phaseOnly = phaseBar.action("Phase Portrait", Icons::phase, () -> onPhase.run(), () -> true);
         phaseBar.finish();
+        pickBar = newBar(backdrop, version);
+        pickItems.put("Calculate", pickBar.action("Calculate", Icons::equalCircle, () -> onCalculate.run(), () -> pickCalc));
+        pickItems.put("Graph", pickBar.action("Graph", Icons::scribble, () -> onGraph.run(), () -> pickGraph));
+        pickItems.put("Recognize", pickBar.action("Recognize", Icons::history, () -> onRecognize.run(), () -> true));
+        pickItems.put("Phase Portrait", pickBar.action("Phase Portrait", Icons::phase, () -> onPhase.run(), () -> pickPhase));
+        pickBar.finish();
+        add(pickBar);
+        pickBar.setVisible(false);
         add(calcBar);
         add(graphBar);
         add(bothBar);
@@ -120,6 +136,30 @@ public class AnswerPopup extends JPanel {
             bar = onGraph == null ? calcBar : onCalculate == null ? graphBar : bothBar;
         }
         relayout();
+    }
+
+    // lasso: all 4 buttons, null = gray
+    public void showPick(String latex, Runnable onCalculate, Runnable onGraph, Runnable onRecognize,
+                         Runnable onPhase) {
+        this.latex = latex;
+        this.onCalculate = onCalculate == null ? () -> { } : onCalculate;
+        this.onGraph = onGraph == null ? () -> { } : onGraph;
+        this.onRecognize = onRecognize == null ? () -> { } : onRecognize;
+        this.onPhase = onPhase == null ? () -> { } : onPhase;
+        pickCalc = onCalculate != null;
+        pickGraph = onGraph != null;
+        pickPhase = onPhase != null;
+        icon = typeset(latex);
+        bar = pickBar;
+        relayout();
+    }
+
+    // pick bar is wide: icons only on a narrow canvas (labels go to tooltips), labels back when there's room
+    void fitWidth(int areaWidth) {
+        if (bar == pickBar) {
+            pickBar.fitTo(areaWidth - 2 * EDGE - GlassBar.MARGIN);
+            relayout();
+        }
     }
 
     // no "=" known: above-right of the formula, below if no room, always inside the canvas
@@ -191,6 +231,21 @@ public class AnswerPopup extends JPanel {
         }
     }
 
+    boolean isPick() {
+        return bar == pickBar;
+    }
+
+    boolean pickEnabled(String label) {
+        return isPick() && pickItems.get(label).isEnabled();
+    }
+
+    // like a real click, gray does nothing
+    void clickInPick(String label) {
+        if (isPick()) {
+            bar.activate(pickItems.get(label));
+        }
+    }
+
     boolean isTypeset() {
         return icon != null;
     }
@@ -215,6 +270,7 @@ public class AnswerPopup extends JPanel {
         graphBar.setVisible(bar == graphBar);
         bothBar.setVisible(bar == bothBar);
         phaseBar.setVisible(bar == phaseBar);
+        pickBar.setVisible(bar == pickBar);
         Dimension c = card.getPreferredSize();
         if (bar != null) {
             Dimension d = bar.getPreferredSize();

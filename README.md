@@ -76,7 +76,7 @@ The actor in every use case is the **student**.
 4. The system shows a popup next to the "=" with the typeset LaTeX and the actions that fit it: **Calculate**, **Graph**, or both; a differential equation gets **Phase Portrait** alone.
 
 **Alternative flows:**
-- **Lasso selection:** the student circles some ink with the lasso (or drags a box). The selection is read as one formula, with or without an "=".
+- **Lasso selection:** the student circles some ink with the lasso (or drags a box). The selection is read as one formula, with or without an "=". This is the fallback when no popup came up on its own, so the popup always shows all four buttons: **Calculate**, **Graph**, **Recognize** and **Phase Portrait**. The ones that don't fit the formula are grayed out. **Recognize** puts the formula into History; a `f(x)=…` is saved as a function again, so an older definition can be brought back. A formula that already has an answer gets the popup too, with **Calculate** grayed out.
 - **Finished equation or inequality:** a formula with something on both sides of the sign, such as `x^2=4` or `2x>5`, gets a popup without a trailing "=". An unfinished one such as `2x>` does not.
 - **Still writing:** while the pen is down, no popup appears. The system waits for the next pause.
 - **Formula edited:** if the student adds to or erases part of a formula, its old answer is removed and the formula is read again after the next pause.
