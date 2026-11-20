@@ -3,6 +3,7 @@ package view.graph;
 import interface_adapter.graph.GraphState;
 import interface_adapter.graph.GraphTrace;
 
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -11,7 +12,9 @@ import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Shape;
+import java.awt.geom.AffineTransform;
 import java.awt.geom.Arc2D;
+import java.awt.geom.Area;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
@@ -152,29 +155,76 @@ final class GraphCardRenderer {
 
     static void paintCard(Graphics2D g0, double w, double h, String latex, String badge, Color dotLow, Color dotHigh,
                           boolean live, int hotButton, Dimension controls, PlotLayer layer) {
-        Graphics2D g = (Graphics2D) g0.create();
+        float ui = ui(w);
+        Shape card = new RoundRectangle2D.Double(0, 0, w - 1, h - 1, GraphTheme.ARC * ui, GraphTheme.ARC * ui);
+        // a rounded clip sends every aa line down java2d's slow shape-clip path (grid lines went 0.4 -> 6.8 ms),
+        // so draw it all under a plain rect clip into a layer, then cut the corners off once at the end
+        double scale = deviceScale(g0);
+        int bw = (int) Math.max(1, Math.ceil(w * scale));
+        int bh = (int) Math.max(1, Math.ceil(h * scale));
+        BufferedImage buffer = layerBuffer(bw, bh);
+        Graphics2D g = buffer.createGraphics();
         try {
+            g.setComposite(AlphaComposite.Clear);
+            g.fillRect(0, 0, bw, bh);   // buffer gets reused, wipe last frame
+            g.setComposite(AlphaComposite.SrcOver);
+            g.clipRect(0, 0, bw, bh);
+            g.scale(scale, scale);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            float ui = ui(w);
-            Shape card = new RoundRectangle2D.Double(0, 0, w - 1, h - 1, GraphTheme.ARC * ui, GraphTheme.ARC * ui);
             g.setColor(GraphTheme.CARD);
             g.fill(card);
-            g.clip(card);
             layer.paint(g, plotArea(w, h), ui);
             header(g, latex, badge, dotLow, dotHigh, w, ui, live, hotButton, controls);
             if (live) {
                 grip(g, w, h, ui);
             }
-            g.setClip(null);
-            g.setColor(GraphTheme.BORDER);
-            g.setStroke(new BasicStroke(1f));
-            g.draw(card);
+            // the one rounded op: rub out whatever spilled past the corners (aa edge = partly rubbed out)
+            Area outside = new Area(new Rectangle2D.Double(-1, -1, w + 2, h + 2));
+            outside.subtract(new Area(card));
+            g.setComposite(AlphaComposite.DstOut);
+            g.setColor(Color.BLACK);
+            g.fill(outside);
         } finally {
             g.dispose();
         }
+        Graphics2D out = (Graphics2D) g0.create();
+        try {
+            out.scale(1 / scale, 1 / scale);   // back to real pixels so the layer lands 1:1
+            out.drawImage(buffer, 0, 0, bw, bh, 0, 0, bw, bh, null);
+            out.scale(scale, scale);
+            out.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            out.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            out.setColor(GraphTheme.BORDER);
+            out.setStroke(new BasicStroke(1f));
+            out.draw(card);
+        } finally {
+            out.dispose();
+        }
+    }
+
+    // one reusable layer per thread (edt for live cards, render threads for snapshots), only ever grows
+    private static final ThreadLocal<BufferedImage> LAYER = new ThreadLocal<>();
+
+    private static BufferedImage layerBuffer(int w, int h) {
+        BufferedImage b = LAYER.get();
+        if (b == null || b.getWidth() < w || b.getHeight() < h) {
+            b = new BufferedImage(Math.max(w, b == null ? 0 : b.getWidth()),
+                    Math.max(h, b == null ? 0 : b.getHeight()), BufferedImage.TYPE_INT_ARGB_PRE);
+            LAYER.set(b);
+        }
+        return b;
+    }
+
+    // 2 on retina, 1 on a plain image; anything odd (rotated etc) just gets 1
+    private static double deviceScale(Graphics2D g) {
+        AffineTransform t = g.getTransform();
+        if (t.getShearX() != 0 || t.getShearY() != 0 || t.getScaleX() <= 0 || t.getScaleX() != t.getScaleY()) {
+            return 1;
+        }
+        return Math.min(t.getScaleX(), 4);
     }
 
     private static void header(Graphics2D g, String latex, String badge, Color dotLow, Color dotHigh, double w,
