@@ -23,4 +23,5 @@
 
 ## 个人注意事项
 - 修改代码时不要动别人的代码，只能改动自己GitHub账户下的代码。如果真的需要改动，请先询问对方意见
+- Mengwanzhouoffical and RAY are the same person, refer to him by either name
 - 遵守Clean architecture和SOLID principle
