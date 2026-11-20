@@ -166,6 +166,8 @@ public class DrawingCanvas extends JPanel {
     // Several can be on the canvas at once; oldest first, so the newest is painted on top.
     private final List<GraphSlot> graphs = new ArrayList<>();
     private GraphSlot overGraphClose;  // card whose × is under the mouse, or null
+    // tags whose live card sits right on top of the slot, the screen skips their picture (export never does)
+    private final Set<Object> coveredGraphs = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     /** One graph card. {@code tag} is its owner (a live graph view), null for a restored picture. */
     private record GraphSlot(BufferedImage image, Rectangle2D card, double padding, Object tag) {
@@ -522,6 +524,26 @@ public class DrawingCanvas extends JPanel {
 
     public boolean hasGraph(Object tag) {
         return slotOf(tag) != null;
+    }
+
+    /**
+     * A live card is drawn exactly over this graph's slot (true) or not any more (false). While covered
+     * the screen skips the slot's white body + picture, nobody can see them and the bicubic scale was
+     * ~15 ms a frame; the shadow still shows round the edge. Saving / pdf ({@link #paintContent}) still
+     * draws the picture.
+     */
+    public void setGraphCovered(Object tag, boolean covered) {
+        if (tag == null) {
+            return;
+        }
+        boolean changed = covered ? coveredGraphs.add(tag) : coveredGraphs.remove(tag);
+        if (changed) {
+            repaint();
+        }
+    }
+
+    boolean isGraphCovered(Object tag) {
+        return tag != null && coveredGraphs.contains(tag);
     }
 
     /** How many graph cards are on the canvas. */
@@ -1901,7 +1923,7 @@ public class DrawingCanvas extends JPanel {
         Graphics2D world = (Graphics2D) g2.create();
         world.translate(originX, originY);
         world.scale(scale, scale);
-        paintGraphCard(world);
+        paintGraphCard(world, false);  // export: always the real picture, live cards aren't in here
         paintPictures(world);
         drawStrokes(world);
         paintAnswers(world);
@@ -2246,7 +2268,7 @@ public class DrawingCanvas extends JPanel {
         Graphics2D world = (Graphics2D) g2.create();
         world.translate(originX, originY);
         world.scale(scale, scale);
-        paintGraphCard(world);  // under the ink, so writing over it stays visible
+        paintGraphCard(world, true);  // under the ink, so writing over it stays visible
         paintPictures(world);
         setUpInk(world);
         for (Stroke stroke : strokes) {
@@ -2281,13 +2303,14 @@ public class DrawingCanvas extends JPanel {
     }
 
     /** The graph card in world coordinates: a soft shadow, a white rounded card, the picture inside. */
-    private void paintGraphCard(Graphics2D world) {
+    // onScreen: skip what a live card hides anyway
+    private void paintGraphCard(Graphics2D world, boolean onScreen) {
         for (GraphSlot slot : graphs) {
-            paintGraphCard(world, slot);
+            paintGraphCard(world, slot, onScreen && isGraphCovered(slot.tag()));
         }
     }
 
-    private void paintGraphCard(Graphics2D world, GraphSlot slot) {
+    private void paintGraphCard(Graphics2D world, GraphSlot slot, boolean covered) {
         Rectangle2D graphCard = slot.card();
         BufferedImage graphImage = slot.image();
         double graphPadding = slot.padding();
@@ -2299,6 +2322,10 @@ public class DrawingCanvas extends JPanel {
             g.setColor(new Color(15, 23, 42, 7));
             g.fill(new RoundRectangle2D.Double(graphCard.getX() - i * 0.6 * unit, graphCard.getY() + i * 0.8 * unit,
                     graphCard.getWidth() + i * 1.2 * unit, graphCard.getHeight() + i * 0.6 * unit, arc + i * unit, arc + i * unit));
+        }
+        if (covered) {
+            g.dispose();
+            return;   // shadow done, the live card draws the rest right on top
         }
         RoundRectangle2D card = new RoundRectangle2D.Double(graphCard.getX(), graphCard.getY(),
                 graphCard.getWidth(), graphCard.getHeight(), arc, arc);
