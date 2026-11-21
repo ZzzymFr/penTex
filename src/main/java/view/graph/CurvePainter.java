@@ -5,6 +5,8 @@ import interface_adapter.graph.GraphState;
 import interface_adapter.graph.GraphTrace;
 
 import java.awt.BasicStroke;
+import java.util.List;
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
@@ -24,20 +26,37 @@ final class CurvePainter {
             curve(g, s, f, ui);
             markers(g, s, f, ui);
             if (pinned != null) {
-                trace(g, f, pinned, ui);
+                trace(g, s, f, pinned, ui);
             }
             if (hover != null) {
-                trace(g, f, hover, ui);
+                trace(g, s, f, hover, ui);
             }
         } finally {
             g.dispose();
         }
     }
 
+    // one function: the orange line; several: each in its own colour (first green, the added one red)
+    static Color lineColor(GraphState s, int layer) {
+        return s.getCurveLayers().size() > 1 ? GraphTheme.layer(layer) : GraphTheme.CURVE;
+    }
+
+    // dots + trace go neutral when they can't say which function they're on
+    private static Color pointColor(GraphState s) {
+        return s.getCurveLayers().size() > 1 ? GraphTheme.TITLE : GraphTheme.CURVE;
+    }
+
     private static void curve(Graphics2D g, GraphState s, PlotFrame f, float ui) {
-        g.setColor(GraphTheme.CURVE);
         g.setStroke(new BasicStroke(2.6f * ui, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        for (double[][] piece : s.getPieces()) {
+        List<List<double[][]>> layers = s.getCurveLayers();
+        for (int i = 0; i < layers.size(); i++) {
+            g.setColor(lineColor(s, i));
+            pieces(g, layers.get(i), f, ui);
+        }
+    }
+
+    private static void pieces(Graphics2D g, List<double[][]> pieces, PlotFrame f, float ui) {
+        for (double[][] piece : pieces) {
             double[] xs = piece[0];
             double[] ys = piece[1];
             if (xs.length == 1) {
@@ -61,13 +80,13 @@ final class CurvePainter {
             Ellipse2D dot = new Ellipse2D.Double(f.px(k.getX()) - r, f.py(k.getY()) - r, 2 * r, 2 * r);
             g.setColor(GraphTheme.CARD);
             g.fill(dot);
-            g.setColor(GraphTheme.CURVE);
+            g.setColor(pointColor(s));
             g.draw(dot);
         }
     }
 
     // dot on the curve, dashed lines back to both axes, values pinned on the axes, bubble
-    private static void trace(Graphics2D g, PlotFrame f, GraphTrace t, float ui) {
+    private static void trace(Graphics2D g, GraphState s, PlotFrame f, GraphTrace t, float ui) {
         Rectangle2D a = f.area();
         double px = f.px(t.getX());
         double py = f.py(t.getY());
@@ -77,7 +96,7 @@ final class CurvePainter {
             Ellipse2D dot = new Ellipse2D.Double(px - r, py - r, 2 * r, 2 * r);
             g.setColor(GraphTheme.CARD);
             g.fill(new Ellipse2D.Double(px - r - 2 * ui, py - r - 2 * ui, 2 * r + 4 * ui, 2 * r + 4 * ui));
-            g.setColor(GraphTheme.CURVE);
+            g.setColor(pointColor(s));
             g.fill(dot);
         }
         TraceBubble.draw(g, px, dotY, t.getCaption(), t.getText(), ui, a);

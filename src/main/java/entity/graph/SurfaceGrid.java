@@ -19,6 +19,11 @@ public final class SurfaceGrid {
     }
 
     public static SurfaceGrid sample(SurfaceFunction f, Viewport domain, int n) {
+        return sample(f, domain, n, null);
+    }
+
+    // zRange {lo, hi}: values outside become holes and the box is exactly that tall; null = auto
+    public static SurfaceGrid sample(SurfaceFunction f, Viewport domain, int n, double[] zRange) {
         if (n < 2) {
             throw new IllegalArgumentException("grid needs at least 2 points a side");
         }
@@ -29,11 +34,15 @@ public final class SurfaceGrid {
             for (int j = 0; j < n; j++) {
                 double y = domain.getYMin() + domain.height() * j / (n - 1);
                 double v = f.evaluate(x, y);
-                z[i][j] = Double.isFinite(v) ? v : Double.NaN;
+                boolean inside = zRange == null || (v >= zRange[0] && v <= zRange[1]);
+                z[i][j] = Double.isFinite(v) && inside ? v : Double.NaN;
                 flat[i * n + j] = z[i][j];
             }
         }
         double[] range = AutoRange.window(flat);
+        if (range != null && zRange != null) {
+            range = zRange.clone();
+        }
         if (range == null) {
             return new SurfaceGrid(domain, z, -1, 1, true);
         }

@@ -1,13 +1,11 @@
 package view.canvas;
 
-import interface_adapter.graph.AxisRangeParser;
 import view.FormulaCapture;
 import view.graph.PlotCard;
 
 import javax.swing.JComponent;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import java.awt.Dimension;
 import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -25,7 +23,7 @@ import java.util.function.Supplier;
 /**
  * A popup button that puts live cards beside formulas (Graph, Phase Portrait). Every graph gets its
  * own {@link Live}: its own use-case session (a "kit" of controller + view model), its own card
- * floating over its canvas card, and its own x / y boxes in that card's header. So several graphs can
+ * floating over its canvas card, and its own range tag on that card's plot. So several graphs can
  * be on the canvas at once and each one pans, zooms and re-ranges on its own. The canvas keeps a
  * picture of each card for saving.
  *
@@ -35,7 +33,6 @@ import java.util.function.Supplier;
  * @param <K> the per-graph kit (controllers + view model) the subclass runs its use case with
  */
 abstract class PopupCardTool<K> {
-    private static final int RANGE_GAP = 6;
     // first picture size, sets the card's shape; later ones follow the card
     static final int SNAPSHOT_WIDTH = 880;
     static final int SNAPSHOT_HEIGHT = 600;
@@ -45,6 +42,7 @@ abstract class PopupCardTool<K> {
     interface Layers {
         void underlay(JComponent card);
 
+        // called for the range tag, then its panel: the panel ends up on top
         void overlay(JComponent ranges);
     }
 
@@ -109,6 +107,7 @@ abstract class PopupCardTool<K> {
         for (Live live : lives) {
             layers.underlay(live.card);
             layers.overlay(live.ranges);
+            layers.overlay(live.ranges.panel());
         }
     }
 
@@ -117,7 +116,7 @@ abstract class PopupCardTool<K> {
         return latest == null ? null : latest.card;
     }
 
-    JComponent rangeBar() {
+    GraphRangeChip rangeChip() {
         return latest == null ? null : latest.ranges;
     }
 
@@ -140,15 +139,15 @@ abstract class PopupCardTool<K> {
 
     void run(String latex, Rectangle formulaWorld, FormulaCapture capture) {
         Live live = liveForNewGraph();
+        live.ranges.resetToDefault();   // a new graph starts on Auto, not on the last one's window
         if (presetRange != null) {
             live.ranges.setRangeText(presetRange[0], presetRange[1]);
             presetRange = null;
         }
         latest = live;
         live.pendingCapture = capture;
-        live.lastLatex = latex;
         live.lastFormula = formulaWorld;
-        live.start(latex, formulaWorld, false);
+        live.start(List.of(latex), formulaWorld, false, false);
     }
 
     /**
@@ -172,7 +171,34 @@ abstract class PopupCardTool<K> {
         lives.add(live);
         layers.underlay(live.card);
         layers.overlay(live.ranges);
+        layers.overlay(live.ranges.panel());
         return live;
+    }
+
+    // is this one of our cards (the tag the canvas knows it by)
+    boolean owns(Object tag) {
+        return lives.stream().anyMatch(live -> live == tag);
+    }
+
+    /**
+     * A formula dropped on the card with this tag joins that graph, drawn in its own colour.
+     * False when that card can't take another function (a phase portrait) or isn't ours.
+     */
+    boolean addTo(Object tag, String latex) {
+        for (Live live : lives) {
+            if (live == tag && live.onCanvas() && live.takesMoreFunctions()) {
+                live.addFunction(latex);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ink being dragged over a card: light up that one if it can take the formula, null = none
+    void showDropTarget(Object tag) {
+        for (Live live : lives) {
+            live.card.setDropHighlight(live == tag && live.takesMoreFunctions());
+        }
     }
 
     // every card + its range boxes ride along with pan and zoom of the canvas
@@ -182,25 +208,26 @@ abstract class PopupCardTool<K> {
         }
     }
 
-    /** One graph on the canvas: its own session, live card and x / y boxes. */
+    /** One graph on the canvas: its own session, live card and range tag. */
     abstract class Live {
         final K kit;
         final PlotCard card;
-        final GraphRangeBar ranges;
+        final GraphRangeChip ranges;
         private final Timer snapshotLater;   // pan / zoom settle -> refresh the saved picture
         private FormulaCapture pendingCapture;
-        private String lastLatex;
+        private List<String> functions = List.of();   // what the card shows, first one first
+        private List<String> asked = List.of();       // what the run under way will show
         private Rectangle lastFormula;       // world coords
         private Rectangle pending;           // where the card goes when the answer comes back
-        private boolean rerun;               // Enter in a range box: keep the card where it is
+        private boolean rerun;               // new range from the panel: keep the card where it is
         private volatile boolean busy;
-        private double[] shownWindow;        // last window written into the range boxes
+        private double[] shownWindow;        // last window shown on the range tag
         private Runnable drawing = () -> { };  // takes the Drawing… card down
 
         Live(K kit, PlotCard card) {
             this.kit = kit;
             this.card = card;
-            this.ranges = new GraphRangeBar(this::rerun);
+            this.ranges = new GraphRangeChip(this::rerun);
             this.card.setHost(new CardHost());
             this.snapshotLater = new Timer(SNAPSHOT_DELAY_MS, e -> refreshSnapshot());
             this.snapshotLater.setRepeats(false);
@@ -209,7 +236,13 @@ abstract class PopupCardTool<K> {
         // ---- the use case + its state, per tool
 
         // runs off the ui thread; the answer comes back through the view model
-        abstract void execute(String latex, double[] xRange, double[] yRange);
+        // a range is {min, max}, or null for Auto; zRange only ever comes for a 3D graph
+        abstract void execute(List<String> latexes, double[] xRange, double[] yRange, double[] zRange);
+
+        // can another formula be dropped onto this card (2D / 3D graphs yes, phase portraits no)
+        boolean takesMoreFunctions() {
+            return false;
+        }
 
         abstract String error();
 
@@ -220,8 +253,13 @@ abstract class PopupCardTool<K> {
         // {xMin, xMax, yMin, yMax}
         abstract double[] window();
 
-        // 3d keeps the typed y box, the rest follow the window
+        // 3d keeps y as set (Auto = same as x), the rest follow the window
         abstract boolean followsY();
+
+        // {zMin, zMax} of a 3D graph, null for anything flat
+        double[] zWindow() {
+            return null;
+        }
 
         abstract BufferedImage firstPicture();
 
@@ -235,31 +273,33 @@ abstract class PopupCardTool<K> {
             return canvas.getDrawingCanvas().hasGraph(this);
         }
 
-        // Enter in a range box: same formula, new range, same spot
+        // Done / Reset in the range panel: same functions, new range, same spot
         private void rerun() {
-            if (lastLatex != null) {
-                start(lastLatex, lastFormula, true);
+            if (!functions.isEmpty()) {
+                start(functions, lastFormula, true, false);
             }
         }
 
-        private void start(String latex, Rectangle formulaWorld, boolean again) {
-            double[] x;
-            double[] y;
-            try {
-                x = AxisRangeParser.parse(ranges.xText(), "x");
-                y = AxisRangeParser.parse(ranges.yText(), "y");
-            } catch (IllegalArgumentException e) {
-                notices.error(failTitle, e.getMessage());
-                return;
-            }
+        // one more function on this graph, same spot; a 2D y range is fitted again so both show
+        private void addFunction(String latex) {
+            List<String> next = new ArrayList<>(functions);
+            next.add(latex);
+            start(next, lastFormula, true, true);
+        }
+
+        private void start(List<String> latexes, Rectangle formulaWorld, boolean again, boolean refitY) {
+            double[] x = ranges.range("x");
+            double[] y = refitY && followsY() ? null : ranges.range("y");
+            double[] z = ranges.range("z");
+            asked = List.copyOf(latexes);
             pending = formulaWorld;
             rerun = again;
             busy = true;
             drawing.run();
-            drawing = notices.progress(progressText, latex);
+            drawing = notices.progress(progressText, latexes.get(latexes.size() - 1));
             executor.execute(() -> {
                 try {
-                    execute(latex, x, y);
+                    execute(latexes, x, y, z);
                 } catch (RuntimeException e) {
                     String reason = e.getMessage() == null ? e.toString() : e.getMessage();
                     SwingUtilities.invokeLater(() -> {
@@ -278,7 +318,7 @@ abstract class PopupCardTool<K> {
 
         // view model said VIEW: pan / zoom / trace
         final void viewChanged() {
-            SwingUtilities.invokeLater(this::syncRangeText);
+            SwingUtilities.invokeLater(() -> syncRangeText(true));
         }
 
         private void show() {
@@ -293,29 +333,36 @@ abstract class PopupCardTool<K> {
                     canvas.getDrawingCanvas().showGraph(firstPicture(), pending, this);
                 }
                 rerun = false;
+                functions = asked;
                 // Explicit, successful run is the publication boundary for formula-only material.
                 // Re-running a range does not create duplicates: the source revision is tracked by the page.
-                if (pendingCapture != null && Objects.equals(lastLatex, sourceLatex())) {
-                    saved.accept(pendingCapture, lastLatex);
+                if (pendingCapture != null && functions.size() == 1
+                        && Objects.equals(functions.get(0), sourceLatex())) {
+                    saved.accept(pendingCapture, functions.get(0));
                 }
                 notices.success(successText, latex());
+                ranges.setShowsZ(zWindow() != null);
+                shownWindow = null;
+                syncRangeText(false);
                 placeRanges();
                 refreshSnapshot();
                 onShown.run();
             }
         }
 
-        // the boxes follow the window after a pan / zoom, so typing in them starts from what you see
-        private void syncRangeText() {
+        // the tag shows the window you're looking at; moved = a pan / zoom, not a fresh drawing
+        private void syncRangeText(boolean moved) {
             if (!hasContent() || !onCanvas()) {
                 return;
             }
             double[] window = window();
             if (Arrays.equals(window, shownWindow)) {
-                return;   // just a hover, window didn't move
+                return;   // just a hover or a spin, window didn't move
             }
             shownWindow = window;
-            ranges.showRange(window[0], window[1], window[2], window[3], followsY());
+            ranges.showWindow(new double[]{window[0], window[1]}, new double[]{window[2], window[3]},
+                    zWindow(), followsY(), moved);
+            place();
         }
 
         // canvas keeps a picture of the card for saving / pdf, redo it at 2x so it's sharp
@@ -334,13 +381,13 @@ abstract class PopupCardTool<K> {
             });
         }
 
-        // card + range boxes over this graph's canvas card
+        // card over this graph's canvas card, range tag on its plot
         private void place() {
             Rectangle2D on = canvas.getDrawingCanvas().getGraphCardOnScreen(this);
             if (on == null) {
                 canvas.getDrawingCanvas().setGraphCovered(this, false);
                 hide(card);
-                hide(ranges);
+                ranges.hideAll();
                 return;
             }
             Rectangle at = SwingUtilities.convertRectangle(canvas.getDrawingCanvas(), new Rectangle(
@@ -350,17 +397,7 @@ abstract class PopupCardTool<K> {
             card.setVisible(true);
             // card sits exactly on the slot now, canvas can stop drawing the picture under it
             canvas.getDrawingCanvas().setGraphCovered(this, true);
-            // boxes go in the header right after the function, at the header's scale
-            Rectangle slot = ranges.placeIn(card);
-            if (slot != null) {
-                ranges.setBounds(new Rectangle(at.x + slot.x, at.y + slot.y, slot.width, slot.height));
-            } else {
-                // card too small to share the header: hang under it as before
-                Dimension d = ranges.getPreferredSize();
-                ranges.setBounds(new Rectangle(at.x, at.y + at.height + RANGE_GAP, d.width, d.height));
-            }
-            ranges.setVisible(true);
-            ranges.revalidate();
+            ranges.placeOn(at, card);
             area.repaint();
         }
 

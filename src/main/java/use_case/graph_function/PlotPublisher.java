@@ -44,21 +44,31 @@ public class PlotPublisher {
 
     static CurveOutputData curveData(CurvePlot plot) {
         Viewport v = plot.getViewport();
-        List<double[][]> pieces = new ArrayList<>();
-        for (Curve.Piece piece : plot.getCurve().getPieces()) {
-            pieces.add(new double[][]{piece.getXs(), piece.getYs()});
+        List<List<double[][]>> layers = new ArrayList<>();
+        for (Curve curve : plot.getCurves()) {
+            List<double[][]> pieces = new ArrayList<>();
+            for (Curve.Piece piece : curve.getPieces()) {
+                pieces.add(new double[][]{piece.getXs(), piece.getYs()});
+            }
+            layers.add(pieces);
         }
         List<KeyPointOutputData> keys = new ArrayList<>();
         for (KeyPoint k : plot.getKeyPoints()) {
             keys.add(new KeyPointOutputData(k.getX(), k.getY(), k.getKind()));
         }
-        return new CurveOutputData(plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(), pieces, keys);
+        List<String> names = plot.getFunctions().stream().map(f -> f.getLatex()).toList();
+        return CurveOutputData.layered(names, plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(), layers, keys);
     }
 
     static SurfaceOutputData surfaceData(SurfacePlot plot) {
-        SurfaceGrid grid = plot.getGrid();
-        Viewport v = grid.getDomain();
-        return new SurfaceOutputData(plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
-                grid.getZMin(), grid.getZMax(), grid.getZ());
+        Viewport v = plot.getGrid().getDomain();
+        List<double[][]> layers = new ArrayList<>();
+        for (SurfaceGrid grid : plot.getGrids()) {
+            layers.add(grid.getZ());
+        }
+        double[] z = plot.zWindow();
+        List<String> names = plot.getFunctions().stream().map(f -> f.getLatex()).toList();
+        return new SurfaceOutputData(names, plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
+                z[0], z[1], layers);
     }
 }

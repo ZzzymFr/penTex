@@ -28,10 +28,22 @@ public class GraphController {
      * a null x range means the default [-10, 10], a null y range means choosing y automatically.
      */
     public void execute(String latex, double[] xRange, double[] yRange) {
+        execute(latex, xRange, yRange, null);
+    }
+
+    /** Same, plus a z range for a 3D graph; null z means choosing z from the surface's values. */
+    public void execute(String latex, double[] xRange, double[] yRange, double[] zRange) {
+        execute(java.util.List.of(latex), xRange, yRange, zRange);
+    }
+
+    /** Several functions on one graph (all curves or all surfaces), first one first. */
+    public void execute(java.util.List<String> latexes, double[] xRange, double[] yRange, double[] zRange) {
         double xMin = xRange == null ? GraphFunctionInputData.DEFAULT_X_MIN : xRange[0];
         double xMax = xRange == null ? GraphFunctionInputData.DEFAULT_X_MAX : xRange[1];
         double yMin = yRange == null ? GraphFunctionInputData.AUTOMATIC : yRange[0];
         double yMax = yRange == null ? GraphFunctionInputData.AUTOMATIC : yRange[1];
-        interactor.execute(new GraphFunctionInputData(latex, xMin, xMax, yMin, yMax));
+        double zMin = zRange == null ? GraphFunctionInputData.AUTOMATIC : zRange[0];
+        double zMax = zRange == null ? GraphFunctionInputData.AUTOMATIC : zRange[1];
+        interactor.execute(new GraphFunctionInputData(latexes, xMin, xMax, yMin, yMax, zMin, zMax));
     }
 }

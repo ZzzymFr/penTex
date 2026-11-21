@@ -44,19 +44,9 @@ public final class PhaseCard extends PlotCard {
     }
 
     @Override
-    String headerLatex() {
-        return viewModel.getState().getLatex();
-    }
-
-    @Override
-    String headerBadge() {
-        return PhaseSnapshot.badge(viewModel.getState());
-    }
-
-    @Override
     void paintCard(Graphics2D g, int hotButton) {
         PhaseState s = viewModel.getState();
-        PhaseSnapshot.paint(g, s, getWidth(), getHeight(), s.getTrace(), true, hotButton, headerControls());
+        PhaseSnapshot.paint(g, s, getWidth(), getHeight(), s.getTrace(), true, hotButton);
     }
 
     private PlotFrame frame() {

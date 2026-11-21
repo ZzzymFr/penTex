@@ -13,5 +13,10 @@ public interface ExploreGraphInputBoundary {
     // cursor at (x, y), snapX = how close in x counts as on a key point
     void trace(double x, double y, double snapX);
 
+    // same, on surface number layer of a graph with several (the one under the cursor)
+    default void trace(double x, double y, double snapX, int layer) {
+        trace(x, y, snapX);
+    }
+
     void endTrace();
 }

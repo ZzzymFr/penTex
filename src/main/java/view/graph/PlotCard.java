@@ -3,7 +3,6 @@ package view.graph;
 import javax.swing.JComponent;
 import javax.swing.SwingUtilities;
 import java.awt.Cursor;
-import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -63,7 +62,7 @@ public abstract class PlotCard extends JComponent {
     private Point lastScreen;
     private boolean moved;
     private int hotButton = GraphCardRenderer.NO_BUTTON;
-    private Dimension headerControls;   // live x / y boxes in the header, null = none / didn't fit
+    private boolean dropHighlight;      // a lassoed formula is being dragged over this card
 
     protected PlotCard() {
         setOpaque(false);
@@ -95,31 +94,22 @@ public abstract class PlotCard extends JComponent {
         return ui();
     }
 
-    /**
-     * Makes room in the header, right after the function, for controls of this size (card pixels).
-     * Returns where they go in card coordinates, or null when the card is too narrow; the title then
-     * keeps the whole header. Pass null to give the room back.
-     */
-    public Rectangle reserveHeader(Dimension controls) {
-        Rectangle2D slot = controls == null || !hasContent() ? null
-                : GraphCardRenderer.headerLayout(headerLatex(), headerBadge(), getWidth(), true, controls).controls();
-        Dimension next = slot == null ? null : new Dimension(controls);
-        if (!java.util.Objects.equals(next, headerControls)) {
-            headerControls = next;
+    /** Lights the card up while a lassoed formula is dragged over it: let go to add it to the graph. */
+    public void setDropHighlight(boolean on) {
+        if (dropHighlight != on) {
+            dropHighlight = on;
             repaint();
         }
-        return slot == null ? null : new Rectangle((int) Math.round(slot.getX()), (int) Math.round(slot.getY()),
-                controls.width, controls.height);
     }
 
-    Dimension headerControls() {
-        return headerControls;
+    public boolean isDropHighlighted() {
+        return dropHighlight;
     }
 
-    // the function shown in the header and its badge, for laying out the header
-    abstract String headerLatex();
-
-    abstract String headerBadge();
+    /** The plot under the header, in card coordinates, so floating controls can sit on it. */
+    public Rectangle plotBounds() {
+        return plot().getBounds();
+    }
 
     // ---- what the plot does, subclass fills these in
 
@@ -160,6 +150,9 @@ public abstract class PlotCard extends JComponent {
     protected void paintComponent(Graphics g) {
         if (hasContent()) {
             paintCard((Graphics2D) g, hotButton);
+            if (dropHighlight) {
+                GraphCardRenderer.dropHint((Graphics2D) g, getWidth(), getHeight());
+            }
         }
     }
 

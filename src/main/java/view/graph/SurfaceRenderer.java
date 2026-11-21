@@ -32,7 +32,7 @@ final class SurfaceRenderer {
                        List<GraphTick> xTicks, List<GraphTick> yTicks, List<GraphTick> zTicks,
                        double yaw, double pitch, Rectangle2D plot, float ui, double scale) {
         static Key of(GraphState s, OrbitCamera c, Rectangle2D plot, float ui, double scale) {
-            return new Key(s.getZ(), s.getXMin(), s.getXMax(), s.getYMin(), s.getYMax(), s.getZMin(), s.getZMax(),
+            return new Key(s.getZLayers(), s.getXMin(), s.getXMax(), s.getYMin(), s.getYMax(), s.getZMin(), s.getZMax(),
                     s.getXTicks(), s.getYTicks(), s.getZTicks(), c.yaw(), c.pitch(),
                     new Rectangle2D.Double(plot.getX(), plot.getY(), plot.getWidth(), plot.getHeight()), ui, scale);
         }
