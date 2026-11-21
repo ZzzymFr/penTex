@@ -76,12 +76,14 @@ final class SurfaceScene {
     private void cut() {
         List<double[][]> layers = state.getZLayers();
         for (int layer = 0; layer < layers.size(); layer++) {
-            cut(layers.get(layer), layer);
+            cutGrid(layers.get(layer), layer);
         }
+        cutMesh();
         quads.sort(Comparator.comparingDouble(q -> q.depth));
     }
 
-    private void cut(double[][] z, int layer) {
+    // z = f(x, y) grid number layer (several surfaces can share the box)
+    private void cutGrid(double[][] z, int layer) {
         if (z == null || z.length < 2 || z[0].length < 2) {
             return;
         }
@@ -108,27 +110,60 @@ final class SurfaceScene {
                     box[k][0] = -1 + 2.0 * a / (n - 1);
                     box[k][1] = -1 + 2.0 * b / (m - 1);
                     box[k][2] = nz(v);
-                    double[] p = camera.project(box[k][0], box[k][1], box[k][2], area);
-                    q.sx[k] = p[0];
-                    q.sy[k] = p[1];
-                    q.depth += p[2] / 4;
+                    place(q, k, box[k]);
                     zSum += box[k][2];
                 }
                 if (hole) {
                     continue;
                 }
-                q.level = (zSum / 4 / Z_HALF + 1) / 2;
-                double[] normal = normalize(cross(sub(box[2], box[0]), sub(box[3], box[1])));
-                q.light = 0.55 + 0.45 * Math.abs(dot(normal, LIGHT));
-                q.shape = new Path2D.Double();
-                q.shape.moveTo(q.sx[0], q.sy[0]);
-                for (int k = 1; k < 4; k++) {
-                    q.shape.lineTo(q.sx[k], q.sy[k]);
-                }
-                q.shape.closePath();
-                quads.add(q);
+                shade(q, box, zSum);
             }
         }
+    }
+
+    // x y z equation: quads come ready in world coords, just project + shade them
+    private void cutMesh() {
+        double[][] mesh = state.getMesh();
+        if (mesh == null) {
+            return;
+        }
+        double[][] box = new double[4][3];
+        for (double[] m : mesh) {
+            Quad q = new Quad();
+            double zSum = 0;
+            for (int k = 0; k < 4; k++) {
+                q.wx[k] = m[3 * k];
+                q.wy[k] = m[3 * k + 1];
+                box[k][0] = nx(q.wx[k]);
+                box[k][1] = ny(q.wy[k]);
+                box[k][2] = nz(m[3 * k + 2]);
+                place(q, k, box[k]);
+                zSum += box[k][2];
+            }
+            shade(q, box, zSum);
+        }
+    }
+
+    // corner k on screen
+    private void place(Quad q, int k, double[] b) {
+        double[] p = camera.project(b[0], b[1], b[2], area);
+        q.sx[k] = p[0];
+        q.sy[k] = p[1];
+        q.depth += p[2] / 4;
+    }
+
+    // colour by height, light by facing, then it's ready to paint
+    private void shade(Quad q, double[][] box, double zSum) {
+        q.level = (zSum / 4 / Z_HALF + 1) / 2;
+        double[] normal = normalize(cross(sub(box[2], box[0]), sub(box[3], box[1])));
+        q.light = 0.55 + 0.45 * Math.abs(dot(normal, LIGHT));
+        q.shape = new Path2D.Double();
+        q.shape.moveTo(q.sx[0], q.sy[0]);
+        for (int k = 1; k < 4; k++) {
+            q.shape.lineTo(q.sx[k], q.sy[k]);
+        }
+        q.shape.closePath();
+        quads.add(q);
     }
 
     // pixel -> {x, y, layer} on the nearest quad under it, null if it's off every surface

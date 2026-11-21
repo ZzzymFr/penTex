@@ -48,6 +48,19 @@ class ExploreGraphInteractorTest {
     private final ExploreGraphInteractor explore = new ExploreGraphInteractor(session, presenter);
 
     @Test
+    void xyzSurfaceZoomsItsZRangeAndTracesTheTop() {
+        graph.execute(new GraphFunctionInputData("x^2+y^2+z^2=1"));
+        double zMax = surface.getZMax();
+        explore.zoom(0, 0, 0.5, 0.5);
+        assertFalse(fresh);
+        assertEquals(zMax / 2, surface.getZMax(), 1e-9);
+        assertNotNull(surface.getMesh());
+        explore.reset();
+        explore.trace(0.6, 0, 0);
+        assertEquals(0.8, trace.getZ(), 1e-9);
+    }
+
+    @Test
     void nothingGraphedMeansNothingHappens() {
         explore.pan(1, 1);
         explore.zoom(0, 0, 2, 2);

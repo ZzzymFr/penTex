@@ -2,6 +2,7 @@ package use_case.graph_function;
 
 import entity.graph.Curve;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitPlot;
 import entity.graph.KeyPoint;
 import entity.graph.Plot;
 import entity.graph.PlotVisitor;
@@ -32,6 +33,12 @@ public class PlotPublisher {
             @Override
             public Void visitSurface(SurfacePlot surface) {
                 presenter.prepareSurfaceView(surfaceData(surface), fresh);
+                return null;
+            }
+
+            @Override
+            public Void visitImplicit(ImplicitPlot implicit) {
+                presenter.prepareSurfaceView(meshData(implicit), fresh);
                 return null;
             }
         });
@@ -70,5 +77,12 @@ public class PlotPublisher {
         List<String> names = plot.getFunctions().stream().map(f -> f.getLatex()).toList();
         return new SurfaceOutputData(names, plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
                 z[0], z[1], layers);
+    }
+
+    // z range is the box's, not the values', no grid
+    static SurfaceOutputData meshData(ImplicitPlot plot) {
+        Viewport v = plot.getViewport();
+        return new SurfaceOutputData(plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
+                plot.getZMin(), plot.getZMax(), null, plot.getMesh().getQuads());
     }
 }

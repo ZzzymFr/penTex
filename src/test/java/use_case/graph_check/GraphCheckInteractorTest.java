@@ -40,4 +40,23 @@ class GraphCheckInteractorTest {
         assertTrue(check.canGraph("xy=z"));
         assertFalse(check.canGraph("z=x+w"));
     }
+
+    @Test
+    void anyEquationInXYZGetsTheGraphButton() {
+        assertTrue(check.canGraph("x+y+z=1"));
+        assertTrue(check.canGraph("x^2+y^2+z^2=1"));
+        assertTrue(check.canGraph("2x+3y-z=4"));
+        assertTrue(check.canGraph("xyz=1"));
+        assertTrue(check.canGraph("z^2=x^2+y^2"));
+        assertTrue(check.canGraph("z=x+y+z^2"));
+    }
+
+    @Test
+    void notQuiteXYZEquationsStillDont() {
+        assertFalse(check.canGraph("x+y+z="));
+        assertFalse(check.canGraph("x+y+z"));
+        assertFalse(check.canGraph("a+b+c=1"));
+        assertFalse(check.canGraph("x+y+z+w=1"));
+        assertFalse(check.canGraph("x+y+z>1"));
+    }
 }

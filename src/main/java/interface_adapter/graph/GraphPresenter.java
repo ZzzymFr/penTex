@@ -37,6 +37,7 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         }
         state.setMarkers(markers);
         state.setZ(null);
+        state.setMesh(null);
         state.setTicks(GraphNumbers.ticks(data.getXMin(), data.getXMax(), X_TICKS),
                 GraphNumbers.ticks(data.getYMin(), data.getYMax(), Y_TICKS), Collections.emptyList());
         publish(state, fresh);
@@ -51,6 +52,7 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         state.setZRange(data.getZMin(), data.getZMax());
         state.setFunctions(data.getLatexes());
         state.setZLayers(data.getLayers());
+        state.setMesh(data.getMesh());
         state.setPieces(Collections.emptyList());
         state.setMarkers(Collections.emptyList());
         state.setTicks(GraphNumbers.ticks(data.getXMin(), data.getXMax(), SURFACE_TICKS),

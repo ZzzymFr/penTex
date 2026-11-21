@@ -61,6 +61,19 @@ class GraphPresenterTest {
     }
 
     @Test
+    void meshSurfaceKeepsItsQuadsAndCurveDropsThem() {
+        double[][] mesh = {{0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0}};
+        presenter.prepareSurfaceView(new SurfaceOutputData("x+y+z=1", -1, 1, -1, 1, -0.72, 0.72, null, mesh), true);
+        GraphState s = viewModel.getState();
+        assertEquals(GraphState.Kind.SURFACE, s.getKind());
+        assertSame(mesh, s.getMesh());
+        assertNull(s.getZ());
+        assertEquals(-0.72, s.getZMin(), 1e-12);
+        presenter.prepareCurveView(line(-5, 5), true);
+        assertNull(viewModel.getState().getMesh());
+    }
+
+    @Test
     void traceIsFormattedAndClearsOnTheNextWindow() {
         presenter.prepareCurveView(line(-5, 5), true);
         presenter.prepareTraceView(new TraceOutputData(1.5, 2.25, Double.NaN, KeyPoint.Kind.MINIMUM));

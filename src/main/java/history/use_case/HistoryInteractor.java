@@ -94,6 +94,19 @@ public final class HistoryInteractor {
         return true;
     }
 
+    /** Explicit destructive operation. No undo stack survives a confirmed clear. */
+    public synchronized int clearAll() throws IOException {
+        int removed;
+        try {
+            removed = repository.clearAll();
+        } finally {
+            // A failed/partial clear must not offer to restore stale pre-clear records.
+            deleted.clear();
+        }
+        if (removed > 0) changed();
+        return removed;
+    }
+
     /** Automatic source invalidation is separate from explicit user deletion/Undo delete. */
     synchronized boolean suspendLinked(String id) throws IOException {
         if (id == null || !repository.deleteById(id)) return false;

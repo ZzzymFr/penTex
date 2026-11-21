@@ -10,7 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-// same routing evaluate does, just no working it out. f(x)=... is no, it saves itself
+// same routing evaluate does, just no working it out. f(x)=... is no, Recognize saves it
 public class CalculateCheckInteractor implements CalculateCheckInputBoundary {
     private final FunctionDataAccessInterface functionDataAccess;
 

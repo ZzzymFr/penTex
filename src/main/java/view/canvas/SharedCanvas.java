@@ -172,6 +172,10 @@ public class SharedCanvas {
         return canvas.captureForRecalculation(id);
     }
 
+    public FormulaCapture captureEdited(long id) {
+        return canvas.captureEdited(id);
+    }
+
     public boolean isCurrent(long id, long revision) {
         return canvas.isCurrent(id, revision);
     }
@@ -244,6 +248,14 @@ public class SharedCanvas {
 
     public FormulaCapture registerSelection() {
         return canvas.registerSelection();
+    }
+
+    public boolean selectionIsFormula(long id) {
+        return canvas.selectionIsFormula(id);
+    }
+
+    public FormulaCapture capturePickedAnswered() {
+        return canvas.capturePickedAnswered();
     }
 
     public long formulaIdOf(Stroke s) {

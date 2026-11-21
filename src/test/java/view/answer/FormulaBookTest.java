@@ -141,6 +141,37 @@ class FormulaBookTest {
         assertFalse(book.get(f.getId()).getStrokes().contains(s));
     }
 
+    // "5 3 - 4" 40 tall, the "-" sits 26 past the "3", more than 0.6 char
+    private final Stroke five = stroke(100, 100, 120, 140);
+    private final Stroke three = stroke(140, 100, 160, 140);
+    private final Stroke dash = stroke(186, 120, 210, 120);
+    private final Stroke four = stroke(230, 100, 230, 140);
+
+    @Test
+    void inkWrittenBackWhereItWasErasedJoinsAgain() {
+        Formula f = book.add(List.of(five, three, dash, four), 1);
+        book.strokesReplaced(List.of(dash, four), List.of(), revisions);
+
+        Stroke dashAgain = stroke(186, 120, 210, 120);
+        Stroke fourAgain = stroke(230, 100, 230, 140);
+        book.strokesReplaced(List.of(), List.of(dashAgain), revisions);
+        book.strokesReplaced(List.of(), List.of(fourAgain), revisions);
+
+        assertEquals(Set.of(five, three, dashAgain, fourAgain), book.get(f.getId()).getStrokes());
+        assertEquals(1, book.all().size());
+    }
+
+    @Test
+    void answeredFormulaForgetsWhereInkWasErased() {
+        Formula f = book.add(List.of(five, three, dash, four), 1);
+        book.strokesReplaced(List.of(dash, four), List.of(), revisions);
+        book.put(book.get(f.getId()).withAnswer(ANSWER));
+
+        Stroke dashAgain = stroke(186, 120, 210, 120);
+        assertTrue(book.strokesReplaced(List.of(), List.of(dashAgain), revisions).isEmpty());
+        assertFalse(book.isBound(dashAgain));
+    }
+
     @Test
     void movingPartOfAFormulaAwayChangesIt() {
         Stroke s = stroke(100, 100, 100, 140);

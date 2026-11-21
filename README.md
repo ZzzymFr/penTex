@@ -76,11 +76,11 @@ The actor in every use case is the **student**.
 4. The system shows a popup next to the "=" with the typeset LaTeX and the actions that fit it: **Calculate**, **Graph**, or both; a differential equation gets **Phase Portrait** alone.
 
 **Alternative flows:**
-- **Lasso selection:** the student circles some ink with the lasso (or drags a box). The selection is read as one formula, with or without an "=".
+- **Lasso selection:** the student circles some ink with the lasso (or drags a box). The selection is read as one formula, with or without an "=". This is the fallback when no popup came up on its own, so the popup always shows all four buttons: **Calculate**, **Graph**, **Recognize** and **Phase Portrait**. The ones that don't fit the formula are grayed out. **Recognize** puts the formula into History; a `f(x)=…` is saved as a function again, so an older definition can be brought back. A formula that already has an answer gets the popup too, with **Calculate** grayed out.
 - **Finished equation or inequality:** a formula with something on both sides of the sign, such as `x^2=4` or `2x>5`, gets a popup without a trailing "=". An unfinished one such as `2x>` does not.
 - **Still writing:** while the pen is down, no popup appears. The system waits for the next pause.
 - **Formula edited:** if the student adds to or erases part of a formula, its old answer is removed and the formula is read again after the next pause.
-- **Function definition:** if the formula reads as `f(x)=…`, it is saved straight away (see Use Case 2) and no popup is needed.
+- **Function definition:** if the formula reads as `f(x)=…`, nothing is saved on its own. The popup offers only **Recognize**, which saves the function (see Use Case 2). To graph it instead, lasso it: the lasso popup has **Graph** too.
 - **Recognition fails:** the popup shows the problem instead of a formula, and nothing is calculated.
 - **Photo upload:** not implemented yet. Only canvas ink is recognized for now.
 
@@ -132,6 +132,7 @@ The actor in every use case is the **student**.
 4. The system shows a live graph card beside the formula, with the typeset function in its title bar, and adds a picture of it to History and the PDF library.
 
 **Alternative flows:**
+- **Equation in x, y and z:** any equation using exactly x, y and z (`x + y + z = 1`, `x^2 + y^2 + z^2 = 1`, `z^2 = x^2 + y^2`) also gets **Graph**. The surface F(x, y, z) = 0 is cut into quads (surface nets) inside a box that ends flush on the walls; on the default range a small closed surface such as a sphere gets a box it fills, with z scaled so it stays round. Hovering reads the highest point of the surface under the cursor.
 - **Read a value:** hovering over a curve shows the real point on it, with dashed guides and the values on both axes; near a root, minimum, maximum or y-intercept it snaps onto that point and names it. On a surface it shows (x, y, z) under the cursor. A click pins the readout.
 - **Explore:** dragging the plot pans (2D) or rotates (3D), scrolling zooms, double click or ↺ goes back to the start. The range boxes under the card follow the window.
 - **Move or resize the card:** dragging the title bar moves the card, the corner grip resizes it, × closes it.
@@ -139,7 +140,7 @@ The actor in every use case is the **student**.
 - **Not a function of x (or of x and y):** the popup does not offer **Graph**.
 - **Bad range or nothing to draw:** if min ≥ max, the function is undefined on the whole range, or the graph lies entirely outside the y range, the system shows an error notice.
 
-**Main classes:** `GraphController`, `GraphFunctionInteractor`, `GraphExploreController` / `ExploreGraphInteractor`, `GraphSessionDataAccessInterface` / `InMemoryGraphSessionDataAccessObject`, `LatexFunctionParser`, `entity.graph` (`CurvePlot`, `SurfacePlot`, `CurveSampler`, `KeyPointFinder`, `Viewport`), `GraphPresenter`, `GraphViewModel`, `view.graph` (`GraphCard`, `PlotCard`, `CurvePainter`, `SurfacePainter`), `PopupGraphing`, `GraphRangeBar`. `GraphCheckInteractor` decides whether **Graph** is offered.
+**Main classes:** `GraphController`, `GraphFunctionInteractor`, `GraphExploreController` / `ExploreGraphInteractor`, `GraphSessionDataAccessInterface` / `InMemoryGraphSessionDataAccessObject`, `LatexFunctionParser`, `entity.graph` (`CurvePlot`, `SurfacePlot`, `ImplicitPlot`, `SurfaceNets`, `AutoBox`, `CurveSampler`, `KeyPointFinder`, `Viewport`), `ImplicitSurfaceReader`, `GraphPresenter`, `GraphViewModel`, `view.graph` (`GraphCard`, `PlotCard`, `CurvePainter`, `SurfacePainter`), `PopupGraphing`, `GraphRangeBar`. `GraphCheckInteractor` decides whether **Graph** is offered.
 
 ### Use Case 4b: Draw the phase portrait of a differential equation
 **User story:** US4 · **Lead:** Haoyu Wang
@@ -253,6 +254,7 @@ A function the student defined, e.g. `f(x)=x^2`.
 ### MathFunction / SurfaceFunction / plots (`entity`, `entity.graph`)
 - `MathFunction`: `latex: String`, `rule: DoubleUnaryOperator`. Methods: `getLatex()`, `evaluate(x)`. `SurfaceFunction` is the same for f(x, y).
 - `Viewport`: the immutable x / y window. Methods: `panned(dx, dy)`, `zoomed(cx, cy, fx, fy)`
+- `ImplicitSurface`: F(x, y, z) = left − right of an equation in x, y and z, read by `ImplicitSurfaceReader` with the Calculate parser. `ImplicitPlot` is its `Plot`: `getMesh()` gives the quads `SurfaceNets` cuts, the z range zooms with the floor. `AutoBox` picks the box.
 - `Plot` (`CurvePlot`, `SurfacePlot`): a function seen through a viewport. Methods: `lookingAt(viewport)`, `trace(x, y, snapX)` (the real point under the cursor), `getCurve()` / `getKeyPoints()` or `getGrid()`
 
 ### DifferentialEquation / PhasePlot (`entity.phase`)

@@ -215,6 +215,42 @@ class DrawingCanvasHooksTest {
         assertEquals(1, canvas.getFormulas().size());
     }
 
+    // "5+3=" 40 tall, the "3" 26 past the "+", the "=" 20 past the "3"
+    private static final int[][] FIVE_PLUS_THREE = {
+        {100, 100, 120, 140},                      // 5
+        {140, 120, 170, 120},                      // +
+        {155, 105, 155, 135},
+        {196, 100, 220, 140},                      // 3
+        {240, 115, 270, 115},                      // =
+        {240, 127, 270, 127},
+    };
+
+    @Test
+    void tailDeletedThenWrittenBackStaysOneFormula() {
+        List<Stroke> all = writeAll(FIVE_PLUS_THREE);
+        canvas.registerNewInk(last(), all);
+        lasso(190, 90, 280, 150);                  // "3="
+        canvas.deleteSelection();
+        canvas.setTool(DrawingCanvas.Tool.PEN);
+        List<Stroke> again = writeAll(new int[][]{FIVE_PLUS_THREE[3], FIVE_PLUS_THREE[4], FIVE_PLUS_THREE[5]});
+        assertTrue(again.stream().allMatch(canvas::isBound), "lands where the old ink was");
+        assertEquals(1, canvas.getFormulas().size());
+        assertEquals(6, canvas.getFormulas().get(0).getStrokes().size());
+    }
+
+    // undo goes back to before the pause bound it, so the whole formula is loose again
+    @Test
+    void equalsWrittenBackAfterUndoTakesTheLooseFormulaAlong() {
+        List<Stroke> all = writeAll(FIVE_PLUS_THREE);
+        canvas.registerNewInk(last(), all);
+        canvas.undo();
+        canvas.undo();
+        assertEquals(0, canvas.getFormulas().size());
+        List<Stroke> bars = writeAll(new int[][]{FIVE_PLUS_THREE[4], FIVE_PLUS_THREE[5]});
+        assertEquals(6, strokesIn(canvas.registerNewInk(last(), bars)));
+        assertEquals(1, canvas.getFormulas().size());
+    }
+
     @Test
     void registerNewInkReturnsNullForGoneStroke() {
         write(100, 100, 130, 140);
@@ -464,5 +500,167 @@ class DrawingCanvasHooksTest {
         writeAll(new int[][]{{80, 160, 120, 160}});                    // next line's "-", nothing under it
         canvas.registerNewInk(last(), List.of(last()));
         assertEquals(2, canvas.getFormulas().size());
+    }
+
+    // 2/3 - 1/5 = off the bug report: digits ~half a char off their bars, a short 1
+    private static final int[][] TWO_THIRDS_MINUS_A_FIFTH = {
+        {60, 55, 75, 52, 92, 52, 105, 59, 107, 70, 100, 82, 85, 92, 65, 103, 112, 103},  // 2
+        {45, 124, 114, 124},                                                            // bar
+        {65, 150, 98, 150, 81, 167, 95, 170, 101, 180, 97, 190, 85, 194, 65, 194},      // 3
+        {139, 132, 174, 132},                                                           // -
+        {258, 74, 258, 95},                                                             // 1, half as tall
+        {216, 121, 301, 121},                                                           // bar
+        {284, 146, 256, 146, 255, 165, 270, 161, 282, 165, 287, 175, 282, 186, 270, 188, 254, 186},  // 5
+        {338, 116, 364, 116}, {338, 131, 366, 131},                                     // =
+    };
+
+    // writes ink w/ a pause after the listed strokes + at the end, like the page: loose ink, or the formula it joined
+    private void writePausing(int[][] ink, int... pauseAfter) {
+        List<Stroke> round = new ArrayList<>();
+        long edited = -1;
+        for (int i = 0; i < ink.length; i++) {
+            write(ink[i]);
+            if (canvas.isBound(last())) {
+                edited = canvas.formulaIdOf(last());
+            } else {
+                round.add(last());
+                edited = -1;
+            }
+            int at = i;
+            if (i == ink.length - 1 || java.util.Arrays.stream(pauseAfter).anyMatch(p -> p == at)) {
+                if (!round.isEmpty()) {
+                    canvas.registerNewInk(round.get(round.size() - 1), round);
+                }
+                if (edited >= 0) {
+                    canvas.captureEdited(edited);
+                }
+                round = new ArrayList<>();
+                edited = -1;
+            }
+        }
+    }
+
+    private void assertOneFormulaOf(int strokes) {
+        assertEquals(1, canvas.getFormulas().size());
+        assertEquals(strokes, canvas.getFormulas().get(0).getStrokes().size());
+    }
+
+    @Test
+    void spacedFractionsInOneGoAreOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheBarKeepsTheFractionTogether() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 1);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheFirstFractionKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 2);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterTheShortTopKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 4);  // rest of 1/5 = lands on the 2/3 - as an edit
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void pauseAfterEveryStrokeKeepsOneFormula() {
+        writePausing(TWO_THIRDS_MINUS_A_FIFTH, 0, 1, 2, 3, 4, 5, 6, 7);
+        assertOneFormulaOf(9);
+    }
+
+    @Test
+    void shortTopStillMakesAFraction() {
+        writePausing(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 4, 9));  // 1/5 = alone
+        assertOneFormulaOf(5);
+    }
+
+    // lim x->inf sinh(2x)/cos(x) = off a saved canvas, shifted; the real pauses were after #0 #3 #8 #18 #19 #26
+    private static final int[][] LIM_SINH_OVER_COS = {
+        {66, 66, 68, 63, 68, 71, 61, 112, 62, 122},                                     // l
+        {82, 97, 79, 114}, {87, 87, 87, 81, 89, 85},                                    // i
+        {92, 106, 90, 117, 92, 109, 99, 98, 105, 99, 104, 115, 113, 99, 119, 97, 121, 118},  // m
+        {51, 149, 52, 143, 56, 141, 67, 160}, {69, 142, 54, 162},                       // x
+        {79, 150, 98, 148}, {92, 141, 99, 144, 101, 149, 87, 161},                      // ->
+        {110, 157, 109, 152, 113, 142, 125, 161, 128, 160, 129, 137, 109, 162},         // inf
+        {188, 71, 185, 70, 174, 79, 183, 86, 184, 90, 175, 95, 170, 91},                // s
+        {198, 80, 194, 92}, {201, 60, 202, 56, 205, 66},                                // i
+        {205, 86, 203, 92, 211, 79, 214, 81, 214, 94},                                  // n
+        {231, 58, 224, 88, 230, 79, 234, 79, 234, 93},                                  // h
+        {266, 61, 263, 60, 258, 66, 253, 79, 253, 91, 261, 92},                         // (
+        {274, 72, 274, 69, 284, 68, 289, 73, 282, 81, 273, 86, 289, 85},                // 2
+        {302, 74, 300, 71, 310, 62, 314, 67, 315, 78, 317, 82, 319, 81}, {323, 66, 317, 69, 306, 84},  // x
+        {333, 54, 336, 56, 340, 68, 339, 78, 329, 87},                                  // )
+        {162, 111, 203, 106, 273, 103, 322, 108, 333, 107},                             // bar
+        {215, 132, 212, 132, 204, 149, 206, 155, 211, 156},                             // c
+        {226, 145, 223, 150, 229, 150, 232, 142, 229, 139, 225, 144},                   // o
+        {250, 134, 248, 133, 240, 141, 253, 149, 251, 153, 240, 155},                   // s
+        {279, 127, 277, 126, 273, 132, 269, 148, 275, 154},                             // (
+        {284, 142, 282, 141, 284, 137, 290, 133, 298, 147}, {304, 130, 298, 132, 288, 151},  // x
+        {313, 122, 316, 133, 316, 145, 312, 154, 305, 156},                             // )
+        {357, 105, 376, 103}, {355, 117, 356, 115, 373, 115},                           // =
+    };
+
+    @Test
+    void limWrittenWithItsRealPausesIsOneFormula() {
+        writePausing(LIM_SINH_OVER_COS, 0, 3, 8, 18, 19, 26);
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void pauseMidLimitThenMidFractionIsOneFormula() {
+        writePausing(LIM_SINH_OVER_COS, 5, 19);  // lim | x | ->inf sinh(2x) bar | rest, the limit only touches lim
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void bottomLeftLooseAtThePauseStillReachesTheLimit() {
+        writePausing(LIM_SINH_OVER_COS, 1, 4, 5, 16, 19);  // bottom stays loose, "=" lands on the top
+        assertOneFormulaOf(29);
+    }
+
+    @Test
+    void limOverAFractionGroupsTheSameFromAnyStroke() {
+        writePausing(java.util.Arrays.copyOfRange(LIM_SINH_OVER_COS, 0, 27));  // last stroke is the bottom's ")"
+        assertOneFormulaOf(27);
+    }
+
+    @Test
+    void regroupedButSameInkKeepsItsFormula() {
+        writeAll(new int[][]{{100, 100, 100, 140}});                   // 1
+        canvas.registerNewInk(last(), List.of(last()));
+        view.answer.Formula before = canvas.getFormulas().get(0);
+        writeAll(new int[][]{{80, 160, 120, 160}});                    // "-" under it, still no fraction
+        canvas.registerNewInk(last(), List.of(last()));
+        view.answer.Formula after = canvas.getFormulas().stream()
+                .filter(f -> f.getId() == before.getId()).findFirst().orElseThrow();
+        assertEquals(before.getRevision(), after.getRevision(), "same ink, its read still counts");
+    }
+
+    @Test
+    void lassoPickedFormulaIsNotRegrouped() {
+        writeAll(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 0, 2));  // 2 over the bar
+        lasso(30, 40, 130, 130);
+        FormulaCapture picked = canvas.registerSelection();
+        canvas.setTool(DrawingCanvas.Tool.PEN);
+        writePausing(java.util.Arrays.copyOfRange(TWO_THIRDS_MINUS_A_FIFTH, 2, 3));  // 3 under it
+        assertEquals(2, canvas.getFormulas().size(), "user picked those two, leave them be");
+        assertTrue(canvas.isCurrent(picked.getId(), picked.getRevision()));
+    }
+
+    @Test
+    void answeredFormulaIsNotRegrouped() {
+        Stroke one = answeredAt(100);                                  // 1, answered
+        writeAll(new int[][]{{80, 160, 120, 160}, {85, 175, 115, 175, 85, 215, 115, 215}});  // bar + 2 under it
+        canvas.registerNewInk(last(), List.of(canvas.getStrokes().get(1), last()));
+        assertEquals(1, canvas.getFormulas().stream().filter(f -> f.getStrokes().contains(one))
+                .findFirst().orElseThrow().getStrokes().size());
+        assertEquals(1, canvas.getAnswers().size());
     }
 }

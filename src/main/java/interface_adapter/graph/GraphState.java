@@ -22,6 +22,7 @@ public class GraphState {
     private List<double[][]> zLayers = Collections.emptyList();             // z grid per surface
     private List<GraphMarker> markers = Collections.emptyList();
     private double[][] z;
+    private double[][] mesh;   // x y z equation: loose quads, null otherwise
     private List<GraphTick> xTicks = Collections.emptyList();
     private List<GraphTick> yTicks = Collections.emptyList();
     private List<GraphTick> zTicks = Collections.emptyList();
@@ -46,6 +47,7 @@ public class GraphState {
         zLayers = copy.zLayers;
         markers = copy.markers;
         z = copy.z;
+        mesh = copy.mesh;
         xTicks = copy.xTicks;
         yTicks = copy.yTicks;
         zTicks = copy.zTicks;
@@ -187,6 +189,15 @@ public class GraphState {
     public void setZ(double[][] z) {
         this.z = z;
         this.zLayers = z == null ? Collections.emptyList() : Collections.singletonList(z);
+    }
+
+    // rows of x0 y0 z0 .. x3 y3 z3 in world coords
+    public double[][] getMesh() {
+        return mesh;
+    }
+
+    public void setMesh(double[][] mesh) {
+        this.mesh = mesh;
     }
 
     public List<GraphTick> getXTicks() {

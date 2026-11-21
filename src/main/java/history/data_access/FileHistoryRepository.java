@@ -92,6 +92,15 @@ public final class FileHistoryRepository implements HistoryRepository {
         return false;
     }
 
+    /** Delete only validated Math Lab history records; leave other files untouched. */
+    @Override public synchronized int clearAll() throws IOException {
+        int removed = 0;
+        for (HistoryEntry entry : findAll()) {
+            if (Files.deleteIfExists(directory.resolve(entry.contentKey() + ".properties"))) removed++;
+        }
+        return removed;
+    }
+
     private static HistoryEntry read(Path file) throws IOException {
         Properties data = new Properties();
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) { data.load(reader); }

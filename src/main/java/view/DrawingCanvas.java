@@ -1183,7 +1183,7 @@ public class DrawingCanvas extends JPanel {
         }
         Rectangle bounds = boundsOf(selectionPreview());
         for (Picture picture : selectedPictures) {
-            Rectangle image = picture.box.getBounds();
+            Rectangle image = picturePreviewBounds(picture).getBounds();
             if (bounds == null) bounds = image; else bounds.add(image);
         }
         for (CanvasAnswer a : answerPreview()) {
@@ -1544,17 +1544,78 @@ public class DrawingCanvas extends JPanel {
                 pool.add(s);
             }
         }
-        double h = AnswerLayout.strokeHeight(pool);
-        bindGroup(looseGroup(last, h));
-        for (Stroke s : session) {
-            if (strokes.contains(s) && !book.isBound(s)) {
-                bindGroup(looseGroup(s, h));
-            }
-        }
+        regroup(last, pool);
         List<Stroke> round = new ArrayList<>(session);
         round.add(last);
         joinLoneEquals(round);
         return capture(book.holding(last));  // after all of it, a later limit may have merged it again
+    }
+
+    // edited formula at the pause: regrouped w/ the guesses next to it first, ink added to half a fraction finds the rest
+    public FormulaCapture captureEdited(long id) {
+        Formula f = book.get(id);
+        if (f == null || f.getAnswer() != null || !book.isGuess(id)) {
+            return captureForRecalculation(id);
+        }
+        List<Stroke> ink = inDrawingOrder(f);
+        Stroke last = ink.get(ink.size() - 1);
+        regroup(last, ink);
+        return capture(book.holding(last));
+    }
+
+    // groups pool w/ earlier pauses' unanswered guesses near it, a pause mid fraction cant split it
+    private void regroup(Stroke last, List<Stroke> pool) {
+        double h = Math.max(AnswerLayout.strokeHeight(pool), olderRowHeight(pool));
+        List<Formula> regroup = book.takeGuessesNear(boundsOf(pool), h);
+        if (!regroup.isEmpty()) {
+            Set<Stroke> mine = new HashSet<>(pool);
+            pool = new ArrayList<>();
+            for (Stroke s : strokes) {
+                if (!book.isBound(s) && (mine.contains(s) || inAny(regroup, s))) {
+                    pool.add(s);
+                }
+            }
+            h = Math.max(AnswerLayout.strokeHeight(pool), olderRowHeight(pool));
+        }
+        bindOrKeep(looseGroup(last, h), regroup);
+        for (Stroke s : pool) {
+            if (!book.isBound(s)) {
+                bindOrKeep(looseGroup(s, h), regroup);
+            }
+        }
+    }
+
+    private static boolean inAny(List<Formula> formulas, Stroke s) {
+        for (Formula f : formulas) {
+            if (f.getStrokes().contains(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // came out the same as before the pause = that formula back w/ its id + revision, else a new one
+    private void bindOrKeep(Set<Stroke> group, List<Formula> regroup) {
+        for (Formula f : regroup) {
+            if (f.getStrokes().equals(group)) {
+                book.putBack(f);
+                return;
+            }
+        }
+        bindGroup(group);
+    }
+
+    // undo can leave a whole formula loose: its ink on this round's row sizes it too, 0 if none
+    private double olderRowHeight(List<Stroke> round) {
+        Rectangle box = boundsOf(round);
+        List<Stroke> row = new ArrayList<>(round);
+        for (Stroke s : strokes) {
+            Rectangle b = book.isBound(s) || round.contains(s) ? null : boundsOf(List.of(s));
+            if (b != null && b.getMinY() <= box.getMaxY() && b.getMaxY() >= box.getMinY()) {
+                row.add(s);
+            }
+        }
+        return row.size() == round.size() ? 0 : AnswerLayout.strokeHeight(row);
     }
 
     // an "=" on its own this round joins the formula just left of it, even far off or bigger than its ink
@@ -1577,7 +1638,7 @@ public class DrawingCanvas extends JPanel {
                     Set<Stroke> both = new LinkedHashSet<>(left.getStrokes());
                     both.add(a);
                     both.add(b);
-                    book.add(both, nextRevision());
+                    book.addGuess(both, nextRevision());
                 }
             }
         }
@@ -1589,10 +1650,10 @@ public class DrawingCanvas extends JPanel {
             if (Scripts.stackedOn(f.getStrokes(), group)) {  // one way only, old formula is never the new ink's limit
                 Set<Stroke> both = new LinkedHashSet<>(f.getStrokes());
                 both.addAll(group);
-                return book.add(both, nextRevision());
+                return book.addGuess(both, nextRevision());
             }
         }
-        return book.add(group, nextRevision());
+        return book.addGuess(group, nextRevision());
     }
 
     // Lasso over one answered formula plus extra ink means correct the grouping.
@@ -1616,9 +1677,33 @@ public class DrawingCanvas extends JPanel {
         return capture(mine);
     }
 
+    // lasso selection is exactly this formula's ink
+    public boolean selectionIsFormula(long id) {
+        Formula f = book.get(id);
+        Set<Stroke> picked = new HashSet<>(selectedInkSnapshot());
+        return f != null && !picked.isEmpty() && f.getStrokes().equals(picked);
+    }
+
+    // pick is exactly one answered formula: its capture anyway, null if not
+    public FormulaCapture capturePickedAnswered() {
+        Set<Stroke> picked = new HashSet<>(selectedInkSnapshot());
+        for (Formula f : book.all()) {
+            if (f.getAnswer() != null && !picked.isEmpty() && f.getStrokes().equals(picked)) {
+                return capture(f);
+            }
+        }
+        return null;
+    }
+
     // seed's row, plus any limits stacked over/under it (or the row it's a limit of), or a fraction's other half
     private Set<Stroke> looseGroup(Stroke seed, double h) {
         Set<Stroke> group = looseRow(seed, h, Set.of());
+        List<Stroke> loose = new ArrayList<>();  // top, bar + bottom can each be their own row
+        for (Stroke s : strokes) {
+            if (!book.isBound(s)) {
+                loose.add(s);
+            }
+        }
         boolean grew = true;
         while (grew) {
             grew = false;
@@ -1627,8 +1712,10 @@ public class DrawingCanvas extends JPanel {
                     continue;
                 }
                 Set<Stroke> other = looseRow(s, h, group);
-                if (Scripts.stackedOn(group, other) || Scripts.stackedOn(other, group)
-                        || Fractions.across(group, other, h)) {
+                // beside the whole group too, a fraction pulled in from the seed's row can reach ink the row couldnt
+                if (AnswerLayout.sameNewFormula(boundsOf(group), h, boundsOf(List.of(s)))
+                        || Scripts.stackedOn(group, other) || Scripts.stackedOn(other, group)
+                        || Fractions.across(group, other, loose, h)) {
                     group.addAll(other);
                     grew = true;
                 }
@@ -2130,20 +2217,30 @@ public class DrawingCanvas extends JPanel {
         }
     }
 
+    /** The same in-progress History geometry drives both the artwork and its selection outline. */
+    private Rectangle2D picturePreviewBounds(Picture picture) {
+        Rectangle2D box = picture.box;
+        if (!selectedPictures.contains(picture)) {
+            return box;
+        }
+        if (resizeHandle >= 0 && resizeFactor != 1) {
+            return new Rectangle2D.Double(
+                    resizeAnchor.getX() + (box.getX() - resizeAnchor.getX()) * resizeFactor,
+                    resizeAnchor.getY() + (box.getY() - resizeAnchor.getY()) * resizeFactor,
+                    box.getWidth() * resizeFactor, box.getHeight() * resizeFactor);
+        }
+        if (moveDx != 0 || moveDy != 0) {
+            return new Rectangle2D.Double(box.getX() + moveDx, box.getY() + moveDy,
+                    box.getWidth(), box.getHeight());
+        }
+        return box;
+    }
+
     private void paintPictures(Graphics2D world) {
         for (Picture p : pictures) {
             Graphics2D g = (Graphics2D) world.create();
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            Rectangle2D r = p.box;
-            if (selectedPictures.contains(p)) {
-                if (resizeHandle >= 0 && resizeFactor != 1) {
-                    r = new Rectangle2D.Double(resizeAnchor.getX() + (r.getX()-resizeAnchor.getX())*resizeFactor,
-                            resizeAnchor.getY() + (r.getY()-resizeAnchor.getY())*resizeFactor,
-                            r.getWidth()*resizeFactor, r.getHeight()*resizeFactor);
-                } else if (moveDx != 0 || moveDy != 0) {
-                    r = new Rectangle2D.Double(r.getX()+moveDx,r.getY()+moveDy,r.getWidth(),r.getHeight());
-                }
-            }
+            Rectangle2D r = picturePreviewBounds(p);
             BufferedImage source = p.image;
             if (mathAssetRenderer != null && !p.latex.isBlank()) {
                 int rasterW = Math.min(2400, Math.max(20, (int)Math.round(r.getWidth() * scale)));

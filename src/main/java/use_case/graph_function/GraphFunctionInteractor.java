@@ -1,11 +1,15 @@
 package use_case.graph_function;
 
+import entity.ImplicitSurface;
+import entity.ImplicitSurfaceReader;
 import entity.LatexFunctionParser;
 import entity.LatexParseException;
 import entity.MathFunction;
 import entity.SurfaceFunction;
+import entity.graph.AutoBox;
 import entity.graph.AutoRange;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitPlot;
 import entity.graph.Plot;
 import entity.graph.SurfacePlot;
 import entity.graph.Viewport;
@@ -19,13 +23,20 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
     static final int RANGE_SAMPLES = 400;
 
     private final LatexFunctionParser parser;
+    private final ImplicitSurfaceReader surfaces;   // x y z equations
     private final GraphSessionDataAccessInterface session;
     private final GraphFunctionOutputBoundary presenter;
     private final PlotPublisher publisher;
 
     public GraphFunctionInteractor(LatexFunctionParser parser, GraphSessionDataAccessInterface session,
                                    GraphFunctionOutputBoundary presenter) {
+        this(parser, new ImplicitSurfaceReader(), session, presenter);
+    }
+
+    public GraphFunctionInteractor(LatexFunctionParser parser, ImplicitSurfaceReader surfaces,
+                                   GraphSessionDataAccessInterface session, GraphFunctionOutputBoundary presenter) {
         this.parser = parser;
+        this.surfaces = surfaces;
         this.session = session;
         this.presenter = presenter;
         this.publisher = new PlotPublisher(presenter);
@@ -64,11 +75,11 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
         }
     }
 
-    // all curves, or all surfaces (each one curve first, surface if it only makes sense with a y in it);
-    // null after a fail view
+    // all curves, or all z = f(x, y) surfaces (each one curve first, surface if it only makes sense with a y
+    // in it), or one x y z equation on its own; null after a fail view
     private Plot build(List<String> latexes, GraphFunctionInputData input) {
         List<MathFunction> curves = new ArrayList<>();
-        List<SurfaceFunction> surfaces = new ArrayList<>();
+        List<SurfaceFunction> grids = new ArrayList<>();
         for (String latex : latexes) {
             LatexParseException curveError;
             try {
@@ -78,18 +89,54 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
                 curveError = e;
             }
             try {
-                surfaces.add(parser.parseSurface(latex));
+                grids.add(parser.parseSurface(latex));
+                continue;
+            } catch (LatexParseException e) {
+                // not z = f(x,y) either, maybe an x y z equation
+            }
+            ImplicitSurface xyz;
+            try {
+                xyz = surfaces.read(latex);
             } catch (LatexParseException e) {
                 presenter.prepareFailView("Cannot graph \"" + latex + "\": " + curveError.getMessage());
                 return null;
             }
+            if (latexes.size() > 1) {
+                presenter.prepareFailView("\"" + latex + "\" is an x y z equation; those are graphed on their own,"
+                        + " they can't share a graph with another function yet.");
+                return null;
+            }
+            return implicit(xyz, input);
         }
-        if (!curves.isEmpty() && !surfaces.isEmpty()) {
+        if (!curves.isEmpty() && !grids.isEmpty()) {
             presenter.prepareFailView("A 2D curve and a 3D surface can't share one graph: \""
-                    + curves.get(0).getLatex() + "\" is 2D, \"" + surfaces.get(0).getLatex() + "\" is 3D.");
+                    + curves.get(0).getLatex() + "\" is 2D, \"" + grids.get(0).getLatex() + "\" is 3D.");
             return null;
         }
-        return curves.isEmpty() ? surface(surfaces, input) : curve(curves, input);
+        return curves.isEmpty() ? surface(grids, input) : curve(curves, input);
+    }
+
+    // default range -> box fits the surface (sphere fills it), typed range -> that floor as is,
+    // typed z range -> that box height
+    private Plot implicit(ImplicitSurface f, GraphFunctionInputData input) {
+        double yMin = input.isYAutomatic() ? input.getXMin() : input.getYMin();
+        double yMax = input.isYAutomatic() ? input.getXMax() : input.getYMax();
+        Viewport floor = new Viewport(input.getXMin(), input.getXMax(), yMin, yMax);
+        boolean untouched = input.isYAutomatic() && input.getXMin() == GraphFunctionInputData.DEFAULT_X_MIN
+                && input.getXMax() == GraphFunctionInputData.DEFAULT_X_MAX;
+        ImplicitPlot plot;
+        if (!input.isZAutomatic()) {
+            plot = new ImplicitPlot(f, floor, input.getZMin(), input.getZMax());
+        } else {
+            plot = untouched ? AutoBox.around(f, floor) : AutoBox.within(f, floor);
+        }
+        if (plot.getMesh().isEmpty()) {
+            presenter.prepareFailView("\"" + f.getLatex() + "\" has no points in x in [" + floor.getXMin() + ", "
+                    + floor.getXMax() + "], y in [" + yMin + ", " + yMax + "], z in [" + plot.getZMin() + ", "
+                    + plot.getZMax() + "].");
+            return null;
+        }
+        return plot;
     }
 
     // y range: as typed, or one that fits every function

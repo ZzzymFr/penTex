@@ -31,6 +31,7 @@ public final class GraphCard extends PlotCard {
     // scene cache: rebuilt when the data, camera or size changes
     private SurfaceScene scene;
     private Object sceneZ;   // the z grids the scene was cut from
+    private double[][] sceneMesh;
     private int sceneCamera = -1;
     private double sceneW;
     private double sceneH;
@@ -122,10 +123,11 @@ public final class GraphCard extends PlotCard {
         if (s.getKind() != GraphState.Kind.SURFACE) {
             return null;
         }
-        if (scene == null || sceneZ != s.getZLayers() || sceneCamera != camera.version()
-                || sceneW != getWidth() || sceneH != getHeight()) {
+        if (scene == null || sceneZ != s.getZLayers() || sceneMesh != s.getMesh()
+                || sceneCamera != camera.version() || sceneW != getWidth() || sceneH != getHeight()) {
             scene = SurfaceScene.build(s, camera, plot());
             sceneZ = s.getZLayers();
+            sceneMesh = s.getMesh();
             sceneCamera = camera.version();
             sceneW = getWidth();
             sceneH = getHeight();

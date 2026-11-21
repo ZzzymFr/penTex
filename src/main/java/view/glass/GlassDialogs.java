@@ -6,6 +6,11 @@ import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
+import javax.swing.JLayeredPane;
+import javax.swing.InputMap;
+import javax.swing.JRootPane;
+import javax.swing.JScrollPane;
+import javax.swing.RootPaneContainer;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
@@ -13,6 +18,10 @@ import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
+import java.awt.KeyEventDispatcher;
+import java.awt.KeyboardFocusManager;
+import java.awt.SecondaryLoop;
+import java.awt.Toolkit;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dialog;
@@ -26,15 +35,24 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Window;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 import java.util.function.Consumer;
+import java.beans.PropertyChangeListener;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 
 /**
  * A shared, Swing-only modal presentation for message, confirmation and text-entry dialogs.
@@ -120,14 +138,50 @@ public final class GlassDialogs {
 
     private static int present(Component parent, String title, String message, Tone tone,
                                JComponent content, String[] labels, Consumer<Runnable> registerAccept) {
-        Window owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
-        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        try {
-            dialog.setBackground(new Color(0, 0, 0, 0));
-        } catch (UnsupportedOperationException | IllegalArgumentException unsupported) {
-            dialog.setBackground(new Color(242, 242, 247));
+        // Swing components and nested event loops must be created/entered on the EDT.
+        // A background caller retains the same synchronous return-value contract.
+        if (!SwingUtilities.isEventDispatchThread()) {
+            FutureTask<Integer> task = new FutureTask<>(() ->
+                    present(parent, title, message, tone, content, labels, registerAccept));
+            SwingUtilities.invokeLater(task);
+            boolean interrupted = false;
+            try {
+                while (true) {
+                    try {
+                        return task.get();
+                    } catch (InterruptedException retry) {
+                        // A caller interruption must not strand a still-visible modal overlay.
+                        interrupted = true;
+                    } catch (ExecutionException failed) {
+                        Throwable cause = failed.getCause();
+                        if (cause instanceof RuntimeException runtime) throw runtime;
+                        if (cause instanceof Error error) throw error;
+                        throw new IllegalStateException("Unable to display glass dialog", cause);
+                    }
+                }
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
+            }
         }
+
+        Window owner = parent instanceof Window window ? window
+                : parent == null ? null : SwingUtilities.getWindowAncestor(parent);
+        if (owner instanceof RootPaneContainer rootOwner && owner.isShowing()) {
+            return new ModalOverlay(owner, rootOwner.getRootPane(), title, message, tone,
+                    content, labels, registerAccept).showAndWait();
+        }
+        // Truly ownerless/non-showing callers cannot use an in-window overlay. Use a
+        // conventional opaque, decorated dialog rather than an alpha native window.
+        return presentWithoutOwner(owner, parent, title, message, tone, content, labels, registerAccept);
+    }
+
+    /** Opaque fallback only; the normal app workflow never creates another native window. */
+    private static int presentWithoutOwner(Window owner, Component parent, String title, String message,
+                                           Tone tone, JComponent content, String[] labels,
+                                           Consumer<Runnable> registerAccept) {
+        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setTitle(title == null ? "" : title);
+        dialog.setBackground(new Color(242, 242, 247));
         AtomicInteger selected = new AtomicInteger(-1);
         DialogPane pane = new DialogPane(title, message, tone, content, labels, i -> {
             selected.set(i);
@@ -143,14 +197,9 @@ public final class GlassDialogs {
         dialog.getRootPane().getActionMap().put("close-glass", new AbstractAction() {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { dialog.dispose(); }
         });
-        if (!pane.buttons.isEmpty()) {
-            int defaultOption = labels.length == 3 && labels[0].contains("Save") && labels[2].equals("Save")
-                    ? 2 : 0;
-            dialog.getRootPane().setDefaultButton(pane.buttons.get(defaultOption));
-        }
+        setDefaultOption(dialog.getRootPane(), pane, labels);
         dialog.pack();
         dialog.setLocationRelativeTo(parent);
-        useOpaqueBackdrop(dialog, owner, pane);
         if (content instanceof JTextField field) {
             SwingUtilities.invokeLater(() -> { field.requestFocusInWindow(); field.selectAll(); });
         }
@@ -158,50 +207,241 @@ public final class GlassDialogs {
         return selected.get();
     }
 
+    private static void setDefaultOption(JRootPane root, DialogPane pane, String[] labels) {
+        if (!pane.buttons.isEmpty()) {
+            boolean destructive = labels.length == 2 && labels[0].equals("Clear All");
+            int index = destructive ? 1
+                    : labels.length == 3 && labels[0].contains("Save") && labels[2].equals("Save") ? 2 : 0;
+            root.setDefaultButton(pane.buttons.get(index));
+        }
+    }
+
     /**
-     * A see-through window flashes on macOS: whenever anything inside it repaints (a button hover,
-     * the blinking caret) that patch is cleared to transparent for a frame and the canvas behind
-     * shows through. So when the dialog sits over our own window, it is made opaque instead, and
-     * the bit of that window behind the rounded corners and shadow is painted in as a snapshot.
-     * It looks the same, but nothing is ever cleared to transparent on screen.
+     * Owner-local modal presentation. The entire rounded card (and its shadow) is painted
+     * by Swing in the existing opaque native window: no window-alpha compositing, screenshots
+     * or OS-dependent clear/restore passes are involved, even during button hover.
+     *
+     * This is view-only. It owns neither the caller's content nor any workspace decisions.
      */
-    private static void useOpaqueBackdrop(JDialog dialog, Window owner, DialogPane pane) {
-        if (owner == null || !owner.isShowing() || dialog.getBackground().getAlpha() == 255) return;
-        int w = dialog.getWidth(), h = dialog.getHeight();
-        if (w <= 0 || h <= 0) return;
-        double scale = dialog.getGraphicsConfiguration().getDefaultTransform().getScaleX();
-        BufferedImage snapshot = new BufferedImage((int) Math.ceil(w * scale), (int) Math.ceil(h * scale),
-                BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = snapshot.createGraphics();
-        try {
-            g.setColor(owner.getBackground() == null ? new Color(242, 242, 247) : owner.getBackground());
-            g.fillRect(0, 0, snapshot.getWidth(), snapshot.getHeight());
-            g.scale(scale, scale);
-            // A dialog opened from another dialog (Delete over Open Canvas) sits above every window in
-            // its owner chain, so paint that whole stack bottom-up, not just the nearest owner.
-            List<Window> stack = new ArrayList<>();
-            for (Window w2 = owner; w2 != null; w2 = w2.getOwner()) {
-                if (w2.isShowing()) stack.add(0, w2);
+    private static final class ModalOverlay extends JPanel {
+        private static final Color SCRIM = new Color(14, 23, 42, 88);
+        private static final int MARGIN = 12;
+
+        private final Window owner;
+        private final JRootPane root;
+        private final JLayeredPane layers;
+        private final DialogPane pane;
+        private final JScrollPane card;
+        private final Dimension cardSize;
+        private final JComponent extra;
+        private final SecondaryLoop loop;
+        private final KeyboardFocusManager focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager();
+        private final AtomicInteger selected = new AtomicInteger(-1);
+        private final AtomicBoolean finished = new AtomicBoolean();
+        private final Component previousFocus;
+        private final javax.swing.JButton previousDefault;
+        private final ComponentAdapter resizeListener = new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent event) { updateBounds(); }
+        };
+        private final WindowAdapter closeListener = new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent event) { finish(-1); }
+            @Override public void windowClosed(WindowEvent event) { finish(-1); }
+        };
+        private final KeyEventDispatcher keys;
+        private final PropertyChangeListener focusListener;
+
+        private ModalOverlay(Window owner, JRootPane root, String title, String message,
+                             Tone tone, JComponent extra, String[] labels,
+                             Consumer<Runnable> registerAccept) {
+            super(null);
+            this.owner = owner;
+
+            this.keys = event -> {
+                if (!onTop() || !(event.getSource() instanceof Component target)) return false;
+                // The normal focus traversal stays inside this dialog. Guard against existing
+                // root-pane accelerators and focus unexpectedly shifting to the covered view.
+                if (SwingUtilities.getWindowAncestor(target) == owner
+                        && !SwingUtilities.isDescendingFrom(target, this)) {
+                    event.consume();
+                    return true;
+                }
+                return false;
+            };
+            this.focusListener = event -> {
+                if (!onTop() || !(event.getNewValue() instanceof Component target)) return;
+                if (SwingUtilities.getWindowAncestor(target) == owner
+                        && !SwingUtilities.isDescendingFrom(target, this)) {
+                    SwingUtilities.invokeLater(this::focusDialog);
+                }
+            };
+            this.root = root;
+            this.layers = root.getLayeredPane();
+            this.extra = extra;
+            this.previousFocus = focusManager.getFocusOwner();
+            this.previousDefault = root.getDefaultButton();
+            this.loop = Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
+            setOpaque(false);
+            setFocusable(true);
+            setFocusCycleRoot(true);
+            setName("glass-modal-overlay");
+            pane = new DialogPane(title, message, tone, extra, labels, this::finish);
+            // A wrapped JTextArea can base its preferred width on its current size.
+            // Freeze the natural card size before mounting it in a scrolling viewport;
+            // otherwise repeated viewport measurements grow the pane indefinitely.
+            cardSize = pane.getPreferredSize();
+            JPanel surface = new JPanel(null);
+            surface.setOpaque(false);
+            surface.setPreferredSize(new Dimension(cardSize));
+            surface.add(pane);
+            pane.setBounds(0, 0, cardSize.width, cardSize.height);
+            card = new JScrollPane(surface, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                    JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+            card.setBorder(BorderFactory.createEmptyBorder());
+            card.setOpaque(false);
+            card.getViewport().setOpaque(false);
+            add(card);
+            // The overlay itself intercepts all outside clicks and wheel events.
+            addMouseListener(new MouseAdapter() { });
+            addMouseWheelListener(event -> event.consume());
+            getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                    .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "close-glass-overlay");
+            getActionMap().put("close-glass-overlay", new AbstractAction() {
+                @Override public void actionPerformed(java.awt.event.ActionEvent event) { finish(-1); }
+            });
+            getInputMap(JComponent.WHEN_FOCUSED)
+                    .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "close-glass-overlay");
+            shieldOwnerShortcuts();
+            if (registerAccept != null) registerAccept.accept(() -> finish(0));
+            setDefaultOption(root, pane, labels);
+        }
+
+        /**
+         * Existing app-wide accelerators (Save, Undo, Redo, fullscreen Esc) are installed on
+         * the owner's root pane. Intercept them at the modal ancestor BEFORE Swing searches
+         * WHEN_IN_FOCUSED_WINDOW bindings, so a confirmation cannot act on the covered canvas.
+         * Focused fields still receive their own Ctrl/Cmd+C/V/A key bindings first.
+         */
+        private void shieldOwnerShortcuts() {
+            InputMap ownerKeys = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+            KeyStroke[] shortcuts = ownerKeys == null ? null : ownerKeys.allKeys();
+            if (shortcuts == null) return;
+            final String suppress = "glass-modal-suppress-owner-shortcut";
+            getActionMap().put(suppress, new AbstractAction() {
+                @Override public void actionPerformed(java.awt.event.ActionEvent event) { /* modal: ignore */ }
+            });
+            for (KeyStroke shortcut : shortcuts) {
+                // Enter invokes the current dialog's default button; Esc is handled locally.
+                if (shortcut.getKeyCode() == KeyEvent.VK_ENTER && shortcut.getModifiers() == 0) continue;
+                if (shortcut.getKeyCode() == KeyEvent.VK_ESCAPE && shortcut.getModifiers() == 0) continue;
+                getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(shortcut, suppress);
+                getInputMap(JComponent.WHEN_FOCUSED).put(shortcut, suppress);
             }
-            for (Window layer : stack) {
-                Graphics2D lg = (Graphics2D) g.create();
-                try {
-                    lg.translate(layer.getX() - dialog.getX(), layer.getY() - dialog.getY());
-                    layer.paint(lg);
-                } finally {
-                    lg.dispose();
+        }
+
+        private int showAndWait() {
+            if (finished.get()) return selected.get();
+            try {
+                layers.add(this, JLayeredPane.MODAL_LAYER, 0);
+                updateBounds();
+                layers.addComponentListener(resizeListener);
+                owner.addWindowListener(closeListener);
+                focusManager.addKeyEventDispatcher(keys);
+                focusManager.addPropertyChangeListener("focusOwner", focusListener);
+                layers.revalidate();
+                layers.repaint();
+                SwingUtilities.invokeLater(this::focusDialog);
+                // Runs a nested event pump on the EDT, matching JDialog.setVisible(true)'s
+                // synchronous result contract, including nested Delete over Open Canvas.
+                if (!finished.get() && !loop.enter() && !finished.get()) {
+                    finish(-1);  // never leave an unreachable overlay behind
+                }
+                return selected.get();
+            } catch (RuntimeException | Error failure) {
+                finish(-1);  // remove listeners and restore the default button on failure
+                throw failure;
+            }
+        }
+
+        private void updateBounds() {
+            setBounds(0, 0, layers.getWidth(), layers.getHeight());
+            revalidate();
+            repaint();
+        }
+
+        @Override public void doLayout() {
+            Dimension preferred = cardSize;
+            int availableW = Math.max(0, getWidth() - MARGIN * 2);
+            int availableH = Math.max(0, getHeight() - MARGIN * 2);
+            int width = Math.min(preferred.width, availableW);
+            int height = Math.min(preferred.height, availableH);
+            card.setBounds((getWidth() - width) / 2, (getHeight() - height) / 2, width, height);
+            card.revalidate();
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            g2.setColor(SCRIM);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            g2.dispose();
+        }
+
+        private boolean onTop() {
+            return getParent() == layers && layers.getLayer(this) == JLayeredPane.MODAL_LAYER.intValue()
+                    && layers.getPosition(this) == 0;
+        }
+
+        private void focusDialog() {
+            if (!onTop()) return;
+            if (extra instanceof JTextField field) {
+                if (field.requestFocusInWindow()) field.selectAll();
+            } else if (extra != null) {
+                Component text = findTextField(extra);
+                if (text != null && text.requestFocusInWindow()) return;
+                requestFocusInWindow();
+            } else {
+                requestFocusInWindow();
+            }
+        }
+
+        private static Component findTextField(java.awt.Container parent) {
+            if (parent instanceof JTextField field && field.isEnabled() && field.isShowing()) return field;
+            for (Component child : parent.getComponents()) {
+                if (child instanceof JTextField field && field.isEnabled() && field.isShowing()) return field;
+                if (child instanceof java.awt.Container container) {
+                    Component found = findTextField(container);
+                    if (found != null) return found;
                 }
             }
-        } catch (RuntimeException paintFailed) {
-            return;  // keep the transparent window rather than show a broken backdrop
-        } finally {
-            g.dispose();
+            return null;
         }
-        pane.backdrop = snapshot;
-        dialog.setBackground(new Color(242, 242, 247));
-        pane.setOpaque(false);  // an opaque window background marks its content pane opaque again
-        dialog.getRootPane().putClientProperty("Window.shadow", Boolean.FALSE);  // we draw our own
+
+        private void finish(int answer) {
+            if (!SwingUtilities.isEventDispatchThread()) {
+                SwingUtilities.invokeLater(() -> finish(answer));
+                return;
+            }
+            if (!finished.compareAndSet(false, true)) return;
+            selected.set(answer);
+            focusManager.removePropertyChangeListener("focusOwner", focusListener);
+            focusManager.removeKeyEventDispatcher(keys);
+            layers.removeComponentListener(resizeListener);
+            owner.removeWindowListener(closeListener);
+            if (getParent() == layers) {
+                layers.remove(this);
+                layers.revalidate();
+                layers.repaint();
+            }
+            root.setDefaultButton(previousDefault);
+            if (previousFocus != null && previousFocus.isShowing()
+                    && SwingUtilities.getWindowAncestor(previousFocus) == owner) {
+                SwingUtilities.invokeLater(previousFocus::requestFocusInWindow);
+            }
+            loop.exit();
+        }
     }
+
+    // The card is painted directly inside its owner's window. No native translucent
+    // dialog or background capture is used in the normal application workflow.
 
     /** Package-visible, window-free presentation: easily tested in headless mode. */
     static final class DialogPane extends JPanel {
@@ -262,7 +502,7 @@ public final class GlassDialogs {
             for (int i = 0; i < labels.length; i++) {
                 final int index = i;
                 Style style = labels[i].equals("Cancel") ? Style.SECONDARY :
-                        unsaved && i == 0 ? Style.DESTRUCTIVE :
+                        (unsaved && i == 0) || (labels[i].equals("Clear All")) ? Style.DESTRUCTIVE :
                                 (unsaved ? i == 2 : i == 0) ? Style.PRIMARY : Style.SECONDARY;
                 GlassButton button = new ActionButton(labels[i], style);
                 button.setName("glass-option-" + i);
