@@ -193,6 +193,16 @@ public class SharedCanvas {
         canvas.addFormulaMoveListener(listener);
     }
 
+    // lasso'd ink let go on a graph card (the card's tag)
+    public void addGraphDropListener(java.util.function.Consumer<Object> listener) {
+        canvas.addGraphDropListener(listener);
+    }
+
+    // lasso'd ink being dragged over a graph card (its tag), null when it leaves
+    public void addGraphDropHoverListener(java.util.function.Consumer<Object> listener) {
+        canvas.addGraphDropHoverListener(listener);
+    }
+
     public List<CanvasAnswer> getAnswers() {
         return canvas.getAnswers();
     }

@@ -138,6 +138,9 @@ public class DrawingCanvas extends JPanel {
     private final List<Runnable> actionListeners = new ArrayList<>();  // user started doing something
     private final List<Runnable> viewListeners = new ArrayList<>();    // pan / zoom
     private final List<Runnable> pickListeners = new ArrayList<>();    // fresh lasso/box pick w/ ink
+    private final List<Consumer<Object>> graphDropListeners = new ArrayList<>();   // ink dropped on a card
+    private final List<Consumer<Object>> graphHoverListeners = new ArrayList<>();  // ink dragged over a card
+    private Object dropTarget;        // tag of the graph card the dragged selection is over, or null
     private Tool tool = Tool.PEN;
     private EraserMode eraserMode = EraserMode.PRECISE;
     private Stroke currentStroke;
@@ -616,6 +619,36 @@ public class DrawingCanvas extends JPanel {
         return slot == null ? null : toScreen(slot.card());
     }
 
+    // tag of the topmost graph card at this screen point, null if none (or it has no tag)
+    private Object graphTagAt(Point p) {
+        for (int i = graphs.size() - 1; i >= 0; i--) {
+            GraphSlot slot = graphs.get(i);
+            if (slot.tag() != null && toScreen(slot.card()).contains(p)) {
+                return slot.tag();
+            }
+        }
+        return null;
+    }
+
+    private void setGraphDropTarget(Object tag) {
+        if (tag != dropTarget) {
+            dropTarget = tag;
+            for (Consumer<Object> l : new ArrayList<>(graphHoverListeners)) {
+                l.accept(tag);
+            }
+        }
+    }
+
+    /** A lasso selection was dragged onto the graph card with this tag and let go there. */
+    public void addGraphDropListener(Consumer<Object> listener) {
+        graphDropListeners.add(listener);
+    }
+
+    /** A lasso selection being dragged is now over this graph card's tag (null: over none). */
+    public void addGraphDropHoverListener(Consumer<Object> listener) {
+        graphHoverListeners.add(listener);
+    }
+
     /** Where the card shown with this tag is on screen right now, or null if it is gone. */
     public Rectangle2D getGraphCardOnScreen(Object tag) {
         GraphSlot slot = slotOf(tag);
@@ -873,6 +906,7 @@ public class DrawingCanvas extends JPanel {
             Point2D p = toWorld(e.getPoint());
             moveDx = (int) Math.round(p.getX() - moveStart.getX());
             moveDy = (int) Math.round(p.getY() - moveStart.getY());
+            setGraphDropTarget(selection.isEmpty() ? null : graphTagAt(e.getPoint()));
         } else if (lassoPath != null) {
             if (tool == Tool.RECTANGLE && rectangleStart != null) {
                 Point2D end = toWorld(e.getPoint());
@@ -901,6 +935,16 @@ public class DrawingCanvas extends JPanel {
             }
             resizeHandle = -1;
             resizeFactor = 1;
+        } else if (moveStart != null && dropTarget != null) {
+            // dragged onto a graph card: the formula goes into that graph, the ink stays where it was
+            Object target = dropTarget;
+            setGraphDropTarget(null);
+            moveStart = null;
+            moveDx = 0;
+            moveDy = 0;
+            for (Consumer<Object> l : new ArrayList<>(graphDropListeners)) {
+                l.accept(target);
+            }
         } else if (moveStart != null) {
             if (moveDx != 0 || moveDy != 0) {
                 int dx = moveDx;

@@ -26,6 +26,11 @@ public class GraphExploreController {
         interactor.trace(x, y, snapX);
     }
 
+    // on one of several surfaces
+    public void trace(double x, double y, double snapX, int layer) {
+        interactor.trace(x, y, snapX, layer);
+    }
+
     public void endTrace() {
         interactor.endTrace();
     }

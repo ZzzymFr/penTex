@@ -11,6 +11,7 @@ import view.graph.GraphSnapshot;
 import javax.swing.JComponent;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
@@ -65,8 +66,13 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
         }
 
         @Override
-        void execute(String latex, double[] xRange, double[] yRange) {
-            kit.controller().execute(latex, xRange, yRange);
+        void execute(List<String> latexes, double[] xRange, double[] yRange, double[] zRange) {
+            kit.controller().execute(latexes, xRange, yRange, zRange);
+        }
+
+        @Override
+        boolean takesMoreFunctions() {
+            return true;
         }
 
         @Override
@@ -93,6 +99,12 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
         @Override
         boolean followsY() {
             return viewModel.getState().getKind() == GraphState.Kind.CURVE;
+        }
+
+        @Override
+        double[] zWindow() {
+            GraphState s = viewModel.getState();
+            return s.getKind() == GraphState.Kind.SURFACE ? new double[]{s.getZMin(), s.getZMax()} : null;
         }
 
         @Override

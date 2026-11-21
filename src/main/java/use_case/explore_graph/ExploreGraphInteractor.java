@@ -38,9 +38,14 @@ public class ExploreGraphInteractor implements ExploreGraphInputBoundary {
 
     @Override
     public void trace(double x, double y, double snapX) {
+        trace(x, y, snapX, 0);
+    }
+
+    @Override
+    public void trace(double x, double y, double snapX, int layer) {
         Plot plot = session.current();
         if (plot != null) {
-            publisher.publishTrace(plot.trace(x, y, snapX));
+            publisher.publishTrace(plot.trace(x, y, snapX, layer));
         }
     }
 

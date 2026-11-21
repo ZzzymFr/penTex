@@ -17,7 +17,9 @@ public class GraphState {
     private double yMax;
     private double zMin;
     private double zMax;
-    private List<double[][]> pieces = Collections.emptyList();
+    private List<String> functions = Collections.emptyList();   // each function's latex, several share a graph
+    private List<List<double[][]>> curveLayers = Collections.emptyList();   // line pieces per function
+    private List<double[][]> zLayers = Collections.emptyList();             // z grid per surface
     private List<GraphMarker> markers = Collections.emptyList();
     private double[][] z;
     private double[][] mesh;   // x y z equation: loose quads, null otherwise
@@ -40,7 +42,9 @@ public class GraphState {
         yMax = copy.yMax;
         zMin = copy.zMin;
         zMax = copy.zMax;
-        pieces = copy.pieces;
+        functions = copy.functions;
+        curveLayers = copy.curveLayers;
+        zLayers = copy.zLayers;
         markers = copy.markers;
         z = copy.z;
         mesh = copy.mesh;
@@ -123,12 +127,50 @@ public class GraphState {
         this.zMax = zMax;
     }
 
+    // the first function's line pieces
     public List<double[][]> getPieces() {
-        return pieces;
+        return curveLayers.isEmpty() ? Collections.emptyList() : curveLayers.get(0);
     }
 
     public void setPieces(List<double[][]> pieces) {
-        this.pieces = List.copyOf(pieces);
+        setCurveLayers(pieces.isEmpty() ? Collections.emptyList() : List.of(pieces));
+    }
+
+    // one list of line pieces per function
+    public List<List<double[][]>> getCurveLayers() {
+        return curveLayers;
+    }
+
+    public void setCurveLayers(List<List<double[][]>> layers) {
+        List<List<double[][]>> copy = new java.util.ArrayList<>();
+        for (List<double[][]> layer : layers) {
+            copy.add(List.copyOf(layer));
+        }
+        this.curveLayers = List.copyOf(copy);
+    }
+
+    // one z grid per surface
+    public List<double[][]> getZLayers() {
+        return zLayers;
+    }
+
+    public void setZLayers(List<double[][]> layers) {
+        this.zLayers = List.copyOf(layers);
+        this.z = layers.isEmpty() ? null : layers.get(0);
+    }
+
+    // each function's latex on its own (the title joins them)
+    public List<String> getFunctions() {
+        return functions;
+    }
+
+    public void setFunctions(List<String> functions) {
+        this.functions = List.copyOf(functions);
+    }
+
+    // how many functions share this graph
+    public int functionCount() {
+        return Math.max(1, kind == Kind.SURFACE ? zLayers.size() : curveLayers.size());
     }
 
     public List<GraphMarker> getMarkers() {
@@ -146,6 +188,7 @@ public class GraphState {
 
     public void setZ(double[][] z) {
         this.z = z;
+        this.zLayers = z == null ? Collections.emptyList() : Collections.singletonList(z);
     }
 
     // rows of x0 y0 z0 .. x3 y3 z3 in world coords

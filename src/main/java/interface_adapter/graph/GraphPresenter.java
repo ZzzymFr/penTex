@@ -29,7 +29,8 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         state.setKind(GraphState.Kind.CURVE);
         state.setLatex(data.getLatex());
         state.setWindow(data.getXMin(), data.getXMax(), data.getYMin(), data.getYMax());
-        state.setPieces(data.getPieces());
+        state.setFunctions(data.getLatexes());
+        state.setCurveLayers(data.getLayers());
         List<GraphMarker> markers = new ArrayList<>();
         for (KeyPointOutputData k : data.getKeyPoints()) {
             markers.add(new GraphMarker(k.getX(), k.getY(), caption(k.getKind())));
@@ -49,7 +50,8 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         state.setLatex(data.getLatex());
         state.setWindow(data.getXMin(), data.getXMax(), data.getYMin(), data.getYMax());
         state.setZRange(data.getZMin(), data.getZMax());
-        state.setZ(data.getZ());
+        state.setFunctions(data.getLatexes());
+        state.setZLayers(data.getLayers());
         state.setMesh(data.getMesh());
         state.setPieces(Collections.emptyList());
         state.setMarkers(Collections.emptyList());

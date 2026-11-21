@@ -38,7 +38,7 @@ final class SurfacePainter {
             double[] zCorner = leftCorner(scene, zh);
             floor(g, s, scene, ui);
             zEdge(g, scene, zCorner, ui);
-            mesh(g, scene, ui);
+            mesh(g, s, scene, ui);
             labels(g, s, scene, ui, xEdge, yEdge, zCorner);
         } finally {
             g.dispose();
@@ -119,11 +119,14 @@ final class SurfacePainter {
         line(g, sc.projectBox(corner[0], corner[1], -zh), sc.projectBox(corner[0], corner[1], zh));
     }
 
-    private static void mesh(Graphics2D g, SurfaceScene sc, float ui) {
+    // one surface: the height ramp; several: each in its own colour (first green, the added one red)
+    private static void mesh(Graphics2D g, GraphState s, SurfaceScene sc, float ui) {
         BasicStroke edge = new BasicStroke(0.55f * ui);
         g.setStroke(edge);
+        boolean several = s.getZLayers().size() > 1;
         for (SurfaceScene.Quad q : sc.quads()) {
-            g.setColor(GraphTheme.surface(q.level, q.light, 255));
+            g.setColor(several ? GraphTheme.layerSurface(q.layer, q.level, q.light, 255)
+                    : GraphTheme.surface(q.level, q.light, 255));
             g.fill(q.shape);
             g.setColor(new Color(20, 30, 60, 55));
             g.draw(q.shape);

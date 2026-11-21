@@ -125,6 +125,77 @@ class GraphFunctionInteractorTest {
     }
 
     @Test
+    void surfaceIsCutToATypedZRange() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData("z=x^2+y^2", -2, 2, nan, nan, 0, 4));
+        assertNull(presenter.error);
+        SurfaceOutputData data = presenter.surface;
+        assertEquals(0, data.getZMin(), 1e-9);
+        assertEquals(4, data.getZMax(), 1e-9);
+        assertTrue(Double.isNaN(data.getZ()[0][0]), "corner is 8, above the box: cut off");
+        double[][] z = data.getZ();
+        assertEquals(0, z[z.length / 2][z.length / 2], 0.01, "the middle is still there");
+    }
+
+    @Test
+    void surfaceOutsideTheZRangeIsReported() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData("z=x^2+y^2+50", -2, 2, nan, nan, 0, 4));
+        assertNull(presenter.surface);
+        assertTrue(presenter.error.contains("outside the z range"));
+    }
+
+    @Test
+    void invalidZRangeIsReported() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData("z=xy", -2, 2, nan, nan, 3, 1));
+        assertNull(presenter.surface);
+        assertTrue(presenter.error.contains("z range"));
+    }
+
+    @Test
+    void twoCurvesShareOneGraphEachOnItsOwnLine() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("y=x", "y=x^2"), -2, 2, nan, nan, nan, nan));
+        assertNull(presenter.error);
+        CurveOutputData data = presenter.curve;
+        assertEquals(2, data.getLayers().size());
+        assertEquals(java.util.List.of("y=x", "y=x^2"), data.getLatexes());
+        assertTrue(data.getLatex().contains("\\&"), "title joins them with &: " + data.getLatex());
+        assertTrue(data.getYMin() <= -2 && data.getYMax() >= 4, "y fits both lines");
+        assertTrue(((CurvePlot) session.current()).getFunctions().size() == 2);
+    }
+
+    @Test
+    void traceSnapsOntoTheNearestOfTwoCurves() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("y=x", "y=x+10"), -5, 5, nan, nan, nan, nan));
+        CurvePlot plot = (CurvePlot) session.current();
+        assertEquals(11, plot.trace(1, 9, 0).getY(), 1e-9, "cursor near the upper line");
+        assertEquals(1, plot.trace(1, 2, 0).getY(), 1e-9, "cursor near the lower line");
+    }
+
+    @Test
+    void twoSurfacesShareOneBox() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("z=x+y", "z=x^2+y^2"), -2, 2, nan, nan, nan, nan));
+        assertNull(presenter.error);
+        SurfaceOutputData data = presenter.surface;
+        assertEquals(2, data.getLayers().size());
+        assertTrue(data.getZMin() <= -3.9 && data.getZMax() >= 7.9, "z fits both: " + data.getZMin() + ".." + data.getZMax());
+        assertEquals(8, data.getLayers().get(1)[0][0], 1e-9);
+    }
+
+    @Test
+    void aCurveAndASurfaceCantShareAGraph() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("y=x^2", "z=x+y"), -2, 2, nan, nan, nan, nan));
+        assertNull(presenter.curve);
+        assertNull(presenter.surface);
+        assertTrue(presenter.error.contains("can't share"), presenter.error);
+    }
+
+    @Test
     void xyzEquationIsGraphedAsAMeshInABoxItFills() {
         interactor.execute(new GraphFunctionInputData("x^2+y^2+z^2=1"));
         assertNull(presenter.error);
@@ -164,6 +235,24 @@ class GraphFunctionInteractorTest {
         interactor.execute(new GraphFunctionInputData("x^2-4=0"));
         assertTrue(presenter.error.startsWith("Cannot graph \"x^2-4=0\": Write the function explicitly"),
                 presenter.error);
+    }
+
+    @Test
+    void anXyzEquationGraphsOnItsOwn() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("z=x+y", "x^2+y^2+z^2=1"), -2, 2,
+                nan, nan, nan, nan));
+        assertNull(presenter.surface);
+        assertTrue(presenter.error.contains("on their own"), presenter.error);
+    }
+
+    @Test
+    void xyzEquationKeepsATypedZRange() {
+        double nan = GraphFunctionInputData.AUTOMATIC;
+        interactor.execute(new GraphFunctionInputData("x^2+y^2+z^2=1", -2, 2, nan, nan, -0.5, 0.5));
+        assertNull(presenter.error);
+        assertEquals(-0.5, presenter.surface.getZMin(), 1e-9);
+        assertEquals(0.5, presenter.surface.getZMax(), 1e-9);
     }
 
     @Test

@@ -43,6 +43,10 @@ final class GraphTheme {
 
     static final float ARC = 16f;
 
+    // several functions on one graph: the first (the one already there) green, the one added red, then more
+    private static final Color[] LAYERS = {
+            new Color(40, 180, 80), new Color(240, 60, 50), new Color(0, 122, 255), new Color(175, 82, 222)};
+
     private GraphTheme() {
     }
 
@@ -67,6 +71,28 @@ final class GraphTheme {
         Color b = SPEED[k + 1];
         return new Color(mix(a.getRed(), b.getRed(), f, 1), mix(a.getGreen(), b.getGreen(), f, 1),
                 mix(a.getBlue(), b.getBlue(), f, 1), alpha);
+    }
+
+    // function i's colour on a graph with several
+    static Color layer(int i) {
+        return LAYERS[Math.floorMod(i, LAYERS.length)];
+    }
+
+    // "#rrggbb" for the coloured title
+    static String hex(Color c) {
+        return String.format("#%02X%02X%02X", c.getRed(), c.getGreen(), c.getBlue());
+    }
+
+    // surface i in its own colour: a bit darker low down, lighter high up, light 0..1 shades it
+    static Color layerSurface(int i, double level, double light, int alpha) {
+        Color base = layer(i);
+        double t = Math.max(0, Math.min(1, level));
+        double l = Math.max(0, Math.min(1, light));
+        double up = 0.82 + 0.3 * t;              // < 1 darker, > 1 towards white
+        double toWhite = Math.max(0, up - 1);
+        double shade = l * Math.min(1, up);
+        return new Color(mix(base.getRed(), 255, toWhite, shade), mix(base.getGreen(), 255, toWhite, shade),
+                mix(base.getBlue(), 255, toWhite, shade), alpha);
     }
 
     // level 0..1 -> ramp colour, light 0..1 darkens it

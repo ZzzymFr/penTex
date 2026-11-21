@@ -30,7 +30,7 @@ public final class GraphCard extends PlotCard {
     private long revision = -1;
     // scene cache: rebuilt when the data, camera or size changes
     private SurfaceScene scene;
-    private double[][] sceneZ;
+    private Object sceneZ;   // the z grids the scene was cut from
     private double[][] sceneMesh;
     private int sceneCamera = -1;
     private double sceneW;
@@ -76,25 +76,15 @@ public final class GraphCard extends PlotCard {
     }
 
     @Override
-    String headerLatex() {
-        return viewModel.getState().getLatex();
-    }
-
-    @Override
-    String headerBadge() {
-        return GraphCardRenderer.badge(viewModel.getState());
-    }
-
-    @Override
     void paintCard(Graphics2D g, int hotButton) {
         GraphState s = viewModel.getState();
         if (s.getKind() != GraphState.Kind.SURFACE) {
             GraphCardRenderer.paint(g, s, getWidth(), getHeight(), camera, null, s.getTrace(), pinned, true,
-                    hotButton, headerControls());
+                    hotButton);
             return;
         }
         // 3d: the mesh is a picture from the render thread, edt only blits it + draws the cursor readout
-        GraphCardRenderer.paintLiveSurface(g, s, getWidth(), getHeight(), hotButton, headerControls(),
+        GraphCardRenderer.paintLiveSurface(g, s, getWidth(), getHeight(), hotButton,
                 (pg, plot, ui) -> {
                     BufferedImage picture = surfaces.picture(s, camera, plot, ui, deviceScale(pg));
                     if (picture != null) {
@@ -133,10 +123,10 @@ public final class GraphCard extends PlotCard {
         if (s.getKind() != GraphState.Kind.SURFACE) {
             return null;
         }
-        if (scene == null || sceneZ != s.getZ() || sceneMesh != s.getMesh() || sceneCamera != camera.version()
-                || sceneW != getWidth() || sceneH != getHeight()) {
+        if (scene == null || sceneZ != s.getZLayers() || sceneMesh != s.getMesh()
+                || sceneCamera != camera.version() || sceneW != getWidth() || sceneH != getHeight()) {
             scene = SurfaceScene.build(s, camera, plot());
-            sceneZ = s.getZ();
+            sceneZ = s.getZLayers();
             sceneMesh = s.getMesh();
             sceneCamera = camera.version();
             sceneW = getWidth();
@@ -190,7 +180,7 @@ public final class GraphCard extends PlotCard {
         if (xy == null) {
             endTrace();
         } else {
-            explore.trace(xy[0], xy[1], 0);
+            explore.trace(xy[0], xy[1], 0, (int) xy[2]);
         }
     }
 

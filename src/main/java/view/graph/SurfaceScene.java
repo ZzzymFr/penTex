@@ -26,6 +26,7 @@ final class SurfaceScene {
         double depth;
         double level;    // 0 bottom of the z range .. 1 top
         double light;
+        int layer;       // which surface, when several share the box
         Path2D.Double shape;
     }
 
@@ -73,13 +74,16 @@ final class SurfaceScene {
     }
 
     private void cut() {
-        cutGrid();
+        List<double[][]> layers = state.getZLayers();
+        for (int layer = 0; layer < layers.size(); layer++) {
+            cutGrid(layers.get(layer), layer);
+        }
         cutMesh();
         quads.sort(Comparator.comparingDouble(q -> q.depth));
     }
 
-    private void cutGrid() {
-        double[][] z = state.getZ();
+    // z = f(x, y) grid number layer (several surfaces can share the box)
+    private void cutGrid(double[][] z, int layer) {
         if (z == null || z.length < 2 || z[0].length < 2) {
             return;
         }
@@ -90,6 +94,7 @@ final class SurfaceScene {
         for (int i = 0; i < n - 1; i++) {
             for (int j = 0; j < m - 1; j++) {
                 Quad q = new Quad();
+                q.layer = layer;
                 boolean hole = false;
                 double zSum = 0;
                 for (int k = 0; k < 4 && !hole; k++) {
@@ -161,7 +166,7 @@ final class SurfaceScene {
         quads.add(q);
     }
 
-    // pixel -> {x, y} on the nearest quad under it, null if it's off the surface
+    // pixel -> {x, y, layer} on the nearest quad under it, null if it's off every surface
     double[] pick(double px, double py) {
         for (int k = quads.size() - 1; k >= 0; k--) {
             Quad q = quads.get(k);
@@ -175,7 +180,7 @@ final class SurfaceScene {
             if (hit == null) {
                 hit = new double[]{(q.wx[0] + q.wx[2]) / 2, (q.wy[0] + q.wy[2]) / 2};
             }
-            return hit;
+            return new double[]{hit[0], hit[1], q.layer};
         }
         return null;
     }

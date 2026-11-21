@@ -11,6 +11,7 @@ import view.graph.PhaseSnapshot;
 import javax.swing.JComponent;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
@@ -62,7 +63,8 @@ final class PopupPhasePortrait extends PopupCardTool<PhaseSession> {
         }
 
         @Override
-        void execute(String latex, double[] xRange, double[] yRange) {
+        void execute(List<String> latexes, double[] xRange, double[] yRange, double[] zRange) {
+            String latex = latexes.get(0);   // one equation per portrait
             asked = latex;
             kit.controller().execute(latex, xRange, yRange);
         }

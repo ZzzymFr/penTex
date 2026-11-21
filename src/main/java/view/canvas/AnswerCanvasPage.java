@@ -114,6 +114,8 @@ public class AnswerCanvasPage extends CanvasPage {
         sharedCanvas.addFormulaMoveListener(this::formulaMoved);
         sharedCanvas.addStrokeListener(this::strokeDone);
         sharedCanvas.addPickListener(this::picked);
+        sharedCanvas.addGraphDropHoverListener(this::draggingOverGraph);
+        sharedCanvas.addGraphDropListener(this::droppedOnGraph);
         sharedCanvas.addUserActionListener(this::dismiss);
         sharedCanvas.addPageSwitchListener(this::dismiss);
         sharedCanvas.addViewListener(this::placePopup);
@@ -567,6 +569,48 @@ public class AnswerCanvasPage extends CanvasPage {
         hidePopup();
         Rectangle world = getSharedCanvas().formulaBounds(capture.getId());
         graphing.graph(latex, world, capture);
+    }
+
+    // lassoed ink dragged over a card: light up a graph that can take it
+    private void draggingOverGraph(Object tag) {
+        if (graphing != null) {
+            graphing.showDropTarget(inFront() ? tag : null);
+        }
+        if (phase != null) {
+            phase.showDropTarget(inFront() ? tag : null);
+        }
+    }
+
+    // lassoed formula let go on a card: read it, then it joins that graph in its own colour
+    private void droppedOnGraph(Object tag) {
+        draggingOverGraph(null);
+        if (!inFront() || worker == null) {
+            return;
+        }
+        if (graphing == null || !graphing.owns(tag)) {
+            if (phase != null && phase.owns(tag)) {
+                notices.error("Can't add to a phase portrait", "Only 2D and 3D graphs can show a second function.");
+            }
+            return;
+        }
+        hidePopup();
+        FormulaCapture capture = getSharedCanvas().registerSelection();
+        if (capture == null) {
+            notices.error("Can't add to the graph", "Lasso one formula, then drag it onto the graph.");
+            return;
+        }
+        Read r = reads.get(capture.getId());
+        boolean known = r != null && r.revision == capture.getRevision();
+        worker.recognize(known ? () -> r.latex : () -> reader.read(capture), (latex, problem) -> {
+            if (problem != null) {
+                notices.error("Can't read formula", problem);
+                return;
+            }
+            reads.put(capture.getId(), new Read(capture.getRevision(), latex, null));
+            if (!graphing.addTo(tag, latex)) {
+                notices.error("Can't add to the graph", "That graph is gone.");
+            }
+        });
     }
 
     // Phase Portrait in the popup: same latex, no second read
