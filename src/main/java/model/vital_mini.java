@@ -71,6 +71,7 @@ public final class vital_mini implements AutoCloseable {
             loaded.close();
             throw e;
         }
+
     }
 
     public NDManager manager() { checkReady(); return runtime.manager(); }
