@@ -1,6 +1,7 @@
 import app.StackedAppBuilder;
 import data_access.VitalMiniFormulaRecognizer;
 import model.vital_mini;
+import app.log_writer;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -8,14 +9,25 @@ import javax.swing.UIManager;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.nio.file.Path;
+import java.time.LocalTime;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.logging.Level;
 
 public class app {
     // relative to the project root, which is where the app runs from (like the tokeniser path in vital_mini)
     public final vital_mini model = new vital_mini(Path.of("src", "main", "java", "model", "checkpoints", "model_ops.pt"));
     JFrame frame;
+    public log_writer writer;
 
     void init() throws Exception {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss");
+        String time = LocalDateTime.now().format(formatter);
+        Path log_path =  Path.of("","logs",time).toAbsolutePath() ;
+        writer = new log_writer(log_path.toString());
+        writer.log(Level.INFO, String.join("penTex starts running at" , time));
         model.init();
+        writer.log(Level.INFO, "Model init complete");
         SwingUtilities.invokeAndWait(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
