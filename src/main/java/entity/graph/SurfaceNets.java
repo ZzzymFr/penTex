@@ -189,16 +189,17 @@ public final class SurfaceNets {
     // all 4 cells past the same wall, it'd just be a flat skirt on that wall
     private boolean flatOnAWall(double[][] corners) {
         for (int a = 0; a < 3; a++) {
-            if (allAt(corners, a, low[a]) || allAt(corners, a, high[a])) {
+            double slack = (high[a] - low[a]) * 1e-9;   // averaged wall points can be an ulp off
+            if (allAt(corners, a, low[a], slack) || allAt(corners, a, high[a], slack)) {
                 return true;
             }
         }
         return false;
     }
 
-    private static boolean allAt(double[][] corners, int axis, double wall) {
+    private static boolean allAt(double[][] corners, int axis, double wall, double slack) {
         for (double[] c : corners) {
-            if (c[axis] != wall) {
+            if (Math.abs(c[axis] - wall) > slack) {
                 return false;
             }
         }
