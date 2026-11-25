@@ -135,6 +135,7 @@ public class DrawingCanvas extends JPanel {
     private final List<LongConsumer> moveListeners = new ArrayList<>();  // whole formula moved/resized, same ink
     private final List<Consumer<Stroke>> strokeListeners = new ArrayList<>();
     private final List<Runnable> inkListeners = new ArrayList<>();
+    private final List<Runnable> graphStateListeners = new ArrayList<>();
     private final List<Runnable> actionListeners = new ArrayList<>();  // user started doing something
     private final List<Runnable> viewListeners = new ArrayList<>();    // pan / zoom
     private final List<Runnable> pickListeners = new ArrayList<>();    // fresh lasso/box pick w/ ink
@@ -172,7 +173,10 @@ public class DrawingCanvas extends JPanel {
     // tags whose live card sits right on top of the slot, the screen skips their picture (export never does)
     private final Set<Object> coveredGraphs = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
-    /** One graph card. {@code tag} is its owner (a live graph view), null for a restored picture. */
+    /** A saved graph source awaiting reconstruction; never mistaken for a live card owner. */
+    private record SavedGraphDefinition(String encoded) { }
+
+    /** One graph card. The tag is its live owner, a pending saved source, or null for a picture. */
     private record GraphSlot(BufferedImage image, Rectangle2D card, double padding, Object tag) {
         GraphSlot withCard(Rectangle2D next) {
             return new GraphSlot(image, next, padding, tag);
@@ -455,6 +459,54 @@ public class DrawingCanvas extends JPanel {
         graphs.add(new GraphSlot(sharp, card, padding, tag));
         bringIntoView(formula == null ? card : card.createUnion(formula), card);
         repaint();
+        notifyGraphStateChanged();
+    }
+
+    /** Place a restored live graph under the History drag cursor (screen coordinates).
+     * Its tagged card is subsequently managed by the normal graph overlay, not a static Picture.
+     */
+    public void showGraphAt(BufferedImage image, Point screenTopLeft, Object tag) {
+        java.util.Objects.requireNonNull(image, "image");
+        java.util.Objects.requireNonNull(screenTopLeft, "screenTopLeft");
+        double w = Math.min(340, image.getWidth() / 2.0);
+        double h = w * image.getHeight() / Math.max(1.0, image.getWidth());
+        Point2D world = toWorld(screenTopLeft);
+        GraphSlot previous = slotOf(tag);
+        if (previous != null) graphs.remove(previous);
+        graphs.add(new GraphSlot(image, new Rectangle2D.Double(world.getX(), world.getY(),
+                Math.max(1, w / scale), Math.max(1, h / scale)), 0, tag));
+        repaint();
+        notifyGraphStateChanged();
+    }
+
+    /** Replace a saved graph's static placeholder only when the interactive reconstruction succeeds.
+     * World-space bounds preserve the exact saved location and dimensions across zoom levels.
+     */
+    public void showSavedGraph(BufferedImage image, Rectangle2D bounds,
+                               String encodedDefinition, Object liveTag) {
+        java.util.Objects.requireNonNull(image);
+        java.util.Objects.requireNonNull(bounds);
+        java.util.Objects.requireNonNull(encodedDefinition);
+        java.util.Objects.requireNonNull(liveTag);
+        for (int i = 0; i < graphs.size(); i++) {
+            GraphSlot old = graphs.get(i);
+            if (old.tag() instanceof SavedGraphDefinition saved
+                    && encodedDefinition.equals(saved.encoded()) && sameRectangle(old.card(), bounds)) {
+                graphs.set(i, new GraphSlot(image, (Rectangle2D) bounds.clone(), 0, liveTag));
+                repaint();
+                notifyGraphStateChanged();
+                return;
+            }
+        }
+        // A missing placeholder can occur if the graph was removed while its async calculation ran.
+        // Do not resurrect a deleted graph.
+    }
+
+    private static boolean sameRectangle(Rectangle2D a, Rectangle2D b) {
+        return Double.compare(a.getX(), b.getX()) == 0
+                && Double.compare(a.getY(), b.getY()) == 0
+                && Double.compare(a.getWidth(), b.getWidth()) == 0
+                && Double.compare(a.getHeight(), b.getHeight()) == 0;
     }
 
     // a second graph of the same formula would land exactly on the first: stack it underneath instead
@@ -497,6 +549,7 @@ public class DrawingCanvas extends JPanel {
         if (at >= 0) {
             graphs.set(at, next);
             repaint();
+            notifyGraphStateChanged();
         }
     }
 
@@ -509,6 +562,7 @@ public class DrawingCanvas extends JPanel {
             setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
         }
         repaint();
+        notifyGraphStateChanged();
     }
 
     /** Removes the newest graph card. */
@@ -557,7 +611,7 @@ public class DrawingCanvas extends JPanel {
     // who showed the newest card (null after a restore / clear, or for a plain picture)
     public Object getGraphTag() {
         GraphSlot slot = newest();
-        return slot == null ? null : slot.tag();
+        return slot == null || slot.tag() instanceof SavedGraphDefinition ? null : slot.tag();
     }
 
     // drag the newest card around, screen px, issue #45
@@ -623,7 +677,8 @@ public class DrawingCanvas extends JPanel {
     private Object graphTagAt(Point p) {
         for (int i = graphs.size() - 1; i >= 0; i--) {
             GraphSlot slot = graphs.get(i);
-            if (slot.tag() != null && toScreen(slot.card()).contains(p)) {
+            if (slot.tag() != null && !(slot.tag() instanceof SavedGraphDefinition)
+                    && toScreen(slot.card()).contains(p)) {
                 return slot.tag();
             }
         }
@@ -1392,6 +1447,13 @@ public class DrawingCanvas extends JPanel {
     public void addInkChangeListener(Runnable listener) {
         inkListeners.add(java.util.Objects.requireNonNull(listener));
     }
+    /** Graph edits (including camera-only changes) update the Save/Edited status. */
+    public void addGraphStateListener(Runnable listener) {
+        graphStateListeners.add(java.util.Objects.requireNonNull(listener));
+    }
+    public void notifyGraphStateChanged() {
+        fire(graphStateListeners);
+    }
     /** Snapshot only the deliberately selected strokes, not the whole canvas. */
     public List<Stroke> selectedInkSnapshot() {
         List<Stroke> selected = new ArrayList<>();
@@ -2114,8 +2176,11 @@ public class DrawingCanvas extends JPanel {
                 p.box.getX(), p.box.getY(), p.box.getWidth(), p.box.getHeight()));
         for (GraphSlot slot : graphs) {
             Rectangle2D c = slot.card();
+            String definition = slot.tag() instanceof CanvasGraphSource live
+                    ? live.graphDefinition()
+                    : slot.tag() instanceof SavedGraphDefinition saved ? saved.encoded() : "";
             assets.add(new CanvasState.Asset("", "", png(slot.image()), c.getX(), c.getY(),
-                    c.getWidth(), c.getHeight(), true));
+                    c.getWidth(), c.getHeight(), true, definition));
         }
         return new CanvasState(ink, formulas, assets, scale, originX, originY);
     }
@@ -2171,7 +2236,9 @@ public class DrawingCanvas extends JPanel {
             BufferedImage image = ImageIO.read(new ByteArrayInputStream(asset.png()));
             if (image == null) throw new IOException("Unrecognizable saved image");
             Rectangle2D rectangle = new Rectangle2D.Double(asset.x(),asset.y(),asset.width(),asset.height());
-            if (asset.graph()) restoredGraphs.add(new GraphSlot(image, rectangle, 0, null));
+            if (asset.graph()) restoredGraphs.add(new GraphSlot(image, rectangle, 0,
+                    asset.graphDefinition().isEmpty() ? null
+                            : new SavedGraphDefinition(asset.graphDefinition())));
             else restoredAssets.add(new Picture(image,rectangle,asset.latex(),asset.result()));
         }
         fire(actionListeners);
@@ -2182,7 +2249,8 @@ public class DrawingCanvas extends JPanel {
         history.clear();redoHistory.clear();strokeWidths.clear();
         strokeWidths.putAll(restoredWidths);
         selectedPicture = null;selectedPictures.clear();selection.clear();selectedAnswers.clear();
-        currentStroke = null;graphs.clear();graphs.addAll(restoredGraphs);overGraphClose = null;
+        currentStroke = null;graphs.clear();graphs.addAll(restoredGraphs);
+        coveredGraphs.clear();overGraphClose = null;
         scale = state.zoom();originX = state.offsetX();originY = state.offsetY();
         repaint();fire(inkListeners);fire(viewListeners);
     }

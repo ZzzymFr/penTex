@@ -52,12 +52,20 @@ public record CanvasState(List<Ink> ink, List<Formula> formulas, List<Asset> ass
     }
     /** Image may be a graph or Math/History import; source LaTeX is retained for editing. */
     public record Asset(String latex, String result, byte[] png,
-                        double x, double y, double width, double height, boolean graph) {
+                        double x, double y, double width, double height, boolean graph, String graphDefinition) {
         public Asset(String latex, String result, byte[] png,
                      double x, double y, double width, double height) {
-            this(latex, result, png, x, y, width, height, false);
+            this(latex, result, png, x, y, width, height, false, "");
+        }
+        /** Older/PNG-only assets remain valid and display as static cards. */
+        public Asset(String latex, String result, byte[] png,
+                     double x, double y, double width, double height, boolean graph) {
+            this(latex, result, png, x, y, width, height, graph, "");
         }
         public Asset {
+            graphDefinition = Objects.requireNonNull(graphDefinition);
+            if ((!graph && !graphDefinition.isEmpty()) || graphDefinition.length() > 50_000)
+                throw new IllegalArgumentException("Invalid interactive graph metadata");
             latex = Objects.requireNonNull(latex);
             result = Objects.requireNonNull(result);
             png = Objects.requireNonNull(png).clone();

@@ -36,6 +36,36 @@ public final class PdfPageCanvas extends JPanel {
     private final PdfEditorController controller;
     private final Listener listener;
     private final PageZoomModel zoomModel = new PageZoomModel();
+    private InteractiveGraphLayer graphs;
+    /** Sessions are injected from the composition root, never constructed in this view. */
+    public void setGraphSessions(java.util.function.Supplier<view.canvas.GraphSession> sessions) {
+        graphs = new InteractiveGraphLayer(this, controller, sessions);
+        refreshInteractiveGraphs();
+    }
+    public void refreshInteractiveGraphs() {
+        if (graphs != null) graphs.refresh();
+    }
+    public void prepareGraphSnapshots(Runnable completed, java.util.function.Consumer<String> failed) {
+        if (graphs == null) completed.run();
+        else graphs.prepareSnapshots(completed, failed);
+    }
+    boolean isTextEditorShowing() { return inlineNote != null || inlineBody != null; }
+
+    /** A selected live GraphCard consumes mouse events; forward its native popup menu
+     * to the same PDF command listener used by regular Library materials. */
+    void graphContextMenu(String id, MouseEvent mouse) {
+        controller.select(id);
+        listener.contextMenu(SwingUtilities.convertMouseEvent(mouse.getComponent(), mouse, this));
+        refreshInteractiveGraphs();
+        repaint();
+    }
+    Rectangle graphScreenBounds(PdfDocument.Placement item) {
+        double z = zoom();
+        return new Rectangle(MARGIN + (int)Math.round(item.x() * z),
+                MARGIN + (int)Math.round(item.y() * z),
+                Math.max(1,(int)Math.round(item.width() * z)),
+                Math.max(1,(int)Math.round(item.height() * z)));
+    }
     public double zoom() { return zoomModel.zoom(); }
     public double setZoom(double zoom) {
         finishInlineEdit();
@@ -45,6 +75,7 @@ public final class PdfPageCanvas extends JPanel {
             PdfDocument.Placement note = controller.selected();
             if (note != null) positionInlineEditor(note);
         }
+        refreshInteractiveGraphs();
         revalidate(); repaint();
         return zoomModel.zoom();
     }
@@ -57,6 +88,20 @@ public final class PdfPageCanvas extends JPanel {
         double z = zoom();
         setPreferredSize(new Dimension((int)Math.ceil(PdfDocument.PAGE_WIDTH * z) + MARGIN * 2,
                 (int)Math.ceil(PdfDocument.PAGE_HEIGHT * z) + MARGIN * 2));
+    }
+    /** The drag outline and placed Graph use the same page coordinates and dimensions. */
+    public Rectangle interactiveGraphPreviewBounds(Point pointerOnPage, double aspectRatio) {
+        // Exactly the same dimensions used by DocEditorPanel when the item is placed.
+        GraphPlacementSizing.Size size = GraphPlacementSizing.forAspect(aspectRatio);
+        double w = size.width();
+        double h = size.height();
+        double zoom = zoom();
+        double x = Math.min(PdfDocument.PAGE_WIDTH - w, Math.max(0, pageX(pointerOnPage.x)));
+        double y = Math.min(PdfDocument.PAGE_HEIGHT - h, Math.max(0, pageY(pointerOnPage.y)));
+        return new Rectangle(MARGIN + (int) Math.round(x * zoom),
+                MARGIN + (int) Math.round(y * zoom),
+                Math.max(1, (int) Math.round(w * zoom)),
+                Math.max(1, (int) Math.round(h * zoom)));
     }
     public float pageX(int screenX) { return toPageX(screenX); }
     public float pageY(int screenY) { return toPageY(screenY); }
@@ -407,6 +452,7 @@ public final class PdfPageCanvas extends JPanel {
         selectionBoxStart = null; selectionBoxEnd = null;
         lassoScreenPath.clear();
         anchor = null;
+        refreshInteractiveGraphs();
         repaint();
     }
     private void refreshErasePreview() {
@@ -503,6 +549,7 @@ public final class PdfPageCanvas extends JPanel {
     }
 
     public PdfPageCanvas(PdfEditorController controller, Listener listener) {
+        setLayout(null);
         this.controller = Objects.requireNonNull(controller);
         this.listener = Objects.requireNonNull(listener);
         updateSize();
@@ -549,6 +596,7 @@ public final class PdfPageCanvas extends JPanel {
                             : 100f;
                     if (itemHeight > 575f) { itemWidth *= 575f / itemHeight; itemHeight = 575f; }
                     controller.place(material, toPageX(location.x), toPageY(location.y), itemWidth, itemHeight);
+                    refreshInteractiveGraphs();
                     repaint(); return true;
                 } catch (Exception ignored) { return false; }
             }
@@ -599,6 +647,7 @@ public final class PdfPageCanvas extends JPanel {
                     if (SwingUtilities.isLeftMouseButton(e)) anchor = e.getPoint();
                 }
                 if (e.isPopupTrigger()) listener.contextMenu(e);
+                refreshInteractiveGraphs();
                 repaint();
             }
             @Override public void mouseDragged(MouseEvent e) {
@@ -623,6 +672,7 @@ public final class PdfPageCanvas extends JPanel {
                     controller.transformGroup(groupDragOriginal, dx, dy);
                 } else if (resizing) controller.transform(oldX, oldY, oldW + dx, oldH + dy);
                 else controller.transform(oldX + dx, oldY + dy, oldW, oldH);
+                refreshInteractiveGraphs();
                 repaint();
             }
             @Override public void mouseReleased(MouseEvent e) {
@@ -711,9 +761,14 @@ public final class PdfPageCanvas extends JPanel {
 
     @Override protected void paintChildren(Graphics graphics) {
         super.paintChildren(graphics);
+        // The child GraphCard is intentionally interactive, but Swing paints all
+        // children over paintComponent. Recompose only the layers that belong above
+        // the card, clipped to its bounds, so Arrange and Front/Behind/Wrap match
+        // the PDF preview and the exported document.
+        PdfDocument.Placement liveGraph = graphs == null ? null : graphs.visiblePlacement();
+        if (liveGraph != null) paintAboveLiveGraph(graphics, liveGraph);
         if (inlineBody == null) return;
-        // Swing children normally paint above the parent; redraw just the
-        // foreground media so text typed behind a picture cannot cover it.
+        // Existing body-editor behavior: typed text belongs behind foreground media.
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.translate(MARGIN, MARGIN);
@@ -722,6 +777,43 @@ public final class PdfPageCanvas extends JPanel {
             for (PdfDocument.Placement p : controller.placements())
                 if (!p.isNote() && p.imageLayer() != PdfDocument.ImageLayer.BEHIND_TEXT)
                     paintPlacement(g, p);
+        } finally { g.dispose(); }
+    }
+
+    private void paintAboveLiveGraph(Graphics graphics, PdfDocument.Placement graph) {
+        Graphics2D g = (Graphics2D) graphics.create();
+        try {
+            Rectangle visible = graphScreenBounds(graph);
+            g.clipRect(visible.x, visible.y, visible.width, visible.height);
+            g.translate(MARGIN, MARGIN);
+            g.scale(zoom(), zoom());
+            g.translate(-MARGIN, -MARGIN);
+            List<PdfDocument.Placement> items = controller.placements();
+            for (PdfDocument.Placement p : PdfGraphStacking.behindAbove(items, graph))
+                paintPlacement(g, p);
+            if (PdfGraphStacking.bodyAbove(graph) && !controller.body().isEmpty()) {
+                var body = PdfBodyFlowLayout.displayNote(controller.body());
+                double scale = Math.max(1.0, zoom() * Math.max(1.0,
+                        g.getDeviceConfiguration().getDefaultTransform().getScaleX()));
+                int w = Math.min(3200, (int)Math.ceil(body.width()*scale));
+                int h = Math.min(3200, (int)Math.ceil(body.height()*scale));
+                g.drawImage(PdfWrapTextLayout.render(controller.body(), items, w, h),
+                        Math.round(body.x())+MARGIN, Math.round(body.y())+MARGIN,
+                        Math.round(body.width()), Math.round(body.height()), null);
+            }
+            for (PdfDocument.Placement p : PdfGraphStacking.foregroundAbove(items, graph)) {
+                if (p.isNote()) {
+                    int x = Math.round(p.x()) + MARGIN, y = Math.round(p.y()) + MARGIN;
+                    int w = Math.max(8, Math.round(p.width()));
+                    int h = Math.max(8, Math.round(p.height()));
+                    double deviceScale = Math.max(1.0, zoom() * Math.max(1.0,
+                            g.getDeviceConfiguration().getDefaultTransform().getScaleX()));
+                    int rasterWidth = Math.min(3200, (int)Math.ceil(p.width() * deviceScale));
+                    int rasterHeight = Math.min(3200, (int)Math.ceil(p.height() * deviceScale));
+                    g.drawImage(NoteRenderer.render(p, Math.max(8, rasterWidth), Math.max(8, rasterHeight)),
+                            x, y, w, h, null);
+                } else paintPlacement(g, p);
+            }
         } finally { g.dispose(); }
     }
 

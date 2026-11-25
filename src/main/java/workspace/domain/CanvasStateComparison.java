@@ -28,11 +28,14 @@ public final class CanvasStateComparison {
             var a = before.assets().get(i);
             var b = after.assets().get(i);
             if (!Objects.equals(a.latex(), b.latex()) || !Objects.equals(a.result(), b.result())
-                    || a.graph() != b.graph() || Double.compare(a.x(), b.x()) != 0
+                    || a.graph() != b.graph() || !a.graphDefinition().equals(b.graphDefinition())
+                    || Double.compare(a.x(), b.x()) != 0
                     || Double.compare(a.y(), b.y()) != 0
                     || Double.compare(a.width(), b.width()) != 0
                     || Double.compare(a.height(), b.height()) != 0
-                    || !Arrays.equals(a.png(), b.png())) return false;
+                    // Generated thumbnails can finish asynchronously after Save; native graph
+                    // equality is determined by its source, viewport, camera and placement.
+                    || (a.graphDefinition().isEmpty() && !Arrays.equals(a.png(), b.png()))) return false;
         }
         return true;
     }

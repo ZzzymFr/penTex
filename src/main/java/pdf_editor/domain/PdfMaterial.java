@@ -1,6 +1,7 @@
 package pdf_editor.domain;
 
 import java.util.Objects;
+import entity.graph.GraphDefinition;
 import java.util.UUID;
 
 /** Immutable domain value representing a typeset formula, result, or image. No Swing/PDFBox dependency. */
@@ -12,14 +13,25 @@ public class PdfMaterial {
     private final byte[] imagePng;
     private final int imageWidth;
     private final int imageHeight;
+    private final GraphDefinition graphDefinition;
 
     protected PdfMaterial(String title, String formula, String result,
                           byte[] imagePng, int imageWidth, int imageHeight) {
-        this(UUID.randomUUID().toString(), title, formula, result, imagePng, imageWidth, imageHeight);
+        this(UUID.randomUUID().toString(), title, formula, result, imagePng, imageWidth, imageHeight, null);
     }
 
     protected PdfMaterial(String id, String title, String formula, String result,
                           byte[] imagePng, int imageWidth, int imageHeight) {
+        this(id, title, formula, result, imagePng, imageWidth, imageHeight, null);
+    }
+    protected PdfMaterial(String title, String formula, String result,
+                          byte[] imagePng, int imageWidth, int imageHeight,
+                          GraphDefinition definition) {
+        this(UUID.randomUUID().toString(), title, formula, result, imagePng, imageWidth, imageHeight, definition);
+    }
+    protected PdfMaterial(String id, String title, String formula, String result,
+                          byte[] imagePng, int imageWidth, int imageHeight,
+                          GraphDefinition definition) {
         this.id = Objects.requireNonNull(id, "id");
         this.title = Objects.requireNonNull(title, "title");
         this.formula = formula == null ? "" : formula;
@@ -27,6 +39,9 @@ public class PdfMaterial {
         this.imagePng = imagePng == null ? null : imagePng.clone();
         this.imageWidth = imageWidth;
         this.imageHeight = imageHeight;
+        this.graphDefinition = definition;
+        if (definition != null && imagePng == null)
+            throw new IllegalArgumentException("Interactive graph requires a static thumbnail fallback");
         if (imagePng != null && (imageWidth <= 0 || imageHeight <= 0))
             throw new IllegalArgumentException("Invalid image dimensions");
     }
@@ -65,6 +80,13 @@ public class PdfMaterial {
     public final String formula() { return formula; }
     public final String result() { return result; }
     public final boolean isGraph() { return imagePng != null; }
+    public final boolean isInteractiveGraph() { return graphDefinition != null; }
+    public final GraphDefinition graphDefinition() { return graphDefinition; }
+    /** Keep the original graph source when its current high-resolution view is exported. */
+    public final PdfMaterial withGraphSnapshot(byte[] png, int width, int height) {
+        if (graphDefinition == null) throw new IllegalStateException("Not an interactive graph");
+        return new PdfMaterial(id, title, formula, result, png, width, height, graphDefinition);
+    }
     public final int imageWidth() { return imageWidth; }
     public final int imageHeight() { return imageHeight; }
     public final byte[] imagePng() { return imagePng == null ? null : imagePng.clone(); }

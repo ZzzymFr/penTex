@@ -57,11 +57,17 @@ public final class HistoryInteractor {
         return saved;
     }
 
-    /** Graph source formula and original PNG are stored together, not as duplicate cards. */
+    /** A thumbnail is retained for History; the optional definition restores a live plot. */
     public boolean recordGraph(String source, byte[] png, int width, int height) throws IOException {
+        return recordGraph(source, png, width, height, null);
+    }
+    public boolean recordGraph(String source, byte[] png, int width, int height,
+                               String graphDefinition) throws IOException {
         if (png == null) return false;
-        boolean saved = repository.saveIfAbsent(newEntry(HistoryEntry.Kind.GRAPH, "Graph",
-                source == null ? "" : source.trim(), "", png, width, height));
+        boolean saved = repository.saveIfAbsent(new HistoryEntry(
+                UUID.randomUUID().toString(), HistoryEntry.Kind.GRAPH, "Graph",
+                source == null ? "" : source.trim(), "", png, width, height,
+                clock.instant(), graphDefinition));
         if (saved) changed();
         return saved;
     }

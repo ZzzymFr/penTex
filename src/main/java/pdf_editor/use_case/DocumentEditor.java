@@ -153,6 +153,21 @@ public final class DocumentEditor {
         document.add(page, p);
         return p;
     }
+    /** A live GraphCard's picture is derived output, not a separate user edit/Undo step.
+     * The placement ID, layout, stacking and source graph definition are preserved.
+     */
+    public boolean updateGraphSnapshot(String placementId, byte[] png, int width, int height) {
+        Objects.requireNonNull(placementId, "placementId");
+        for (int page = 0; page < document.pageCount(); page++) {
+            PdfDocument.Placement item = document.find(page, placementId);
+            if (item != null && !item.isNote() && item.material().isInteractiveGraph()) {
+                document.replace(page, item.withMaterial(item.material().withGraphSnapshot(png, width, height)));
+                return true;
+            }
+        }
+        return false;
+    }
+
     public PdfDocument.Placement addNote(int page, String text, float x, float y) {
         validatePage(page);
         PdfDocument.Placement p = PdfDocument.Placement.note(text,

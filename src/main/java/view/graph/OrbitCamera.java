@@ -31,6 +31,14 @@ final class OrbitCamera {
         return c;
     }
 
+    void restore(double yaw, double pitch) {
+        if (!Double.isFinite(yaw) || !Double.isFinite(pitch))
+            throw new IllegalArgumentException("Invalid 3D camera orientation");
+        this.yaw = yaw;
+        this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, pitch));
+        version++;
+    }
+
     void reset() {
         yaw = DEFAULT_YAW;
         pitch = DEFAULT_PITCH;

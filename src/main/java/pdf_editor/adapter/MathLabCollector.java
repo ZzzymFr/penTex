@@ -46,6 +46,16 @@ public final class MathLabCollector {
                 library.addSourceCalculation(sourceId, latex, result == null ? "" : result);
             });
     }
+    /** Save one new native graph. History/Library thumbnails are not its interactive data. */
+    public void acceptInteractiveGraph(entity.graph.GraphDefinition definition, BufferedImage image) {
+        if (definition == null || image == null) return;
+        onEdt(() -> {
+            MathLibrary.Material material = library.addInteractiveGraph(definition, image);
+            String encoded = interface_adapter.graph.GraphDefinitionCodec.encode(definition);
+            persist(() -> history.recordGraph(definition.functions().get(0), material.imagePng(),
+                    material.imageWidth(), material.imageHeight(), encoded));
+        });
+    }
     public void acceptGraph(String title, BufferedImage image) {
         if (image != null) onEdt(() -> {
             MathLibrary.Material material = library.addGraph(title == null ? "Graph" : title, image);

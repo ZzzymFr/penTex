@@ -50,6 +50,9 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
 
     private final PdfEditorController controller;
     private FormulaRevisionCoordinator formulaRevision;
+    public void setGraphSessions(Supplier<view.canvas.GraphSession> sessions) {
+        paper.setGraphSessions(sessions);
+    }
     public void setFormulaEditing(FormulaRevisionCoordinator actions) {
         formulaRevision = Objects.requireNonNull(actions);
     }
@@ -479,6 +482,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     }
     private void updateStatus() {
         pageCount.setText("Page " + (controller.currentPage() + 1) + " of " + controller.pageCount());
+        paper.refreshInteractiveGraphs();
         paper.repaint();
     }
     private void changePage(int target) {
@@ -510,13 +514,40 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         int h = pageScroll.getViewport().getHeight();
         if (w > 0 && h > 0) zoom(paper.fitZoom(w, h));
     }
+    @Override public Rectangle interactiveGraphPreviewBounds(Point cursorOnScreen, double aspectRatio) {
+        if (!paper.isShowing()) return null;
+        Point onPage = new Point(cursorOnScreen);
+        SwingUtilities.convertPointFromScreen(onPage, paper);
+        Rectangle pageBounds = paper.interactiveGraphPreviewBounds(onPage, aspectRatio);
+        Point at = pageBounds.getLocation();
+        SwingUtilities.convertPointToScreen(at, paper);
+        return new Rectangle(at.x, at.y, pageBounds.width, pageBounds.height);
+    }
+
+    /** A cross-divider Graph copy publishes one reusable Library thumbnail and one live PDF placement. */
+    @Override public boolean dropInteractiveGraph(entity.graph.GraphDefinition definition,
+                                                   BufferedImage thumbnail, Point cursorOnScreen) {
+        Objects.requireNonNull(definition);
+        Objects.requireNonNull(thumbnail);
+        Point spot = new Point(cursorOnScreen);
+        if (paper.isShowing()) SwingUtilities.convertPointFromScreen(spot, paper);
+        MathLibrary.Material material = library.addInteractiveGraph(definition, thumbnail);
+        addMaterial(material, paper.isShowing() ? Math.max(0, paper.pageX(spot.x)) : 75,
+                paper.isShowing() ? Math.max(0, paper.pageY(spot.y)) : 108);
+        showLibrary();
+        return true;
+    }
+
     private void addMaterial(PdfMaterial material, float x, float y) {
         // Imported History must be clickable immediately: an active JTextPane
         // otherwise remains above the page and intercepts mouse input.
         paper.finishInlineEdit();
-        float w = material.isGraph() ? 280 : 320;
-        float h = material.isGraph() ? Math.max(65, w * material.imageHeight() / Math.max(1f, material.imageWidth())) : 90;
-        if (h > 600) {w *= 600f / h;h = 600;}
+        pdf_editor.view.GraphPlacementSizing.Size graphSize = material.isGraph()
+                ? pdf_editor.view.GraphPlacementSizing.forImage(
+                        Math.max(1, material.imageWidth()), Math.max(1, material.imageHeight()))
+                : null;
+        float w = graphSize != null ? graphSize.width() : 320;
+        float h = graphSize != null ? graphSize.height() : 90;
         controller.place(material, x, y, w, h);
         updateStatus();
     }
@@ -793,16 +824,18 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         menu.addAction(title, action);
     }
     private void preview() {
-        try {
-            List<pdf_editor.domain.PdfPreviewPage> previews = controller.preview();
-            if (previews.isEmpty()) return;
-            java.util.List<BufferedImage> pages = new java.util.ArrayList<>();
-            for (var preview : previews) {
-                BufferedImage image = ImageIO.read(new ByteArrayInputStream(preview.png()));
-                if (image != null) pages.add(image);
-            }
-            if (!pages.isEmpty()) WordPreviewDialog.show(this, pages);
-        } catch (IOException bad) {error("Preview failed", bad);}
+        paper.prepareGraphSnapshots(() -> {
+            try {
+                List<pdf_editor.domain.PdfPreviewPage> previews = controller.preview();
+                if (previews.isEmpty()) return;
+                java.util.List<BufferedImage> pages = new java.util.ArrayList<>();
+                for (var preview : previews) {
+                    BufferedImage image = ImageIO.read(new ByteArrayInputStream(preview.png()));
+                    if (image != null) pages.add(image);
+                }
+                if (!pages.isEmpty()) WordPreviewDialog.show(this, pages);
+            } catch (IOException bad) { error("Preview failed", bad); }
+        }, problem -> GlassDialogs.error(this, "Graph preview failed: " + problem));
     }
     private void export() {
         JFileChooser chooser = new JFileChooser();chooser.setDialogTitle("Export PDF");
@@ -813,8 +846,13 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
             target = Path.of(target.toString() + ".pdf");
         if (java.nio.file.Files.exists(target) && !GlassDialogs.confirm(this,
                 "Confirm export", "Replace existing file?", "Replace")) return;
-        try {controller.export(target);title.setText(target.getFileName().toString());}
-        catch (IOException bad) {error("Export failed", bad);}
+        final Path output = target;
+        paper.prepareGraphSnapshots(() -> {
+            try {
+                controller.export(output);
+                title.setText(output.getFileName().toString());
+            } catch (IOException bad) { error("Export failed", bad); }
+        }, problem -> GlassDialogs.error(this, "Graph export failed: " + problem));
     }
     private void error(String message, Exception e) {GlassDialogs.error(this, message + ": " + e.getMessage());}
     private final class Tab {

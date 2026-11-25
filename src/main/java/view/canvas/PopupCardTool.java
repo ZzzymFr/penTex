@@ -51,6 +51,7 @@ abstract class PopupCardTool<K> {
     private final JComponent area;
     private final BiConsumer<FormulaCapture, String> saved;
     private final Supplier<K> kits;
+    private Supplier<K> restoreKits;
     private final ExecutorService executor;
     private final String failTitle;
     private final String progressText;
@@ -66,6 +67,7 @@ abstract class PopupCardTool<K> {
                   String progressText, String successText) {
         this.canvas = canvas;
         this.kits = Objects.requireNonNull(kits);
+        this.restoreKits = kits;
         this.notices = notices;
         this.area = area;
         this.saved = Objects.requireNonNull(saved);
@@ -100,6 +102,10 @@ abstract class PopupCardTool<K> {
 
     // a kit -> its live card, per tool
     abstract Live newLive(K kit);
+    /** Restore sessions are quiet: opening an archived graph never republishes it to History. */
+    void setRestoreKits(Supplier<K> restoreKits) {
+        this.restoreKits = Objects.requireNonNull(restoreKits);
+    }
 
     /** The page decides where cards go (under its docks); set before the first graph. */
     void setLayers(Layers layers) {
@@ -137,6 +143,63 @@ abstract class PopupCardTool<K> {
         this.onShown = onShown == null ? () -> { } : onShown;
     }
 
+    /** Restore a saved native graph at a precise Canvas location instead of importing its PNG. */
+    void restore(List<String> functions, double[] xRange, double[] yRange, double[] zRange,
+                 java.awt.Point canvasPosition, entity.graph.GraphDefinition.Camera camera) {
+        if (functions == null || functions.isEmpty()) throw new IllegalArgumentException("No graph functions");
+        Live live = newLive(restoreKits.get());
+        lives.add(live);
+        layers.underlay(live.card);
+        layers.overlay(live.ranges);
+        layers.overlay(live.ranges.panel());
+        latest = live;
+        live.restoring = true;
+        live.newGraph = false;
+        live.pendingCapture = null;
+        live.lastFormula = null;
+        live.pendingCanvasPosition = new java.awt.Point(canvasPosition);
+        live.pendingCamera = camera;
+        live.startWithRanges(functions, xRange, yRange, zRange);
+    }
+
+    /** Rebuild a native saved Graph into its original world bounds, initially leaving its
+     * PNG placeholder visible until the new computation succeeds.
+     */
+    void restoreSaved(List<String> functions, double[] xRange, double[] yRange, double[] zRange,
+                      java.awt.geom.Rectangle2D bounds, String encodedDefinition,
+                      entity.graph.GraphDefinition.Camera camera) {
+        Live live = newLive(restoreKits.get());
+        lives.add(live);
+        layers.underlay(live.card);
+        layers.overlay(live.ranges);
+        layers.overlay(live.ranges.panel());
+        latest = live;
+        live.restoring = true;
+        live.newGraph = false;
+        live.pendingSavedBounds = (java.awt.geom.Rectangle2D) bounds.clone();
+        live.savedDefinition = encodedDefinition;
+        live.pendingCamera = camera;
+        live.startWithRanges(functions, xRange, yRange, zRange);
+    }
+
+    /** Discard cards from a previous saved document, including work still calculating. */
+    void clearLives() {
+        for (Live live : lives) {
+            live.discarded = true;
+            live.snapshotLater.stop();
+            live.ranges.hideAll();
+            live.drawing.run();
+            for (JComponent component : new JComponent[]{live.card, live.ranges, live.ranges.panel()}) {
+                java.awt.Container container = component.getParent();
+                if (container != null) { container.remove(component); container.repaint(); }
+            }
+        }
+        lives.clear();
+        latest = null;
+        area.revalidate();
+        area.repaint();
+    }
+
     void run(String latex, Rectangle formulaWorld, FormulaCapture capture) {
         Live live = liveForNewGraph();
         live.ranges.resetToDefault();   // a new graph starts on Auto, not on the last one's window
@@ -145,6 +208,8 @@ abstract class PopupCardTool<K> {
             presetRange = null;
         }
         latest = live;
+        live.restoring = false;
+        live.newGraph = true;
         live.pendingCapture = capture;
         live.lastFormula = formulaWorld;
         live.start(List.of(latex), formulaWorld, false, false);
@@ -219,6 +284,13 @@ abstract class PopupCardTool<K> {
         private List<String> asked = List.of();       // what the run under way will show
         private Rectangle lastFormula;       // world coords
         private Rectangle pending;           // where the card goes when the answer comes back
+        private java.awt.Point pendingCanvasPosition; // explicit History drop position
+        private entity.graph.GraphDefinition.Camera pendingCamera;
+        private java.awt.geom.Rectangle2D pendingSavedBounds;
+        private String savedDefinition;
+        private boolean discarded;
+        private boolean restoring;
+        private boolean newGraph;
         private boolean rerun;               // new range from the panel: keep the card where it is
         private volatile boolean busy;
         private double[] shownWindow;        // last window shown on the range tag
@@ -263,6 +335,9 @@ abstract class PopupCardTool<K> {
 
         abstract BufferedImage firstPicture();
 
+        /** Called exactly once for a successful new graph, never when restoring/reranging. */
+        void publishedNew(BufferedImage image) { }
+
         String sourceLatex() {
             return latex();
         }
@@ -288,15 +363,23 @@ abstract class PopupCardTool<K> {
         }
 
         private void start(List<String> latexes, Rectangle formulaWorld, boolean again, boolean refitY) {
-            double[] x = ranges.range("x");
-            double[] y = refitY && followsY() ? null : ranges.range("y");
-            double[] z = ranges.range("z");
+            startWork(latexes, formulaWorld, again, refitY && followsY() ? null : ranges.range("y"),
+                    ranges.range("x"), ranges.range("z"));
+        }
+        private void startWithRanges(List<String> latexes, double[] x, double[] y, double[] z) {
+            startWork(latexes, null, false, y, x, z);
+        }
+        private void startWork(List<String> latexes, Rectangle formulaWorld, boolean again,
+                               double[] y, double[] x, double[] z) {
             asked = List.copyOf(latexes);
             pending = formulaWorld;
             rerun = again;
             busy = true;
             drawing.run();
-            drawing = notices.progress(progressText, latexes.get(latexes.size() - 1));
+            // Opening a saved workspace is not a new user action: do not emit a
+            // progress toast for each restored 2D/3D graph.
+            drawing = restoring ? () -> { }
+                    : notices.progress(progressText, latexes.get(latexes.size() - 1));
             executor.execute(() -> {
                 try {
                     execute(latexes, x, y, z);
@@ -305,7 +388,8 @@ abstract class PopupCardTool<K> {
                     SwingUtilities.invokeLater(() -> {
                         busy = false;
                         drawing.run();
-                        notices.error(failTitle, reason);
+                        if (!restoring) notices.error(failTitle, reason);
+                        else System.err.println("Graph restoration failed: " + reason);
                     });
                 }
             });
@@ -313,34 +397,53 @@ abstract class PopupCardTool<K> {
 
         // view model said STATE: brand new card or an error
         final void stateChanged() {
-            SwingUtilities.invokeLater(this::show);
+            if (!discarded) SwingUtilities.invokeLater(this::show);
         }
 
         // view model said VIEW: pan / zoom / trace
         final void viewChanged() {
-            SwingUtilities.invokeLater(() -> syncRangeText(true));
+            if (!discarded) SwingUtilities.invokeLater(() -> syncRangeText(true));
         }
 
         private void show() {
+            if (discarded) return;
             busy = false;
             drawing.run();
             if (error() != null) {
-                notices.error(failTitle, error());
+                if (!restoring) notices.error(failTitle, error());
+                else System.err.println("Graph restoration failed: " + error());
             } else if (hasContent()) {
+                BufferedImage picture = firstPicture();
                 if (rerun && onCanvas()) {
-                    canvas.getDrawingCanvas().replaceGraphImage(this, firstPicture());
+                    canvas.getDrawingCanvas().replaceGraphImage(this, picture);
                 } else {
-                    canvas.getDrawingCanvas().showGraph(firstPicture(), pending, this);
+                    if (pendingSavedBounds != null) {
+                        canvas.getDrawingCanvas().showSavedGraph(picture, pendingSavedBounds,
+                                savedDefinition, this);
+                        pendingSavedBounds = null;
+                        savedDefinition = null;
+                    } else if (pendingCanvasPosition != null) {
+                        canvas.getDrawingCanvas().showGraphAt(picture, pendingCanvasPosition, this);
+                        pendingCanvasPosition = null;
+                    } else canvas.getDrawingCanvas().showGraph(picture, pending, this);
                 }
                 rerun = false;
                 functions = asked;
+                if (pendingCamera != null) {
+                    restoreCamera(pendingCamera);
+                    pendingCamera = null;
+                }
                 // Explicit, successful run is the publication boundary for formula-only material.
                 // Re-running a range does not create duplicates: the source revision is tracked by the page.
                 if (pendingCapture != null && functions.size() == 1
                         && Objects.equals(functions.get(0), sourceLatex())) {
                     saved.accept(pendingCapture, functions.get(0));
                 }
-                notices.success(successText, latex());
+                if (newGraph && !restoring) {
+                    newGraph = false;
+                    publishedNew(picture);
+                }
+                if (!restoring) notices.success(successText, latex());
                 ranges.setShowsZ(zWindow() != null);
                 shownWindow = null;
                 syncRangeText(false);
@@ -367,6 +470,7 @@ abstract class PopupCardTool<K> {
 
         // canvas keeps a picture of the card for saving / pdf, redo it at 2x so it's sharp
         private void refreshSnapshot() {
+            if (discarded) return;
             Rectangle2D on = canvas.getDrawingCanvas().getGraphCardOnScreen(this);
             if (on == null) {
                 return;
@@ -408,8 +512,43 @@ abstract class PopupCardTool<K> {
             }
         }
 
+        void restoreCamera(entity.graph.GraphDefinition.Camera camera) { }
+        private java.awt.geom.Rectangle2D graphDragOrigin;
+
+        final void captureGraphDragOrigin() {
+            java.awt.geom.Rectangle2D current = canvas.getDrawingCanvas().getGraphCardOnScreen(this);
+            graphDragOrigin = current == null ? null : (java.awt.geom.Rectangle2D) current.clone();
+        }
+
+        /** A PDF drop copies the graph, so restore its original Canvas position. */
+        final void restoreGraphDragOrigin() {
+            java.awt.geom.Rectangle2D current = canvas.getDrawingCanvas().getGraphCardOnScreen(this);
+            if (current != null && graphDragOrigin != null) {
+                canvas.getDrawingCanvas().moveGraphBy(this,
+                        graphDragOrigin.getX() - current.getX(),
+                        graphDragOrigin.getY() - current.getY());
+                place();
+            }
+        }
+
+        final void forgetGraphDragOrigin() { graphDragOrigin = null; }
+
+        /** Remove a transferred live card without touching the source graph use case. */
+        final void removeTransferredCard() {
+            canvas.getDrawingCanvas().removeGraph(this);
+            place();
+        }
+        /** Optional native-graph copy lifecycle; phase portraits keep their normal drag behavior. */
+        void startedDragging() { }
+        /** Override only in native graph cards; phase portraits preserve existing behavior. */
+        void finishedDragging(java.awt.Point cursorOnScreen) { }
+        void draggingAt(java.awt.Point cursorOnScreen) { }
+
         // what the card asks the canvas to do, for this graph only
         private final class CardHost implements PlotCard.Host {
+            @Override
+            public void dragStarted() { startedDragging(); }
+
             @Override
             public void moveBy(double dx, double dy) {
                 canvas.getDrawingCanvas().moveGraphBy(Live.this, dx, dy);
@@ -431,7 +570,16 @@ abstract class PopupCardTool<K> {
 
             @Override
             public void viewChanged() {
+                canvas.getDrawingCanvas().notifyGraphStateChanged();
                 snapshotLater.restart();
+            }
+            @Override
+            public void dragFinished(java.awt.Point cursorOnScreen) {
+                finishedDragging(cursorOnScreen);
+            }
+            @Override
+            public void dragMoved(java.awt.Point cursorOnScreen) {
+                draggingAt(cursorOnScreen);
             }
         }
     }

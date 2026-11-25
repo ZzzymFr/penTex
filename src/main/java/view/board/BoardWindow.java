@@ -250,7 +250,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     }
 
     public void setPdfOpen(boolean open) {
-        if (!open) pdfFullscreen = false;
+        if (!open) { pdfFullscreen = false; ghost.clearOutline(); }
         boolean firstOpen = open && !pdfOpen;
         pdfOpen = open;
         relayout();
@@ -262,7 +262,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     public boolean isPdfFullscreen() { return pdfFullscreen; }
     /** Full PDF focus mode, escaped with Esc or the View ribbon control. */
     public void setPdfFullscreen(boolean fullscreen) {
-        if (fullscreen) pdfOpen = true;
+        if (fullscreen) { pdfOpen = true; ghost.clearOutline(); }
         pdfFullscreen = fullscreen;
         relayout();
         if (fullscreen && pdf instanceof PdfWorkspacePort port) SwingUtilities.invokeLater(port::fitWhenOpened);
@@ -458,9 +458,102 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         SwingUtilities.convertPointFromScreen(cursor, canvas);
         position.x = Math.max(0, Math.min(position.x, cursor.x));
         position.y = Math.max(0, Math.min(position.y, cursor.y));
+        if (item.isGraph() && item.entry().graphDefinition() != null
+                && page instanceof view.canvas.AnswerCanvasPage livePage) {
+            try {
+                entity.graph.GraphDefinition definition =
+                        interface_adapter.graph.GraphDefinitionCodec.decode(item.entry().graphDefinition());
+                if (livePage.restoreHistoryGraph(definition, position)) return true;
+            } catch (IllegalArgumentException invalid) {
+                return false; // corrupted graph definition must never silently become a picture
+            }
+        }
         canvas.addHistoryAsset(picture, item.isGraph() ? "" : item.getLatex(),
                 item.isGraph() ? "" : item.getAnswer(), position);
         return true;
+    }
+
+    /** Compatibility entry point for older graph integrations. */
+    public void previewInteractiveGraphDrop(Point cursorOnScreen, double aspectRatio) {
+        previewInteractiveGraphDrop(cursorOnScreen, aspectRatio, null);
+    }
+
+    /** Draw the current Graph thumbnail with the same bounds as the eventual PDF placement. */
+    public void previewInteractiveGraphDrop(Point cursorOnScreen, double aspectRatio,
+                                            BufferedImage thumbnail) {
+        if (!acceptsInteractiveGraphDrop(cursorOnScreen) || !(pdf instanceof PdfWorkspacePort port)) {
+            ghost.clearOutline();
+            return;
+        }
+        Rectangle onScreen = port.interactiveGraphPreviewBounds(cursorOnScreen, aspectRatio);
+        Point pointer = new Point(cursorOnScreen);
+        SwingUtilities.convertPointFromScreen(pointer, this);
+        Rectangle pagePlacement;
+        if (onScreen == null) {
+            // The PDF view may still be laying out its paper after opening/resizing.
+            // Give immediate visual feedback instead of silently dropping the preview.
+            double ratio = Double.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
+            int width = Math.max(40, Math.min(180, pdf.getWidth() / 3));
+            pagePlacement = new Rectangle(pointer.x, pointer.y, width,
+                    Math.max(32, (int) Math.round(width / ratio)));
+        } else {
+            Point at = onScreen.getLocation();
+            SwingUtilities.convertPointFromScreen(at, this);
+            pagePlacement = new Rectangle(at.x, at.y, onScreen.width, onScreen.height);
+        }
+        // A preview over the actual paper must not move or change size after release.
+        // When paper is not yet visible, keep a same-sized ghost near the pointer.
+        Rectangle preview = onScreen != null && pdf.getBounds().intersects(pagePlacement)
+                ? pagePlacement : sameSizeFallbackPreview(pagePlacement, pointer, pdf.getBounds());
+        ghost.showGraphPreview(thumbnail, preview, pdf.getBounds());
+    }
+
+    static Rectangle sameSizeFallbackPreview(Rectangle placement, Point pointer, Rectangle pdfBounds) {
+        int x = Math.max(pdfBounds.x + 4, Math.min(pointer.x - 14,
+                pdfBounds.x + Math.max(4, pdfBounds.width - placement.width - 4)));
+        int y = Math.max(pdfBounds.y + 4, Math.min(pointer.y - 14,
+                pdfBounds.y + Math.max(4, pdfBounds.height - placement.height - 4)));
+        return new Rectangle(x, y, placement.width, placement.height);
+    }
+
+    /** Keep a drop outline visible next to the pointer even while it crosses the
+     * PDF ribbon or Library sidebar before reaching the paper. Once the pointer
+     * reaches the actual paper, the outline uses the final placement geometry.
+     * This is visual feedback only: it never creates or deletes an item.
+     */
+    static Rectangle visibleInteractiveGraphPreview(Rectangle pagePlacement,
+                                                    Point pointer, Rectangle pdfBounds) {
+        Rectangle safe = pdfBounds;
+        if (safe.isEmpty()) return pagePlacement;
+        // When the page's final placement starts at the pointer (within the
+        // document), keep the accurate location instead of following an offset.
+        if (Math.abs(pagePlacement.x - pointer.x) <= 36
+                && Math.abs(pagePlacement.y - pointer.y) <= 36
+                && safe.intersects(pagePlacement)) return pagePlacement;
+        int width = Math.max(1, Math.min(pagePlacement.width, safe.width - 8));
+        int height = Math.max(1, Math.min(pagePlacement.height, safe.height - 8));
+        int x = Math.max(safe.x + 4, Math.min(pointer.x - 14, safe.x + safe.width - width - 4));
+        int y = Math.max(safe.y + 4, Math.min(pointer.y - 14, safe.y + safe.height - height - 4));
+        return new Rectangle(x, y, width, height);
+    }
+
+    public void cancelInteractiveGraphPreview() { ghost.clearOutline(); }
+
+    /** A Graph can be placed only when the mouse is released over the visible PDF panel. */
+    public boolean acceptsInteractiveGraphDrop(Point cursorOnScreen) {
+        if (!isShowing()) return false;
+        Point boardPoint = new Point(cursorOnScreen);
+        SwingUtilities.convertPointFromScreen(boardPoint, this);
+        return isPdfDropTarget(boardPoint) && pdf instanceof PdfWorkspacePort;
+    }
+
+    /** Called by a live graph card only after a header drag crosses the PDF divider. */
+    public boolean dropInteractiveGraph(entity.graph.GraphDefinition graph,
+                                        BufferedImage preview, Point cursorOnScreen) {
+        Point boardPoint = new Point(cursorOnScreen);
+        SwingUtilities.convertPointFromScreen(boardPoint, this);
+        if (!isPdfDropTarget(boardPoint) || !(pdf instanceof PdfWorkspacePort panel)) return false;
+        return panel.dropInteractiveGraph(graph, preview, cursorOnScreen);
     }
 
     /** Package-private for regression tests: PDF takes precedence over Canvas. */
@@ -497,9 +590,30 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     // picture following the mouse while a history row is dragged
     private static final class Ghost extends JComponent {
         private BufferedImage picture;
+        private BufferedImage graphThumbnail;
+        private Rectangle outline;
+        private Rectangle previewClip;
 
         Ghost() { setOpaque(false); }
         private Point at;
+
+        void showOutline(Rectangle bounds) { showGraphPreview(null, bounds, null); }
+
+        void showGraphPreview(BufferedImage image, Rectangle bounds, Rectangle clip) {
+            Rectangle before = outline;
+            outline = bounds == null ? null : new Rectangle(bounds);
+            graphThumbnail = image;
+            previewClip = clip == null ? null : new Rectangle(clip);
+            repaintOutline(before);
+            repaintOutline(outline);
+        }
+
+        void clearOutline() { showGraphPreview(null, null, null); }
+
+        private void repaintOutline(Rectangle bounds) {
+            if (bounds != null) repaint(bounds.x - 4, bounds.y - 4,
+                    bounds.width + 8, bounds.height + 8);
+        }
 
         void showPicture(BufferedImage picture, Point at) {
             java.awt.Rectangle previous = dirtyBounds();
@@ -537,14 +651,47 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
         @Override
         protected void paintComponent(Graphics g) {
-            if (picture == null) {
-                return;
-            }
+            if (picture == null && outline == null) return;
             Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g2.setComposite(AlphaComposite.SrcOver.derive(0.8f));
-            g2.drawImage(picture, at.x, at.y, picture.getWidth() / 2, picture.getHeight() / 2, null);
-            g2.dispose();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (picture != null) {
+                    g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    g2.setComposite(AlphaComposite.SrcOver.derive(0.8f));
+                    g2.drawImage(picture, at.x, at.y, picture.getWidth() / 2, picture.getHeight() / 2, null);
+                }
+                if (outline != null) {
+                    java.awt.Shape originalClip = g2.getClip();
+                    if (previewClip != null) g2.clip(previewClip);
+                    java.awt.Shape pdfClip = g2.getClip();
+                    if (graphThumbnail != null) {
+                        java.awt.Shape shape = new java.awt.geom.RoundRectangle2D.Float(
+                                outline.x, outline.y, outline.width, outline.height, 12, 12);
+                        g2.clip(shape);
+                        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                        g2.setComposite(AlphaComposite.SrcOver.derive(0.55f));
+                        g2.drawImage(graphThumbnail, outline.x, outline.y,
+                                outline.width, outline.height, null);
+                        g2.setClip(pdfClip);
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.setColor(new Color(49, 119, 227, 175));
+                        g2.setStroke(new java.awt.BasicStroke(1.2f, java.awt.BasicStroke.CAP_BUTT,
+                                java.awt.BasicStroke.JOIN_ROUND, 10f, new float[]{5f, 5f}, 0f));
+                        g2.drawRoundRect(outline.x, outline.y, outline.width, outline.height, 12, 12);
+                    } else {
+                        // Legacy callers without a thumbnail still get visible feedback.
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.setColor(new Color(49, 119, 227, 180));
+                        g2.setStroke(new java.awt.BasicStroke(1.4f, java.awt.BasicStroke.CAP_BUTT,
+                                java.awt.BasicStroke.JOIN_ROUND, 10f, new float[]{6f, 4f}, 0f));
+                        g2.drawRect(outline.x, outline.y, outline.width, outline.height);
+                    }
+                    g2.setClip(originalClip);
+                }
+            } finally {
+                g2.dispose();
+            }
         }
     }
 

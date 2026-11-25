@@ -17,6 +17,14 @@ public final class PdfPanel extends JPanel implements PdfWorkspacePort {
         editor = new DocEditorPanel(controller);
         add(editor, BorderLayout.CENTER);
     }
+    public void setGraphSessions(Supplier<view.canvas.GraphSession> factory) { editor.setGraphSessions(factory); }
+    @Override public boolean dropInteractiveGraph(entity.graph.GraphDefinition definition,
+                                                   BufferedImage preview, Point cursorOnScreen) {
+        return editor.dropInteractiveGraph(definition, preview, cursorOnScreen);
+    }
+    @Override public java.awt.Rectangle interactiveGraphPreviewBounds(Point cursorOnScreen, double aspectRatio) {
+        return editor.interactiveGraphPreviewBounds(cursorOnScreen, aspectRatio);
+    }
     public void setCanvasCapture(Supplier<BufferedImage> capture) { editor.setCanvasCapture(capture); }
     public void setRegionCapture(Runnable command) { editor.setRegionCapture(command); }
     public void setCaptureAreaActive(boolean active) { editor.setCaptureAreaActive(active); }
