@@ -1,5 +1,6 @@
 package use_case.graph_check;
 
+import entity.ImplicitCurveReader;
 import entity.ImplicitSurfaceReader;
 import entity.LatexFunctionParser;
 import entity.LatexParseException;
@@ -7,7 +8,7 @@ import entity.LatexParseException;
 import java.util.regex.Pattern;
 
 // graphable = y / f(x) (2d) or z / f(x,y) (3d) on either side of the = and the parser takes it
-// or any equation in exactly x y z (3d, no name needed)
+// or any equation in exactly x y z (3d, no name needed), or in exactly x y (2d implicit curve)
 public class GraphCheckInteractor implements GraphCheckInputBoundary {
     private static final String NAME = "(y|z|[a-zA-Z]\\s*\\(\\s*x\\s*(,\\s*y\\s*)?\\))";
     private static final Pattern FUNCTION_LEFT = Pattern.compile("^\\s*" + NAME + "\\s*=.*", Pattern.DOTALL);
@@ -16,6 +17,7 @@ public class GraphCheckInteractor implements GraphCheckInputBoundary {
 
     private final LatexFunctionParser parser;
     private final ImplicitSurfaceReader surfaces;
+    private final ImplicitCurveReader curves = new ImplicitCurveReader();
 
     public GraphCheckInteractor(LatexFunctionParser parser) {
         this(parser, new ImplicitSurfaceReader());
@@ -38,7 +40,17 @@ public class GraphCheckInteractor implements GraphCheckInputBoundary {
                 }
             }
         }
-        return isXyzEquation(latex);   // z=x+y+z^2 names z but only reads this way
+        return isXyzEquation(latex)    // z=x+y+z^2 names z but only reads this way
+                || isXyEquation(latex);   // 4=3y^3+2-9x^2, y isn't on its own on either side
+    }
+
+    private boolean isXyEquation(String latex) {
+        try {
+            curves.read(latex);
+            return true;
+        } catch (LatexParseException e) {
+            return false;
+        }
     }
 
     private boolean isXyzEquation(String latex) {

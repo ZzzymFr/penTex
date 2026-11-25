@@ -60,17 +60,28 @@ final class TraceBubble {
 
     // small value tag centred on (cx, cy), kept inside bounds
     static void pill(Graphics2D g, double cx, double cy, String text, float ui, Rectangle2D bounds) {
+        Rectangle2D at = pillBounds(g, cx, cy, text, ui, bounds);
         Font font = GraphTheme.bold(10.5f * ui);
         FontMetrics m = g.getFontMetrics(font);
-        double w = m.stringWidth(text) + 10 * ui;
-        double h = m.getHeight() + 2 * ui;
-        double x = clamp(cx - w / 2, bounds.getMinX() + 2, bounds.getMaxX() - w - 2);
-        double y = clamp(cy - h / 2, bounds.getMinY() + 2, bounds.getMaxY() - h - 2);
+        double x = at.getX();
+        double y = at.getY();
+        double w = at.getWidth();
+        double h = at.getHeight();
         g.setColor(GraphTheme.BUBBLE);
         g.fill(new RoundRectangle2D.Double(x, y, w, h, h, h));
         g.setFont(font);
         g.setColor(GraphTheme.BUBBLE_TEXT);
         g.drawString(text, (float) (x + 5 * ui), (float) (y + (h - m.getHeight()) / 2 + m.getAscent()));
+    }
+
+    // where pill() would put that tag
+    static Rectangle2D pillBounds(Graphics2D g, double cx, double cy, String text, float ui, Rectangle2D bounds) {
+        FontMetrics m = g.getFontMetrics(GraphTheme.bold(10.5f * ui));
+        double w = m.stringWidth(text) + 10 * ui;
+        double h = m.getHeight() + 2 * ui;
+        double x = clamp(cx - w / 2, bounds.getMinX() + 2, bounds.getMaxX() - w - 2);
+        double y = clamp(cy - h / 2, bounds.getMinY() + 2, bounds.getMaxY() - h - 2);
+        return new Rectangle2D.Double(x, y, w, h);
     }
 
     static double clamp(double v, double lo, double hi) {

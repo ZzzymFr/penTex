@@ -27,6 +27,7 @@ public class GraphState {
     private List<GraphTick> yTicks = Collections.emptyList();
     private List<GraphTick> zTicks = Collections.emptyList();
     private GraphTrace trace;
+    private GraphLookup lookup;   // the last find's points / cut, null = none
 
     public GraphState() {
     }
@@ -52,6 +53,7 @@ public class GraphState {
         yTicks = copy.yTicks;
         zTicks = copy.zTicks;
         trace = copy.trace;
+        lookup = copy.lookup;
     }
 
     // there's a graph to draw (an error after a good graph leaves the old one up)
@@ -224,5 +226,13 @@ public class GraphState {
 
     public void setTrace(GraphTrace trace) {
         this.trace = trace;
+    }
+
+    public GraphLookup getLookup() {
+        return lookup;
+    }
+
+    public void setLookup(GraphLookup lookup) {
+        this.lookup = lookup;
     }
 }

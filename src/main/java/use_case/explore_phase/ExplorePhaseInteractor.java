@@ -1,11 +1,13 @@
 package use_case.explore_phase;
 
+import entity.graph.LookupQuery;
 import entity.graph.Viewport;
 import entity.phase.PhasePlot;
 import use_case.phase_portrait.PhasePortraitOutputBoundary;
 import use_case.phase_portrait.PhasePublisher;
 import use_case.phase_portrait.PhaseSessionDataAccessInterface;
 
+import java.util.List;
 import java.util.function.UnaryOperator;
 
 // pan / zoom / pin re-work the portrait that's up, trace reads the real field under the cursor
@@ -55,6 +57,28 @@ public class ExplorePhaseInteractor implements ExplorePhaseInputBoundary {
         if (plot != null) {
             show(plot.withSolutionToggled(h, v, snapH, snapV));
         }
+    }
+
+    @Override
+    public void lookup(List<String> typed) {
+        PhasePlot plot = session.current();
+        if (plot == null) {
+            return;
+        }
+        LookupQuery query = LookupQuery.read(typed);
+        if (query.badAxis() < 0 && query.givenCount(2) == 2) {
+            PhasePlot pinned = plot.withSolutionThrough(query.get(0), query.get(1));
+            if (pinned != plot) {
+                show(pinned);
+            }
+            plot = pinned;
+        }
+        publisher.publishLookup(plot.lookup(query));
+    }
+
+    @Override
+    public void clearLookup() {
+        publisher.publishLookup(null);
     }
 
     private void move(UnaryOperator<Viewport> change) {

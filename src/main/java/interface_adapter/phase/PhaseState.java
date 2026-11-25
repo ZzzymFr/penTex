@@ -1,5 +1,6 @@
 package interface_adapter.phase;
 
+import interface_adapter.graph.GraphLookup;
 import interface_adapter.graph.GraphTick;
 
 import java.util.Collections;
@@ -25,6 +26,7 @@ public class PhaseState {
     private List<GraphTick> xTicks = Collections.emptyList();
     private List<GraphTick> yTicks = Collections.emptyList();
     private PhaseReadout trace;
+    private GraphLookup lookup;   // the last find, read off the pinned solutions; null = none
 
     public PhaseState() {
     }
@@ -46,6 +48,7 @@ public class PhaseState {
         xTicks = copy.xTicks;
         yTicks = copy.yTicks;
         trace = copy.trace;
+        lookup = copy.lookup;
     }
 
     public boolean hasPortrait() {
@@ -164,5 +167,13 @@ public class PhaseState {
 
     public void setTrace(PhaseReadout trace) {
         this.trace = trace;
+    }
+
+    public GraphLookup getLookup() {
+        return lookup;
+    }
+
+    public void setLookup(GraphLookup lookup) {
+        this.lookup = lookup;
     }
 }

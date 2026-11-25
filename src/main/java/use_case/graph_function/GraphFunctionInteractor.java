@@ -1,5 +1,7 @@
 package use_case.graph_function;
 
+import entity.ImplicitCurve;
+import entity.ImplicitCurveReader;
 import entity.ImplicitSurface;
 import entity.ImplicitSurfaceReader;
 import entity.LatexFunctionParser;
@@ -9,6 +11,7 @@ import entity.SurfaceFunction;
 import entity.graph.AutoBox;
 import entity.graph.AutoRange;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitCurvePlot;
 import entity.graph.ImplicitPlot;
 import entity.graph.Plot;
 import entity.graph.SurfacePlot;
@@ -24,6 +27,7 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
 
     private final LatexFunctionParser parser;
     private final ImplicitSurfaceReader surfaces;   // x y z equations
+    private final ImplicitCurveReader curves = new ImplicitCurveReader();   // x y equations, y not on its own
     private final GraphSessionDataAccessInterface session;
     private final GraphFunctionOutputBoundary presenter;
     private final PlotPublisher publisher;
@@ -94,19 +98,19 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
             } catch (LatexParseException e) {
                 // not z = f(x,y) either, maybe an x y z equation
             }
-            ImplicitSurface xyz;
-            try {
-                xyz = surfaces.read(latex);
-            } catch (LatexParseException e) {
+            ImplicitSurface xyz = readOrNull(latex);
+            ImplicitCurve xy = xyz == null ? readCurveOrNull(latex) : null;   // 4 = 3y^3 + 2 - 9x^2, x^2 + y^2 = 1
+            if (xyz == null && xy == null) {
                 presenter.prepareFailView("Cannot graph \"" + latex + "\": " + curveError.getMessage());
                 return null;
             }
             if (latexes.size() > 1) {
-                presenter.prepareFailView("\"" + latex + "\" is an x y z equation; those are graphed on their own,"
-                        + " they can't share a graph with another function yet.");
+                presenter.prepareFailView("\"" + latex + "\" is an " + (xyz != null ? "x y z" : "x y")
+                        + " equation; those are graphed on their own, they can't share a graph with another"
+                        + " function yet.");
                 return null;
             }
-            return implicit(xyz, input);
+            return xyz != null ? implicit(xyz, input) : implicitCurve(xy, input);
         }
         if (!curves.isEmpty() && !grids.isEmpty()) {
             presenter.prepareFailView("A 2D curve and a 3D surface can't share one graph: \""
@@ -114,6 +118,35 @@ public class GraphFunctionInteractor implements GraphFunctionInputBoundary {
             return null;
         }
         return curves.isEmpty() ? surface(grids, input) : curve(curves, input);
+    }
+
+    private ImplicitSurface readOrNull(String latex) {
+        try {
+            return surfaces.read(latex);
+        } catch (LatexParseException e) {
+            return null;
+        }
+    }
+
+    private ImplicitCurve readCurveOrNull(String latex) {
+        try {
+            return curves.read(latex);
+        } catch (LatexParseException e) {
+            return null;
+        }
+    }
+
+    // 2d F(x, y) = 0: x range as typed, y range as typed or the same as x
+    private Plot implicitCurve(ImplicitCurve f, GraphFunctionInputData input) {
+        double yMin = input.isYAutomatic() ? input.getXMin() : input.getYMin();
+        double yMax = input.isYAutomatic() ? input.getXMax() : input.getYMax();
+        ImplicitCurvePlot plot = new ImplicitCurvePlot(f, new Viewport(input.getXMin(), input.getXMax(), yMin, yMax));
+        if (plot.getCurve().isEmpty()) {
+            presenter.prepareFailView("\"" + f.getLatex() + "\" has no points in x in [" + input.getXMin() + ", "
+                    + input.getXMax() + "], y in [" + yMin + ", " + yMax + "].");
+            return null;
+        }
+        return plot;
     }
 
     // default range -> box fits the surface (sphere fills it), typed range -> that floor as is,

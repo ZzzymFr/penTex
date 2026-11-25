@@ -34,6 +34,17 @@ class GraphCheckInteractorTest {
     }
 
     @Test
+    void xyEquationsWithoutALoneYCanBeGraphed() {
+        assertTrue(check.canGraph("4=3y^3+2-9x^2"));
+        assertTrue(check.canGraph("x^2+y^2=1"));
+        assertTrue(check.canGraph("y^2=x"));
+        assertTrue(check.canGraph("xy=1"));
+        assertFalse(check.canGraph("y^2=4"), "only y, nothing to draw against x");
+        assertFalse(check.canGraph("x^2+y^2>1"));
+        assertFalse(check.canGraph("x^2+a=y^2"));
+    }
+
+    @Test
     void surfacesGetTheGraphButtonToo() {
         assertTrue(check.canGraph("z=x^2+y^2"));
         assertTrue(check.canGraph("f(x,y)=\\sin x\\cos y"));

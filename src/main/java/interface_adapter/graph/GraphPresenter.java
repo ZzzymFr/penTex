@@ -6,6 +6,7 @@ import use_case.graph_function.GraphFunctionOutputBoundary;
 import use_case.graph_function.KeyPointOutputData;
 import use_case.graph_function.SurfaceOutputData;
 import use_case.graph_function.TraceOutputData;
+import use_case.lookup.LookupOutputData;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,6 +79,15 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         viewModel.firePropertyChanged();
     }
 
+    @Override
+    public void prepareLookupView(LookupOutputData data) {
+        GraphState state = new GraphState(viewModel.getState());
+        List<String> names = state.getKind() == GraphState.Kind.SURFACE ? List.of("x", "y", "z") : List.of("x", "y");
+        state.setLookup(data == null ? null : LookupWording.word(data, names, state.functionCount() > 1, false));
+        viewModel.setState(state);
+        viewModel.fireViewChanged();
+    }
+
     // null for a plain point
     static String caption(KeyPoint.Kind kind) {
         if (kind == null) {
@@ -101,6 +111,7 @@ public class GraphPresenter implements GraphFunctionOutputBoundary {
         state.setTrace(null);   // old readout is for the old window
         if (fresh) {
             state.setRevision(state.getRevision() + 1);
+            state.setLookup(null);   // found points belong to the old graph
         }
         return state;
     }

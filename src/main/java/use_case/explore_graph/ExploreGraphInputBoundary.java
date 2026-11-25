@@ -19,4 +19,15 @@ public interface ExploreGraphInputBoundary {
     }
 
     void endTrace();
+
+    /**
+     * Find: one entry per axis as typed (x, y, and z on a 3D graph), blank = work that one out. The
+     * answer comes back as a lookup view; a boundary that can't look values up ignores it.
+     */
+    default void lookup(java.util.List<String> typed) {
+    }
+
+    // take the found points off the graph
+    default void clearLookup() {
+    }
 }

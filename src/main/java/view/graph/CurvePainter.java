@@ -25,6 +25,7 @@ final class CurvePainter {
             AxesPainter.paint(g, f, s.getXTicks(), s.getYTicks(), ui);
             curve(g, s, f, ui);
             markers(g, s, f, ui);
+            LookupPainter.paintFlat(g, s.getLookup(), f, ui, layer -> lookupColor(s, layer));
             if (pinned != null) {
                 trace(g, s, f, pinned, ui);
             }
@@ -39,6 +40,11 @@ final class CurvePainter {
     // one function: the orange line; several: each in its own colour (first green, the added one red)
     static Color lineColor(GraphState s, int layer) {
         return s.getCurveLayers().size() > 1 ? GraphTheme.layer(layer) : GraphTheme.CURVE;
+    }
+
+    // found points: blue against the one orange line, each function's own colour when there are several
+    static Color lookupColor(GraphState s, int layer) {
+        return s.getCurveLayers().size() > 1 ? GraphTheme.layer(layer) : GraphTheme.LOOKUP;
     }
 
     // dots + trace go neutral when they can't say which function they're on

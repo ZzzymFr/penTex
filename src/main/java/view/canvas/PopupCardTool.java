@@ -1,5 +1,6 @@
 package view.canvas;
 
+import interface_adapter.graph.GraphLookup;
 import view.FormulaCapture;
 import view.graph.PlotCard;
 
@@ -23,9 +24,9 @@ import java.util.function.Supplier;
 /**
  * A popup button that puts live cards beside formulas (Graph, Phase Portrait). Every graph gets its
  * own {@link Live}: its own use-case session (a "kit" of controller + view model), its own card
- * floating over its canvas card, and its own range tag on that card's plot. So several graphs can
- * be on the canvas at once and each one pans, zooms and re-ranges on its own. The canvas keeps a
- * picture of each card for saving.
+ * floating over its canvas card, its own range tag on that card's plot and its own find tag (type x,
+ * get y) on the plot's other corner. So several graphs can be on the canvas at once and each one pans,
+ * zooms, re-ranges and finds values on its own. The canvas keeps a picture of each card for saving.
  *
  * <p>Given one shared kit instead of a factory, there is only ever one live card: a new graph
  * replaces it, as before multiple graphs were supported.
@@ -105,10 +106,16 @@ abstract class PopupCardTool<K> {
     void setLayers(Layers layers) {
         this.layers = Objects.requireNonNull(layers);
         for (Live live : lives) {
-            layers.underlay(live.card);
-            layers.overlay(live.ranges);
-            layers.overlay(live.ranges.panel());
+            overlays(live);
         }
+    }
+
+    private void overlays(Live live) {
+        layers.underlay(live.card);
+        layers.overlay(live.ranges);
+        layers.overlay(live.finder);
+        layers.overlay(live.ranges.panel());
+        layers.overlay(live.finder.panel());
     }
 
     // the newest card (null before the first graph); tests and the single-card page use it
@@ -118,6 +125,10 @@ abstract class PopupCardTool<K> {
 
     GraphRangeChip rangeChip() {
         return latest == null ? null : latest.ranges;
+    }
+
+    GraphLookupChip lookupChip() {
+        return latest == null ? null : latest.finder;
     }
 
     // how many live cards exist (shown or waiting for reuse)
@@ -140,6 +151,7 @@ abstract class PopupCardTool<K> {
     void run(String latex, Rectangle formulaWorld, FormulaCapture capture) {
         Live live = liveForNewGraph();
         live.ranges.resetToDefault();   // a new graph starts on Auto, not on the last one's window
+        live.finder.reset();            // and with nothing found on it
         if (presetRange != null) {
             live.ranges.setRangeText(presetRange[0], presetRange[1]);
             presetRange = null;
@@ -169,9 +181,7 @@ abstract class PopupCardTool<K> {
         }
         Live live = newLive(kit);
         lives.add(live);
-        layers.underlay(live.card);
-        layers.overlay(live.ranges);
-        layers.overlay(live.ranges.panel());
+        overlays(live);
         return live;
     }
 
@@ -213,6 +223,7 @@ abstract class PopupCardTool<K> {
         final K kit;
         final PlotCard card;
         final GraphRangeChip ranges;
+        final GraphLookupChip finder;
         private final Timer snapshotLater;   // pan / zoom settle -> refresh the saved picture
         private FormulaCapture pendingCapture;
         private List<String> functions = List.of();   // what the card shows, first one first
@@ -222,12 +233,24 @@ abstract class PopupCardTool<K> {
         private boolean rerun;               // new range from the panel: keep the card where it is
         private volatile boolean busy;
         private double[] shownWindow;        // last window shown on the range tag
+        private GraphLookup shownLookup;     // last find shown on the find tag
         private Runnable drawing = () -> { };  // takes the Drawing… card down
 
         Live(K kit, PlotCard card) {
             this.kit = kit;
             this.card = card;
             this.ranges = new GraphRangeChip(this::rerun);
+            this.finder = new GraphLookupChip(new GraphLookupChip.Asker() {
+                @Override
+                public void find(List<String> typed) {
+                    executor.execute(() -> lookup(typed));
+                }
+
+                @Override
+                public void clear() {
+                    executor.execute(Live.this::clearLookup);
+                }
+            });
             this.card.setHost(new CardHost());
             this.snapshotLater = new Timer(SNAPSHOT_DELAY_MS, e -> refreshSnapshot());
             this.snapshotLater.setRepeats(false);
@@ -262,6 +285,25 @@ abstract class PopupCardTool<K> {
         }
 
         abstract BufferedImage firstPicture();
+
+        // ---- find a value: the boxes this card has, and its use case
+
+        // each axis as shown, e.g. x y, x y z, or t y
+        abstract List<String> lookupNames();
+
+        // how many boxes can be typed at once
+        int lookupMaxGiven() {
+            return lookupNames().size() - 1;
+        }
+
+        abstract String lookupHint();
+
+        // runs off the ui thread; the answer comes back through the view model as a VIEW change
+        abstract void lookup(List<String> typed);
+
+        abstract void clearLookup();
+
+        abstract GraphLookup lookupResult();
 
         String sourceLatex() {
             return latex();
@@ -318,7 +360,22 @@ abstract class PopupCardTool<K> {
 
         // view model said VIEW: pan / zoom / trace
         final void viewChanged() {
-            SwingUtilities.invokeLater(() -> syncRangeText(true));
+            SwingUtilities.invokeLater(() -> {
+                syncRangeText(true);
+                syncLookup();
+            });
+        }
+
+        // a find came back (or was cleared): boxes, list and tag follow, the saved picture shows it too
+        private void syncLookup() {
+            GraphLookup now = lookupResult();
+            if (now == shownLookup || !hasContent()) {
+                return;
+            }
+            shownLookup = now;
+            finder.showResult(now);
+            place();
+            snapshotLater.restart();
         }
 
         private void show() {
@@ -344,6 +401,13 @@ abstract class PopupCardTool<K> {
                 ranges.setShowsZ(zWindow() != null);
                 shownWindow = null;
                 syncRangeText(false);
+                finder.setAxes(lookupNames(), lookupMaxGiven(), lookupHint());
+                shownLookup = lookupResult();
+                finder.showResult(shownLookup);
+                List<String> again = finder.lastQuery();
+                if (shownLookup == null && again != null) {
+                    executor.execute(() -> lookup(again));   // redrawn (new range, one more function): find again
+                }
                 placeRanges();
                 refreshSnapshot();
                 onShown.run();
@@ -388,6 +452,7 @@ abstract class PopupCardTool<K> {
                 canvas.getDrawingCanvas().setGraphCovered(this, false);
                 hide(card);
                 ranges.hideAll();
+                finder.hideAll();
                 return;
             }
             Rectangle at = SwingUtilities.convertRectangle(canvas.getDrawingCanvas(), new Rectangle(
@@ -398,6 +463,7 @@ abstract class PopupCardTool<K> {
             // card sits exactly on the slot now, canvas can stop drawing the picture under it
             canvas.getDrawingCanvas().setGraphCovered(this, true);
             ranges.placeOn(at, card);
+            finder.placeOn(at, card);
             area.repaint();
         }
 

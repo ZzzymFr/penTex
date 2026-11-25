@@ -10,4 +10,7 @@ public interface GraphFunctionOutputBoundary {
     void prepareTraceView(TraceOutputData data);
 
     void prepareFailView(String errorMessage);
+
+    // what a find came back with, null = take it off the graph
+    void prepareLookupView(use_case.lookup.LookupOutputData data);
 }

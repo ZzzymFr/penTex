@@ -33,4 +33,13 @@ public class PhaseExploreController {
     public void toggleSolution(double h, double v, double snapH, double snapV) {
         interactor.toggleSolution(h, v, snapH, snapV);
     }
+
+    // find: {horizontal, vertical} as typed, blank = read off the pinned solutions, both = pin one there
+    public void lookup(java.util.List<String> typed) {
+        interactor.lookup(typed);
+    }
+
+    public void clearLookup() {
+        interactor.clearLookup();
+    }
 }

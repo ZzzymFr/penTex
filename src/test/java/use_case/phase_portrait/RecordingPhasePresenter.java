@@ -9,6 +9,7 @@ public class RecordingPhasePresenter implements PhasePortraitOutputBoundary {
     public final List<Boolean> fresh = new ArrayList<>();
     public final List<PhaseTraceOutputData> traces = new ArrayList<>();
     public String error;
+    public use_case.lookup.LookupOutputData lookup;
 
     @Override
     public void preparePortraitView(PhasePortraitOutputData data, boolean isFresh) {
@@ -24,6 +25,11 @@ public class RecordingPhasePresenter implements PhasePortraitOutputBoundary {
     @Override
     public void prepareFailView(String message) {
         error = message;
+    }
+
+    @Override
+    public void prepareLookupView(use_case.lookup.LookupOutputData data) {
+        lookup = data;
     }
 
     public PhasePortraitOutputData last() {
