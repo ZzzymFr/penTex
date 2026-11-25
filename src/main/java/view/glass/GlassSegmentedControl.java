@@ -29,7 +29,7 @@ public class GlassSegmentedControl extends JComponent {
     private static final int HEIGHT = 32;
     private static final int INSET = 3;          // gap between the track edge and the lens
     private static final int SEGMENT_PADDING = 14;
-    private static final float STRETCH_SPEED = 6f;  // segments/sec at which the lens is fully stretched
+    private static final float STRETCH_SPEED = 12f;  // segments/sec at which the lens is fully stretched
     private static final Color LABEL_SELECTED = new Color(0, 98, 210);
 
     private final String[] labels;
@@ -53,6 +53,7 @@ public class GlassSegmentedControl extends JComponent {
         MouseAdapter mouse = new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
+                if (!isEnabled()) return;
                 int index = segmentAt(e.getX());
                 if (index >= 0 && index != selected) {
                     setSelectedIndex(index);
@@ -110,6 +111,11 @@ public class GlassSegmentedControl extends JComponent {
             clock.reset();
         }
         repaint();
+    }
+
+    @Override public void removeNotify() {
+        animator.stop(); clock.reset(); lens.snap(selected); hoverIndex = -1;
+        super.removeNotify();
     }
 
     // ---------- geometry ----------
@@ -177,8 +183,8 @@ public class GlassSegmentedControl extends JComponent {
 
         // the lens: stretches sideways and flattens a little mid-slide, like a moving drop
         double stretch = Math.min(1, Math.abs(lens.v) / STRETCH_SPEED);
-        double lensWidth = seg + seg * 0.32 * stretch;
-        double squash = 2.5 * stretch;
+        double lensWidth = seg + seg * 0.10 * stretch;
+        double squash = 0.8 * stretch;
         double lensX = track.getX() + INSET + lens.x * seg - (lensWidth - seg) / 2;
         lensX = Math.max(track.getX() + 1, Math.min(lensX, track.getX() + track.getWidth() - lensWidth - 1));
         RoundRectangle2D lensShape = Glass.capsule(lensX, track.getY() + INSET + squash / 2,
@@ -193,6 +199,10 @@ public class GlassSegmentedControl extends JComponent {
             double closeness = Math.max(0, 1 - Math.abs(i - lens.x));
             double centre = track.getX() + INSET + (i + 0.5) * seg;
             Glass.drawText(g2, labels[i], centre, textY, Glass.mix(Glass.TEXT_MUTED, LABEL_SELECTED, closeness));
+        }
+        if (hasFocus()) {
+            g2.setColor(new Color(0, 122, 255, 180));
+            g2.draw(track);
         }
         g2.dispose();
     }

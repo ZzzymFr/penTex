@@ -91,6 +91,12 @@ public class GlassButton extends JButton {
         repaint();
     }
 
+    @Override public void removeNotify() {
+        animator.stop(); clock.reset(); hovering = false;
+        hover.snap(0); press.snap(0);
+        super.removeNotify();
+    }
+
     /** 0..1, for subclasses that paint their own face. */
     protected double hoverAmount() {
         return Math.max(0, Math.min(1, hover.x));

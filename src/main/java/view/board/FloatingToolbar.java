@@ -97,6 +97,7 @@ public final class FloatingToolbar {
             }
         });
         if (area instanceof BoardWindow board) {
+            board.addPropertyChangeListener("canvasDockBounds", e -> relayout());
             // History / PDF opening narrows the canvas: follow it
             board.canvasPage().addComponentListener(new ComponentAdapter() {
                 @Override public void componentResized(ComponentEvent e) { relayout(); }

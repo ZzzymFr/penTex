@@ -49,6 +49,7 @@ public final class SavedCanvasChooser extends JPanel {
     private final List<SavedCanvas> all;
     private final DefaultListModel<SavedCanvas> results = new DefaultListModel<>();
     private final JList<SavedCanvas> list = new JList<>(results);
+    private final view.glass.AsyncThumbnailCache<String> thumbnails = new view.glass.AsyncThumbnailCache<>(list::repaint);
     private final GlassTextField search = new GlassTextField(24, "Search canvases");
     private final JLabel count = new JLabel();
     private final JLabel empty = new JLabel("No canvases found", SwingConstants.CENTER);
@@ -154,7 +155,9 @@ public final class SavedCanvasChooser extends JPanel {
         empty.setVisible(results.isEmpty());
     }
 
-    private static final class Cell implements ListCellRenderer<SavedCanvas> {
+    @Override public void removeNotify() { thumbnails.close(); super.removeNotify(); }
+
+    private final class Cell implements ListCellRenderer<SavedCanvas> {
         @Override public Component getListCellRendererComponent(JList<? extends SavedCanvas> list, SavedCanvas item,
                                                                   int index, boolean selected, boolean focused) {
             // opaque white row with a rounded, inset selection (macOS list), not a full-width bar
@@ -173,7 +176,9 @@ public final class SavedCanvasChooser extends JPanel {
             panel.setOpaque(true);
             panel.setBackground(Color.WHITE);
             panel.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 10));
-            panel.add(new Thumbnail(item.state()), BorderLayout.WEST);
+            JLabel miniature = new JLabel(list.isShowing() ? thumbnails.get(item.id(), () -> thumbnail(item.state())) : null);
+            miniature.setPreferredSize(new Dimension(68,54));
+            panel.add(miniature, BorderLayout.WEST);
             JPanel labels = new JPanel();
             labels.setOpaque(false);
             labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
@@ -205,16 +210,15 @@ public final class SavedCanvasChooser extends JPanel {
     }
 
     /** Actual stroke/graph miniature, with stable bounds and no fake sample previews. */
-    private static final class Thumbnail extends JComponent {
-        private final CanvasState state;
-        Thumbnail(CanvasState state) { this.state = state; setPreferredSize(new Dimension(68, 54)); }
-        @Override protected void paintComponent(Graphics graphics) {
-            Graphics2D g = (Graphics2D) graphics.create();
+    private static BufferedImage thumbnail(CanvasState state) {
+            int width=68,height=54;
+            BufferedImage miniature = new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = miniature.createGraphics();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setColor(new Color(245, 246, 250));
-            g.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
+            g.fillRoundRect(0, 0, width, height, 10, 10);
             g.setColor(new Color(219, 224, 233));
-            g.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 10, 10);
+            g.drawRoundRect(0, 0, width-1, height-1, 10, 10);
             double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
             double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
             for (var stroke : state.ink()) for (var p : stroke.points()) {
@@ -256,6 +260,6 @@ public final class SavedCanvasChooser extends JPanel {
                 g.drawArc(26, 18, 23, 23, 18, 130);
             }
             g.dispose();
-        }
+            return miniature;
     }
 }

@@ -60,16 +60,23 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private Supplier<SaveMenuState> saveState = SaveMenuState::newCanvas;
     private SaveMenuState lastSaveState = SaveMenuState.newCanvas();
     // Coalesce rapid pen/pan events: serializing image assets for the dirty check is expensive.
-    private final javax.swing.Timer saveStateDebounce = new javax.swing.Timer(150, e -> refreshSaveState());
+    private final javax.swing.Timer saveStateDebounce = new javax.swing.Timer(150, e -> {
+        if (isPanelAnimating() || view.glass.GlassDialogs.isAnimating(this)) scheduleSaveStateRefresh();
+        else refreshSaveState();
+    });
     // side panels slide in / out (shown width), instead of popping; a divider drag tracks 1:1
     private final Spring historyShown = new Spring(0.5f);
     private final Spring pdfShown = new Spring(0.5f);
-    private final Motion.Clock panelClock = new Motion.Clock();
+    private long panelStartNanos;
+    private float panelFromHistory, panelFromPdf;
+    private static final long PANEL_DURATION_NANOS = 220_000_000L;
     private final javax.swing.Timer panelTimer = new javax.swing.Timer(Motion.FRAME_MS, e -> stepPanels());
     private boolean panelsMoving;
     private int historyTarget;
     private int pdfTarget;
     private boolean snapPanels = true;
+    private Rectangle transitionCanvas;
+    private Rectangle transitionDock;
 
     public BoardWindow(JComponent page, DrawingCanvas canvas,
                        java.util.function.Function<HistoryPanel.DragHost, HistoryPanel> history, JComponent pdf) {
@@ -247,6 +254,9 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         return historyOpen;
     }
 
+    /** A view-only hint for optional background-work scheduling. */
+    public boolean isPanelAnimating() { return panelsMoving; }
+
     public boolean isPdfOpen() {
         return pdfOpen;
     }
@@ -257,6 +267,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     private void setHistoryOpen(boolean open, boolean animate) {
         if (!animate) snapPanels = true;
+        if (historyOpen != open) clearPanelTransition();
         historyOpen = open;
         if (open) {
             historyBar.select(historyItem);
@@ -270,7 +281,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     private void setPdfOpen(boolean open, boolean animate) {
         if (!animate) snapPanels = true;
-        if (open != pdfOpen) pdfFitGeneration++;
+        if (open != pdfOpen) { pdfFitGeneration++; clearPanelTransition(); }
         if (!open) { pdfFullscreen = false; pdfJustOpened = false; ghost.clearOutline(); }
         boolean firstOpen = open && !pdfOpen;
         pdfOpen = open;
@@ -310,7 +321,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     }
 
     Rectangle pageBounds() {
-        return page.getBounds();
+        return transitionDock == null ? page.getBounds() : new Rectangle(transitionDock);
     }
 
     // the canvas side, so the toolbar can dock to it and not sit over the PDF
@@ -340,6 +351,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         int h = getHeight();
         int half = SplitDivider.HIT / 2;
         if (pdfFullscreen) {
+            clearPanelTransition();
             history.setVisible(false);historyDivider.setVisible(false);
             pdf.setVisible(true);pdfDivider.setVisible(false);
             page.setVisible(false);
@@ -370,9 +382,10 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         int fullPw = Math.max(0, Math.min(SplitMath.panelWidth(pdfRatio, w),
                 Math.max(0, remaining - (pdfOverlay ? 0 : 250))));
         int pTarget = pdfOpen ? fullPw : 0;
-        if (w != panelLayoutWidth) {
+        if (w != panelLayoutWidth || h != panelLayoutHeight) {
             snapPanels = true;  // window resize: panels keep up 1:1, only open / close animates
             panelLayoutWidth = w;
+            panelLayoutHeight = h;
         }
         settlePanels(hTarget, pTarget);
         int hw = Math.round(historyShown.x);
@@ -395,17 +408,37 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             pdfDivider.setBounds(w - pw - half, 0, SplitDivider.HIT, h);
         }
         int canvasWidth = Math.max(0, w - hw - (pdfOut && !pdfOverlay ? pw : 0));
-        page.setBounds(hw, 0, canvasWidth, h);
-        page.doLayout();
+        Rectangle visibleCanvas = new Rectangle(hw, 0, canvasWidth, h);
+        Rectangle targetCanvas = new Rectangle(hTarget, 0,
+                Math.max(0, w - hTarget - (pdfOverlay ? 0 : pTarget)), h);
+        if (panelsMoving) {
+            // Layout the live Canvas once, wide enough to cover both endpoints. The
+            // side panels then slide over it; no per-frame resize, layout or pan.
+            if (transitionCanvas == null) {
+                transitionCanvas = page.getBounds().union(targetCanvas);
+                transitionDock = page.getBounds().intersection(targetCanvas);
+                if (transitionDock.width <= 0) transitionDock = new Rectangle(targetCanvas);
+                SwingUtilities.invokeLater(() -> firePropertyChange("canvasDockBounds", null, pageBounds()));
+            }
+            visibleCanvas = transitionCanvas;
+        } else {
+            clearPanelTransition();
+        }
+        if (!page.getBounds().equals(visibleCanvas)) {
+            page.setBounds(visibleCanvas);
+            page.doLayout();
+        }
         // Only changes in the right edge of the canvas caused by PDF splitting
         // move the ink view. A left-side History opening changes the left boundary
         // but should not push canvas ink behind History. Window resize does not pan.
-        int rightEdge = hw + canvasWidth;
-        if (lastCanvasRight >= 0 && lastBoardWidth == w && lastCanvasRight != rightEdge) {
-            canvas.panBy(rightEdge - lastCanvasRight, 0);
+        int rightEdge = visibleCanvas.x + visibleCanvas.width;
+        if (!panelsMoving) {
+            if (lastCanvasRight >= 0 && lastBoardWidth == w && lastCanvasRight != rightEdge) {
+                canvas.panBy(rightEdge - lastCanvasRight, 0);
+            }
+            lastCanvasRight = rightEdge;
+            lastBoardWidth = w;
         }
-        lastCanvasRight = rightEdge;
-        lastBoardWidth = w;
 
         int m = GlassBar.MARGIN;
         Dimension hb = historyBar.getPreferredSize();
@@ -444,11 +477,13 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     // panels head for their new widths; jump there when not on screen or when a divider drags
     private void settlePanels(int hTarget, int pTarget) {
+        boolean changed = historyTarget != hTarget || pdfTarget != pTarget;
         historyTarget = hTarget;
         pdfTarget = pTarget;
         boolean snap = snapPanels || !isShowing() || Motion.reduced();
         snapPanels = false;
         if (snap) {
+            clearPanelTransition();
             historyShown.snap(hTarget);
             pdfShown.snap(pTarget);
             panelsMoving = false;
@@ -456,32 +491,54 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             return;
         }
         if (historyShown.x != hTarget || pdfShown.x != pTarget) {
-            if (!panelTimer.isRunning()) {
-                panelClock.reset();
+            if (changed || !panelTimer.isRunning()) {
+                clearPanelTransition();
+                panelFromHistory = historyShown.x;
+                panelFromPdf = pdfShown.x;
+                panelStartNanos = System.nanoTime();
                 panelTimer.start();
             }
             panelsMoving = true;
         }
     }
 
+    private void clearPanelTransition() {
+        if (transitionCanvas == null) return;
+        transitionCanvas = null;
+        Rectangle previous = transitionDock;
+        transitionDock = null;
+        // Run after final Canvas bounds have been installed by doLayout().
+        SwingUtilities.invokeLater(() -> firePropertyChange("canvasDockBounds", previous, pageBounds()));
+    }
+
     private void stepPanels() {
         if (!isShowing()) {
             panelTimer.stop();
-            panelClock.reset();
             panelsMoving = false;
             snapPanels = true;
             return;
         }
-        float dt = panelClock.tick();
-        boolean still = historyShown.step(historyTarget, Motion.ENTER, dt);
-        still &= pdfShown.step(pdfTarget, Motion.ENTER, dt);
-        if (still) {
+        double t = Math.min(1.0, (System.nanoTime() - panelStartNanos) / (double) PANEL_DURATION_NANOS);
+        float progress = (float) (1 - Math.pow(1 - t, 3));
+        historyShown.snap(panelFromHistory + (historyTarget - panelFromHistory) * progress);
+        pdfShown.snap(panelFromPdf + (pdfTarget - panelFromPdf) * progress);
+        if (t >= 1.0) {
+            historyShown.snap(historyTarget);
+            pdfShown.snap(pdfTarget);
             panelTimer.stop();
             panelsMoving = false;
-            panelClock.reset();
         }
+        Rectangle beforeHistory = history.isVisible() ? history.getBounds() : new Rectangle();
+        Rectangle beforePdf = pdf.isVisible() ? pdf.getBounds() : new Rectangle();
         doLayout();
-        repaint();
+        repaintPanelArea(beforeHistory, history);
+        repaintPanelArea(beforePdf, pdf);
+    }
+
+    private void repaintPanelArea(Rectangle before, JComponent panel) {
+        Rectangle dirty = panel.isVisible() ? (before.isEmpty() ? panel.getBounds() : before.union(panel.getBounds())) : before;
+        Rectangle visible = dirty.intersection(new Rectangle(0, 0, getWidth(), getHeight()));
+        if (!visible.isEmpty()) repaint(visible);
     }
 
     // Fit only once, after the final layout; a restored document consumes this call
@@ -499,8 +556,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     @Override public void removeNotify() {
         panelTimer.stop();
+        clearPanelTransition();
         saveStateDebounce.stop();
-        panelClock.reset();
         panelsMoving = false;
         snapPanels = true;
         super.removeNotify();
@@ -508,10 +565,19 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     private long pdfFitGeneration;
     private boolean pdfJustOpened;
-    private int panelLayoutWidth = -1;
+    private int panelLayoutWidth = -1, panelLayoutHeight = -1;
 
     // what the top capsules see: panels as flat colour, the canvas content where it is
     private void paintBackdrop(Graphics2D g) {
+        if (page.isVisible() && canvas.getWidth() > 0) {
+            Point c = SwingUtilities.convertPoint(canvas, 0, 0, this);
+            Graphics2D cg = (Graphics2D) g.create();
+            cg.clip(page.getBounds());
+            cg.clipRect(c.x, c.y, canvas.getWidth(), canvas.getHeight());
+            cg.translate(c.x, c.y);
+            if (cg.getClipBounds() == null || !cg.getClipBounds().isEmpty()) canvas.paintContent(cg);
+            cg.dispose();
+        }
         if (history.isVisible()) {
             g.setColor(BoardTheme.PANEL);
             g.fill(history.getBounds());
@@ -520,22 +586,12 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             g.setColor(Color.WHITE);
             g.fill(pdf.getBounds());
         }
-        if (canvas.getWidth() <= 0) {
-            return;
-        }
-        Point c = SwingUtilities.convertPoint(canvas, 0, 0, this);
-        Graphics2D cg = (Graphics2D) g.create();
-        cg.clip(page.getBounds());
-        cg.clipRect(c.x, c.y, canvas.getWidth(), canvas.getHeight());
-        cg.translate(c.x, c.y);
-        canvas.paintContent(cg);
-        cg.dispose();
     }
 
     private long backdropVersion() {
         long v = canvas.contentVersion();
         v = v * 31 + (historyOpen ? 1 : 0) + (pdfOpen ? 2 : 0);
-        return v * 31 + page.getX() * 131L + page.getWidth();
+        return ((v * 31 + page.getX() * 131L + page.getWidth()) * 31 + history.getX()) * 31 + pdf.getX();
     }
 
     @Override public void importIntoPdf(HistoryItem item) {

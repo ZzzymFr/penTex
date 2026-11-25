@@ -69,7 +69,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     private RibbonButton captureButton;
     private boolean capturing;
     private boolean updatingZoom;
-    private boolean restoredViewPending;
+    private boolean viewInitialized;
     private Runnable toggleFullscreen = () -> { };
     public void setFullscreenAction(Runnable callback) { toggleFullscreen = Objects.requireNonNull(callback); }
 
@@ -141,7 +141,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
                                   pdf_editor.use_case.PdfPreviewGateway previewer) {
         if (persistence != null) return;
         persistence = new pdf_editor.view.PdfWorkspaceDialogs(this, controller, paper, documents, previewer,
-                saved -> { zoom(saved.zoom()); restoredViewPending = !isShowing(); updateStatus(); }, title::setText);
+                saved -> { zoom(saved.zoom()); updateStatus(); }, title::setText);
         for (Component action : persistenceActions.getComponents()) action.setEnabled(true);
         persistence.start();
         revalidate(); repaint();
@@ -478,6 +478,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         updateStatus();
     }
     private void zoom(double z) {
+        viewInitialized = true;
         double actual = paper.setZoom(z);
         updatingZoom = true;
         try {zoomSlider.setValue((int) Math.round(100 * actual));zoomValue.setText((int) Math.round(100 * actual) + "%");}
@@ -496,8 +497,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         workspace.repaint();
     }
     @Override public void fitWhenOpened() {
-        if (restoredViewPending) { restoredViewPending = false; return; }
-        fitPage();
+        if (!viewInitialized) fitPage();
     }
     private void fitPage() {
         int w = pageScroll.getViewport().getWidth();

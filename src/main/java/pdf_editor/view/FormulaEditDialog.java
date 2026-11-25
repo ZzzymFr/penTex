@@ -3,7 +3,9 @@ package pdf_editor.view;
 import pdf_editor.use_case.FormulaEditSubmission;
 import pdf_editor.domain.PdfMaterial;
 import pdf_editor.data_access.MaterialRenderer;
-import view.stack.Fonts;
+import view.board.BoardTheme;
+import view.glass.GlassDialogs;
+import view.glass.GlassSegmentedControl;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -11,288 +13,211 @@ import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.util.Objects;
 import java.util.function.Function;
 
-/** Compact, platform-aware Swing adapter. Calculation is injected; this view does not evaluate math. */
+/** View-only editor. The shared owner-local Glass dialog supplies modality and appearance;
+ * formula evaluation still goes through the injected use-case callback. */
 public final class FormulaEditDialog {
     public record Result(String formula, String result) { }
-
-    private static final Color INK = view.board.BoardTheme.LABEL;
-    private static final Color SECONDARY = new Color(110, 110, 115);
-    private static final Color BORDER = new Color(0, 0, 0, 34);
-    private static final Color BLUE = view.board.BoardTheme.ACCENT;
+    private static final Color INK = BoardTheme.LABEL;
+    private static final Color SECONDARY = new Color(110,110,115);
+    private static final Color BORDER = new Color(0,0,0,34);
+    private static final Color ERROR = new Color(184,65,68);
     private FormulaEditDialog() { }
 
-    /** Compatibility for standalone consumers that do not yet inject US2. */
     public static Result show(Window owner, PdfMaterial item) {
         return show(owner, item, latex -> item.result());
     }
-
-    public static Result show(Window owner, PdfMaterial item, Function<String, String> recalculate) {
+    public static Result show(Window owner, PdfMaterial item, Function<String,String> recalculate) {
         Objects.requireNonNull(item, "item");
         Objects.requireNonNull(recalculate, "recalculate");
         if (item.isGraph()) throw new IllegalArgumentException("Graphs cannot be edited as formulas");
-        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setTitle("Edit Formula");
-        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-        boolean roundedWindow = canUseTranslucency();
-        if (roundedWindow) {
-            dialog.setUndecorated(true);
-            try { dialog.setBackground(new Color(0, 0, 0, 0)); }
-            catch (UnsupportedOperationException unsupported) { roundedWindow = false; }
+        if (!SwingUtilities.isEventDispatchThread()) {
+            java.util.concurrent.FutureTask<Result> task = new java.util.concurrent.FutureTask<>(
+                    () -> show(owner,item,recalculate));
+            SwingUtilities.invokeLater(task);
+            boolean interrupted = false;
+            try {
+                for (;;) try { return task.get(); }
+                catch (InterruptedException e) { interrupted = true; }
+                catch (java.util.concurrent.ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException runtime) throw runtime;
+                    throw new IllegalStateException(e.getCause());
+                }
+            } finally { if (interrupted) Thread.currentThread().interrupt(); }
+        }
+        return new Editor(item,recalculate).show(owner);
+    }
+
+    private static final class Editor {
+        private final PdfMaterial item;
+        private final Function<String,String> recalculate;
+        private final JPanel content = new JPanel(new BorderLayout(0,12));
+        private final GlassSegmentedControl mode = new GlassSegmentedControl("Calculate (LaTeX)", "Manual Entry");
+        private final JTextArea formula;
+        private final JLabel preview = new JLabel("", SwingConstants.CENTER);
+        private final JLabel status = new JLabel(" ");
+        private final JButton save = GlassDialogs.actionButton("Recalculate & Save",true);
+        private final JButton cancel = GlassDialogs.actionButton("Cancel",false);
+        private final Timer previewDelay = new Timer(160,e -> renderPreview());
+        private SwingWorker<BufferedImage,Void> previewWorker;
+        private SwingWorker<FormulaEditSubmission.Revision,Void> calculation;
+        private long previewGeneration;
+        private String shownResult;
+        private boolean active = true;
+        private Runnable dismiss = () -> { };
+        private Result result;
+
+        Editor(PdfMaterial item, Function<String,String> recalculate) {
+            this.item = item; this.recalculate = recalculate; shownResult = item.result();
+            formula = new JTextArea(item.formula(),3,30);
+            formula.setLineWrap(true); formula.setWrapStyleWord(true);
+            formula.setFont(new Font(Font.MONOSPACED,Font.PLAIN,14));
+            formula.setForeground(INK); formula.setBackground(Color.WHITE);
+            formula.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));
+            JScrollPane input = new JScrollPane(formula);
+            input.setPreferredSize(new Dimension(420,82));
+            input.setBorder(BorderFactory.createLineBorder(BORDER,1,true));
+            formula.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override public void focusGained(java.awt.event.FocusEvent e) {
+                    input.setBorder(BorderFactory.createLineBorder(BoardTheme.ACCENT,1,true));
+                }
+                @Override public void focusLost(java.awt.event.FocusEvent e) {
+                    input.setBorder(BorderFactory.createLineBorder(BORDER,1,true));
+                }
+            });
+            content.setOpaque(false);
+            JPanel modes = new JPanel(new FlowLayout(FlowLayout.LEFT,0,0)); modes.setOpaque(false);
+            mode.setFocusable(true); mode.setToolTipText("Choose calculation or manual entry; use Left/Right when focused");
+            mode.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT,0),"calculate");
+            mode.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT,0),"manual");
+            mode.getActionMap().put("calculate",new AbstractAction() {
+                @Override public void actionPerformed(ActionEvent e) { selectMode(0); }
+            });
+            mode.getActionMap().put("manual",new AbstractAction() {
+                @Override public void actionPerformed(ActionEvent e) { selectMode(1); }
+            });
+            modes.add(mode); content.add(modes,BorderLayout.NORTH);
+            JPanel middle = new JPanel(); middle.setOpaque(false); middle.setLayout(new BoxLayout(middle,BoxLayout.Y_AXIS));
+            addSection(middle,"Formula",input);
+            middle.add(Box.createVerticalStrut(12));
+            JPanel previewCard = new JPanel(new BorderLayout()) {
+                @Override protected void paintComponent(Graphics source) {
+                    Graphics2D g = (Graphics2D)source.create();
+                    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+                    g.setColor(Color.WHITE); g.fillRoundRect(0,0,getWidth(),getHeight(),14,14);
+                    g.setColor(BORDER); g.drawRoundRect(0,0,getWidth()-1,getHeight()-1,14,14); g.dispose();
+                }
+            };
+            previewCard.setOpaque(false); previewCard.setPreferredSize(new Dimension(420,92));
+            previewCard.add(preview,BorderLayout.CENTER); addSection(middle,"Preview",previewCard);
+            middle.add(Box.createVerticalStrut(8));
+            status.setFont(BoardTheme.font(11.5f)); status.setForeground(SECONDARY);
+            status.setAlignmentX(Component.LEFT_ALIGNMENT);
+            // A stable width prevents a new message from resizing the modal.
+            status.setPreferredSize(new Dimension(420,20));
+            middle.add(status); content.add(middle,BorderLayout.CENTER);
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT,8,0)); actions.setOpaque(false);
+            actions.add(cancel); actions.add(save); content.add(actions,BorderLayout.SOUTH);
+            content.putClientProperty("glass.defaultAction",save);
+            previewDelay.setRepeats(false);
+            formula.getDocument().addDocumentListener(new DocumentListener() {
+                @Override public void insertUpdate(DocumentEvent e) { changed(); }
+                @Override public void removeUpdate(DocumentEvent e) { changed(); }
+                @Override public void changedUpdate(DocumentEvent e) { changed(); }
+            });
+            mode.addSelectionListener(i -> changed());
+            save.addActionListener(e -> submit()); cancel.addActionListener(e -> dismiss.run());
+            updateModeText();
         }
 
-        JPanel surface = new RoundedSurface();
-        surface.setLayout(new BorderLayout(0, 13));
-        surface.setBorder(BorderFactory.createEmptyBorder(20, 22, 18, 22));
-        JLabel title = new JLabel("Edit formula");
-        title.setForeground(INK);
-        title.setFont(view.board.BoardTheme.semibold(18f));
-        JLabel subtitle = new JLabel("Choose how to save this expression.");
-        subtitle.setForeground(SECONDARY);
-        subtitle.setFont(Fonts.ui(Font.PLAIN, 12f));
-        JPanel titleArea = new JPanel(new BorderLayout(0, 4));
-        titleArea.setOpaque(false);
-        titleArea.add(title, BorderLayout.NORTH);
-        titleArea.add(subtitle, BorderLayout.SOUTH);
-
-        JComboBox<String> mode = new JComboBox<>(new String[] {"Calculate (LaTeX)", "Manual Entry"});
-        mode.setFont(Fonts.ui(Font.PLAIN, 12f));
-        mode.setPreferredSize(new Dimension(174, 29));
-        mode.setToolTipText("Calculate with US2, or save your own expression without calculation");
-        JPanel heading = new JPanel(new BorderLayout(8, 0));
-        heading.setOpaque(false);
-        heading.add(titleArea, BorderLayout.CENTER);
-        heading.add(mode, BorderLayout.EAST);
-        surface.add(heading, BorderLayout.NORTH);
-
-        JLabel formulaLabel = new JLabel("FORMULA");
-        formulaLabel.setFont(Fonts.ui(Font.BOLD, 10f));
-        formulaLabel.setForeground(SECONDARY);
-        JTextArea formula = new JTextArea(item.formula(), 3, 31);
-        formula.setLineWrap(true);
-        formula.setWrapStyleWord(true);
-        formula.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
-        formula.setForeground(INK);
-        formula.setOpaque(false);
-        formula.setBorder(BorderFactory.createEmptyBorder(8, 10, 7, 10));
-        JScrollPane editor = new JScrollPane(formula);
-        editor.getViewport().setOpaque(false);
-        editor.setOpaque(false);
-        editor.setBorder(BorderFactory.createLineBorder(BORDER, 1, true));
-        editor.setPreferredSize(new Dimension(432, 79));
-        // focus ring: the field you type in lights up in the accent colour
-        formula.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override public void focusGained(java.awt.event.FocusEvent e) {
-                editor.setBorder(BorderFactory.createLineBorder(new Color(0, 122, 255, 150), 1, true));
-            }
-            @Override public void focusLost(java.awt.event.FocusEvent e) {
-                editor.setBorder(BorderFactory.createLineBorder(BORDER, 1, true));
-            }
-        });
-
-        JLabel previewLabel = new JLabel("PREVIEW");
-        previewLabel.setFont(Fonts.ui(Font.BOLD, 10f));
-        previewLabel.setForeground(SECONDARY);
-        JLabel preview = new JLabel();
-        preview.setHorizontalAlignment(SwingConstants.CENTER);
-        preview.setVerticalAlignment(SwingConstants.CENTER);
-        JPanel previewCard = new RoundedPreview();
-        previewCard.setLayout(new BorderLayout());
-        previewCard.add(preview, BorderLayout.CENTER);
-        previewCard.setPreferredSize(new Dimension(432, 91));
-        JLabel status = new JLabel("US2 will calculate the result when you save.");
-        status.setFont(Fonts.ui(Font.PLAIN, 11f));
-        status.setForeground(SECONDARY);
-
-        JPanel middle = new JPanel();
-        middle.setLayout(new BoxLayout(middle, BoxLayout.Y_AXIS));
-        middle.setOpaque(false);
-        formulaLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        editor.setAlignmentX(Component.LEFT_ALIGNMENT);
-        previewLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        previewCard.setAlignmentX(Component.LEFT_ALIGNMENT);
-        status.setAlignmentX(Component.LEFT_ALIGNMENT);
-        middle.add(formulaLabel);
-        middle.add(Box.createVerticalStrut(6));
-        middle.add(editor);
-        middle.add(Box.createVerticalStrut(12));
-        middle.add(previewLabel);
-        middle.add(Box.createVerticalStrut(6));
-        middle.add(previewCard);
-        middle.add(Box.createVerticalStrut(8));
-        middle.add(status);
-        surface.add(middle, BorderLayout.CENTER);
-
-        JButton cancel = new CapsuleButton("Cancel", false);
-        JButton save = new CapsuleButton("Recalculate & Save", true);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        actions.setOpaque(false);
-        actions.add(cancel);
-        actions.add(save);
-        surface.add(actions, BorderLayout.SOUTH);
-
-        final Result[] chosen = {null};
-        final String[] currentResult = {item.result()};
-        final Timer debounce = new Timer(130, e -> {
-            String latex = formula.getText().trim();
-            if (latex.isBlank()) {
-                preview.setIcon(null);
-                status.setText("Enter an expression to continue.");
-                return;
-            }
-            try {
-                // Manual Entry previews exactly what will be saved, without a computed result.
-                String shownResult = modeForSelection(mode.getSelectedIndex()) ==
-                        FormulaEditSubmission.Mode.MANUAL ? "" : currentResult[0];
-                PdfMaterial sample = item.withText(latex, shownResult);
-                preview.setIcon(new ImageIcon(MaterialRenderer.render(sample, 420, 82)));
-            } catch (RuntimeException invalid) {
-                preview.setIcon(null);
-                status.setText("Check the LaTeX syntax.");
-            }
-        });
-        debounce.setRepeats(false);
-        Runnable update = () -> {
-            currentResult[0] = "";
+        private static void addSection(JPanel parent,String label,JComponent child) {
+            JLabel heading = new JLabel(label); heading.setFont(BoardTheme.semibold(12.5f));
+            heading.setForeground(INK); heading.setAlignmentX(Component.LEFT_ALIGNMENT);
+            child.setAlignmentX(Component.LEFT_ALIGNMENT);
+            parent.add(heading); parent.add(Box.createVerticalStrut(5)); parent.add(child);
+        }
+        private void selectMode(int index) {
+            if (!mode.isEnabled() || index == mode.getSelectedIndex()) return;
+            mode.setSelectedIndex(index); changed();
+        }
+        private void updateModeText() {
+            boolean manual = modeForSelection(mode.getSelectedIndex()) == FormulaEditSubmission.Mode.MANUAL;
+            save.setText(manual ? "Save as Entered" : "Recalculate & Save");
             status.setForeground(SECONDARY);
-            if (modeForSelection(mode.getSelectedIndex()) == FormulaEditSubmission.Mode.MANUAL) {
-                save.setText("Save as Entered");
-                subtitle.setText("Store the expression without evaluating it.");
-                status.setText("No calculation. Type a full equation, e.g. 1+1=3 or i^2=-1.");
-            } else {
-                save.setText("Recalculate & Save");
-                subtitle.setText("Calculate a new result with US2.");
-                status.setText("US2 will calculate the result when you save.");
-            }
-            debounce.restart();
-        };
-        formula.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { update.run(); }
-            public void removeUpdate(DocumentEvent e) { update.run(); }
-            public void changedUpdate(DocumentEvent e) { update.run(); }
-        });
-        mode.addActionListener(e -> update.run());
-        debounce.restart();
-
-        cancel.addActionListener(e -> dialog.dispose());
-        save.addActionListener(e -> {
+            status.setText(manual ? "Save the expression without evaluating it." : "A new result will be calculated when you save.");
+        }
+        private void changed() {
+            shownResult = "";
+            previewGeneration++;
+            updateModeText(); previewDelay.restart();
+        }
+        private void renderPreview() {
+            if (!active) return;
+            long generation = ++previewGeneration;
             String latex = formula.getText().trim();
-            if (latex.isBlank()) {
-                status.setForeground(new Color(184, 65, 68));
-                status.setText("Formula cannot be empty.");
-                return;
+            if (previewWorker != null) previewWorker.cancel(true);
+            if (latex.isBlank()) { preview.setIcon(null); return; }
+            String value = modeForSelection(mode.getSelectedIndex()) == FormulaEditSubmission.Mode.MANUAL ? "" : shownResult;
+            PdfMaterial sample = item.withText(latex,value);
+            previewWorker = new SwingWorker<>() {
+                @Override protected BufferedImage doInBackground() { return MaterialRenderer.render(sample,408,82); }
+                @Override protected void done() {
+                    if (!active || generation != previewGeneration || isCancelled()) return;
+                    try { preview.setIcon(new ImageIcon(get())); }
+                    catch (Exception invalid) { preview.setIcon(null); }
+                }
+            };
+            previewWorker.execute();
+        }
+        private void submit() {
+            if (!active || !save.isEnabled()) return;
+            String latex = formula.getText().trim();
+            if (latex.isBlank()) { status.setForeground(ERROR); status.setText("Formula cannot be empty."); return; }
+            FormulaEditSubmission.Mode selected = modeForSelection(mode.getSelectedIndex());
+            if (selected == FormulaEditSubmission.Mode.MANUAL) {
+                finish(FormulaEditSubmission.submit(latex,selected,recalculate)); return;
             }
-            FormulaEditSubmission.Mode selectedMode = modeForSelection(mode.getSelectedIndex());
-            if (selectedMode == FormulaEditSubmission.Mode.MANUAL) {
-                // Never call US2 in manual mode, even for unsupported expressions.
-                FormulaEditSubmission.Revision direct = FormulaEditSubmission.submit(
-                        latex, selectedMode, recalculate);
-                chosen[0] = new Result(direct.formula(), direct.result());
-                dialog.dispose();
-                return;
-            }
-            save.setEnabled(false);
-            mode.setEnabled(false);
-            formula.setEditable(false);
-            status.setForeground(SECONDARY);
-            status.setText("Recalculating…");
-            // Run the injected evaluator off the Swing event-dispatch thread.
-            new SwingWorker<FormulaEditSubmission.Revision, Void>() {
+            save.setEnabled(false); mode.setEnabled(false); formula.setEditable(false);
+            status.setForeground(SECONDARY); status.setText("Recalculating…");
+            calculation = new SwingWorker<>() {
                 @Override protected FormulaEditSubmission.Revision doInBackground() {
-                    return FormulaEditSubmission.submit(latex, selectedMode, recalculate);
+                    return FormulaEditSubmission.submit(latex,selected,recalculate);
                 }
                 @Override protected void done() {
-                    if (!dialog.isDisplayable()) return;
-                    save.setEnabled(true);
-                    mode.setEnabled(true);
-                    formula.setEditable(true);
-                    try {
-                        FormulaEditSubmission.Revision computed = get();
-                        chosen[0] = new Result(computed.formula(), computed.result());
-                        dialog.dispose();
-                    } catch (Exception problem) {
-                        Throwable cause = problem.getCause() == null ? problem : problem.getCause();
-                        status.setForeground(new Color(184, 65, 68));
-                        status.setText("Cannot recalculate: " + cause.getMessage() + ". Try Manual Entry.");
+                    if (!active || isCancelled()) return;
+                    try { finish(get()); }
+                    catch (Exception problem) {
+                        save.setEnabled(true); mode.setEnabled(true); formula.setEditable(true);
+                        Throwable cause = problem.getCause()==null ? problem : problem.getCause();
+                        status.setForeground(ERROR); status.setText("Cannot recalculate. Try Manual Entry.");
+                        status.setToolTipText(cause.getMessage());
                     }
                 }
-            }.execute();
-        });
-        dialog.getRootPane().registerKeyboardAction((ActionEvent e) -> dialog.dispose(),
-                KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
-        dialog.getRootPane().setDefaultButton(save);
-        JPanel frame = new JPanel(new BorderLayout());
-        frame.setOpaque(false);
-        frame.setBorder(BorderFactory.createEmptyBorder(1, 1, 1, 1));
-        frame.add(surface);
-        dialog.setContentPane(frame);
-        dialog.pack();
-        dialog.setMinimumSize(new Dimension(473, 340));
-        dialog.setLocationRelativeTo(owner);
-        SwingUtilities.invokeLater(formula::requestFocusInWindow);
-        dialog.setVisible(true);
-        debounce.stop();
-        return chosen[0];
+            };
+            calculation.execute();
+        }
+        private void finish(FormulaEditSubmission.Revision revision) {
+            result = new Result(revision.formula(),revision.result()); dismiss.run();
+        }
+        Result show(Window owner) {
+            try {
+                GlassDialogs.edit(owner,"Edit Formula",content,close -> {
+                    dismiss = close;
+                    previewDelay.restart();
+                    SwingUtilities.invokeLater(formula::requestFocusInWindow);
+                });
+                return result;
+            } finally {
+                active = false; previewDelay.stop();
+                if (previewWorker != null) previewWorker.cancel(true);
+                if (calculation != null && !calculation.isDone()) calculation.cancel(true);
+            }
+        }
     }
-
     static FormulaEditSubmission.Mode modeForSelection(int index) {
         return index == 1 ? FormulaEditSubmission.Mode.MANUAL : FormulaEditSubmission.Mode.CALCULATE;
-    }
-
-    private static boolean canUseTranslucency() {
-        if (GraphicsEnvironment.isHeadless()) return false;
-        try {
-            return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
-                    .isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT);
-        } catch (RuntimeException problem) { return false; }
-    }
-
-    private static final class RoundedSurface extends JPanel {
-        RoundedSurface() { setOpaque(false); }
-        @Override protected void paintComponent(Graphics source) {
-            Graphics2D g = (Graphics2D) source.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int w = getWidth() - 1, h = getHeight() - 1;
-            g.setColor(Color.WHITE);
-            g.fillRoundRect(0, 0, w, h, 24, 24);
-            g.setColor(new Color(0, 0, 0, 40));
-            g.drawRoundRect(0, 0, w, h, 24, 24);
-            g.dispose();
-        }
-    }
-    private static final class RoundedPreview extends JPanel {
-        RoundedPreview() { setOpaque(false); }
-        @Override protected void paintComponent(Graphics source) {
-            Graphics2D g = (Graphics2D) source.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setColor(new Color(0, 0, 0, 8));
-            g.fillRoundRect(0, 0, getWidth()-1, getHeight()-1, 14, 14);
-            g.dispose();
-        }
-    }
-    private static final class CapsuleButton extends JButton {
-        private final boolean primary;
-        CapsuleButton(String text, boolean primary) {
-            super(text);
-            this.primary = primary;
-            setFont(primary ? view.board.BoardTheme.semibold(12.5f) : view.board.BoardTheme.font(12.5f));
-            setRolloverEnabled(true);
-            setForeground(primary ? Color.WHITE : INK);
-            setFocusPainted(false);
-            setBorderPainted(false);
-            setContentAreaFilled(false);
-            setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(8, 17, 8, 17));
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        }
-        @Override protected void paintComponent(Graphics source) {
-            var tone = primary ? view.glass.AppleLook.Tone.PRIMARY : view.glass.AppleLook.Tone.SECONDARY;
-            view.glass.AppleLook.paintButton((Graphics2D) source, getWidth(), getHeight(), getHeight(), tone,
-                    getModel().isRollover(), getModel().isArmed() && getModel().isPressed(), isEnabled());
-            setForeground(view.glass.AppleLook.buttonText(tone, isEnabled()));
-            super.paintComponent(source);
-        }
     }
 }

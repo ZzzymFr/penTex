@@ -18,8 +18,6 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
-import java.awt.image.ConvolveOp;
-import java.awt.image.Kernel;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -51,9 +49,7 @@ final class CanvasStatusChip extends JComponent {
     /** Uses the very same backdrop source as the adjacent History/Save/Open glass. */
     private Consumer<Graphics2D> backdrop;
     private LongSupplier backdropVersion;
-    private BufferedImage glassImage;
-    private long paintedVersion = Long.MIN_VALUE;
-    private int paintedX = Integer.MIN_VALUE, paintedY = Integer.MIN_VALUE;
+    private final GlassBackdropCache opticalBackdrop = new GlassBackdropCache(this::repaint);
 
     // status line cross-fades when the state changes (Edited -> Saved), instead of snapping
     private final Spring fade = new Spring(0.004f, true);
@@ -83,7 +79,7 @@ final class CanvasStatusChip extends JComponent {
     void setGlassBackdrop(Consumer<Graphics2D> paint, LongSupplier version) {
         backdrop = Objects.requireNonNull(paint);
         backdropVersion = Objects.requireNonNull(version);
-        glassImage = null;
+        opticalBackdrop.clear();
         repaint();
     }
 
@@ -124,7 +120,7 @@ final class CanvasStatusChip extends JComponent {
     SaveMenuState state() { return state; }
 
     @Override public void addNotify() { super.addNotify(); clock.start(); }
-    @Override public void removeNotify() { clock.stop(); fadeTimer.stop(); super.removeNotify(); }
+    @Override public void removeNotify() { clock.stop(); fadeTimer.stop(); opticalBackdrop.clear(); super.removeNotify(); }
 
     private void stepFade() {
         if (fade.step(1f, Motion.ENTER, fadeClock.tick())) {
@@ -169,26 +165,21 @@ final class CanvasStatusChip extends JComponent {
     // what's behind, blurred, so it reads as the same glass as the bar next to it
     private BufferedImage glassBackdrop(int w, int h) {
         if (backdrop == null || backdropVersion == null) return null;
-        long version = backdropVersion.getAsLong();
-        if (glassImage != null && glassImage.getWidth() == w && glassImage.getHeight() == h
-                && paintedX == getX() && paintedY == getY() && paintedVersion == version)
-            return glassImage;
-        BufferedImage snapshot = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D source = snapshot.createGraphics();
-        try {
-            source.setColor(BoardTheme.CANVAS);
-            source.fillRect(0, 0, w, h);
-            source.translate(-getX(), -getY());
-            backdrop.accept(source);
-        } finally { source.dispose(); }
-        // Small static blur, cached per actual backdrop change, never per clock tick.
-        float[] kernel = new float[25];
-        java.util.Arrays.fill(kernel, 1f / kernel.length);
-        glassImage = new ConvolveOp(new Kernel(5, 5, kernel), ConvolveOp.EDGE_NO_OP, null)
-                .filter(snapshot, null);
-        paintedVersion = version;
-        paintedX = getX(); paintedY = getY();
-        return glassImage;
+        return opticalBackdrop.image(w, h, false, new java.awt.Point(getX(), getY()),
+                backdropVersion.getAsLong(), fadeTimer.isRunning(), () -> {
+                    double scale = GlassBackdropCache.SCALE;
+                    BufferedImage snapshot = new BufferedImage(Math.max(1,(int)Math.ceil(w*scale)),
+                            Math.max(1,(int)Math.ceil(h*scale)), BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D source = snapshot.createGraphics();
+                    try {
+                        source.scale(scale, scale);
+                        source.setColor(BoardTheme.CANVAS);
+                        source.fillRect(0, 0, w, h);
+                        source.translate(-getX(), -getY());
+                        backdrop.accept(source);
+                    } finally { source.dispose(); }
+                    return snapshot;
+                });
     }
 
     @Override protected void paintComponent(Graphics graphics) {
@@ -219,7 +210,7 @@ final class CanvasStatusChip extends JComponent {
         java.awt.Shape prior = g.getClip();
         g.clip(body);
         BufferedImage scene = glassBackdrop(w, h);
-        if (scene != null) g.drawImage(scene, 0, 0, null);
+        if (scene != null) g.drawImage(scene, 0, 0, w, h, null);
         int veil = pressed ? 150 : hovered ? 196 : 172;
         g.setColor(new Color(255, 255, 255, veil));
         g.fill(body);

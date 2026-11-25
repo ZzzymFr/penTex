@@ -10,13 +10,13 @@ public final class Motion {
     /** Pressing down / letting go: instant, no wobble. */
     public static final Feel PRESS = new Feel(1f, 0.15f);
     /** Hover lens following the mouse. */
-    public static final Feel HOVER = new Feel(1f, 0.20f);
+    public static final Feel HOVER = new Feel(1f, 0.18f);
     /** Selection platter / segmented lens: a hint of liquid overshoot. */
-    public static final Feel SELECT = new Feel(0.85f, 0.30f);
+    public static final Feel SELECT = new Feel(0.96f, 0.23f);
     /** Settling after a throw: carries the flick, a little bounce. */
-    public static final Feel THROW = new Feel(0.8f, 0.40f);
+    public static final Feel THROW = new Feel(0.94f, 0.32f);
     /** Things arriving / leaving (notices, popups). */
-    public static final Feel ENTER = new Feel(1f, 0.32f);
+    public static final Feel ENTER = new Feel(1f, 0.22f);
 
     public static final int FRAME_MS = 16;
 
