@@ -49,8 +49,10 @@ public final class CanvasHistoryLifecycle {
             java.util.List<Linked> next = new java.util.ArrayList<>();
             for (Linked state : item.getValue()) {
                 if (state.active() && !shouldBeActive) {
-                    if (history.suspendLinked(state.record().id())) {
-                        next.add(new Linked(state.record(), false));
+                    HistoryEntry suspended = history.suspendLinked(state.record().id());
+                    if (suspended != null) {
+                        // Keep the newest timestamp if this record was revisited before Canvas Undo.
+                        next.add(new Linked(suspended, false));
                     }
                     // An explicitly deleted record is not restored by Canvas Undo.
                 } else if (!state.active() && shouldBeActive) {

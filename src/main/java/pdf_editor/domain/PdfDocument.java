@@ -75,6 +75,14 @@ public final class PdfDocument {
             return new Placement(UUID.randomUUID().toString(), null, x, y, width, height,
                     Objects.requireNonNull(text, "text"), List.of(), 0, 16);
         }
+        /** Restore one placement without discarding its persistent identity or body anchor. */
+        public static Placement restore(String id, PdfMaterial material, float x, float y, float width,
+                                        float height, String noteText, List<NoteSpan> spans, int noteStyle,
+                                        int noteSize, ImageLayer layer, AnchorMode anchor, int anchorOffset) {
+            if (id.isBlank() || noteSize < 1) throw new IllegalArgumentException("Invalid placement metadata");
+            return new Placement(id, material, x, y, width, height, noteText, spans,
+                    noteStyle, noteSize, layer, anchor, anchorOffset);
+        }
         public String id() { return id; }
         public PdfMaterial material() { return material; }
         public float x() { return x; }

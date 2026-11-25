@@ -10,7 +10,7 @@ import pdf_editor.adapter.PageCoordinateMapper;
 import pdf_editor.data_access.MaterialRenderer;
 import pdf_editor.data_access.NoteRenderer;
 import pdf_editor.domain.PdfDocument;
-import pdf_editor.MathLibrary;
+import pdf_editor.MaterialStore;
 
 import javax.swing.*;
 import java.awt.*;
@@ -34,6 +34,14 @@ public final class PdfPageCanvas extends JPanel {
     }
     private static final int MARGIN = 28;
     private final PdfEditorController controller;
+    private final pdf_editor.data_access.PdfScreenRasterCache screenRasters =
+            new pdf_editor.data_access.PdfScreenRasterCache();
+    private final PdfViewportPaintCache viewportPaint = new PdfViewportPaintCache();
+    /** Immutable page values are the cache key, not the frequency of Swing repaint events. */
+    private record StablePage(int page, double zoom, Dimension size, Color background,
+                              List<PdfDocument.Placement> placements, List<PdfDocument.NoteSpan> body,
+                              java.util.Set<String> selection, boolean editingBody, String editingNote) { }
+    private record BodyRaster(List<PdfDocument.NoteSpan> spans, List<PdfDocument.Placement> placements) { }
     private final Listener listener;
     private final PageZoomModel zoomModel = new PageZoomModel();
     private InteractiveGraphLayer graphs;
@@ -48,6 +56,12 @@ public final class PdfPageCanvas extends JPanel {
     public void prepareGraphSnapshots(Runnable completed, java.util.function.Consumer<String> failed) {
         if (graphs == null) completed.run();
         else graphs.prepareSnapshots(completed, failed);
+    }
+    public void captureGraphViews() { if (graphs != null) graphs.captureViews(); }
+    public void resetInteractiveGraphs() {
+        screenRasters.clear();
+        viewportPaint.clear();
+        if (graphs != null) graphs.reset();
     }
     boolean isTextEditorShowing() { return inlineNote != null || inlineBody != null; }
 
@@ -69,7 +83,12 @@ public final class PdfPageCanvas extends JPanel {
     public double zoom() { return zoomModel.zoom(); }
     public double setZoom(double zoom) {
         finishInlineEdit();
+        double before = zoomModel.zoom();
         zoomModel.set(zoom);
+        if (before != zoomModel.zoom()) {
+            screenRasters.clear();
+            viewportPaint.clear();
+        }
         updateSize();
         if (inlineNote != null) {
             PdfDocument.Placement note = controller.selected();
@@ -93,8 +112,11 @@ public final class PdfPageCanvas extends JPanel {
     public Rectangle interactiveGraphPreviewBounds(Point pointerOnPage, double aspectRatio) {
         // Exactly the same dimensions used by DocEditorPanel when the item is placed.
         GraphPlacementSizing.Size size = GraphPlacementSizing.forAspect(aspectRatio);
-        double w = size.width();
-        double h = size.height();
+        return materialPreviewBounds(pointerOnPage, size.width(), size.height());
+    }
+    public Rectangle materialPreviewBounds(Point pointerOnPage, float width, float height) {
+        double w = width;
+        double h = height;
         double zoom = zoom();
         double x = Math.min(PdfDocument.PAGE_WIDTH - w, Math.max(0, pageX(pointerOnPage.x)));
         double y = Math.min(PdfDocument.PAGE_HEIGHT - h, Math.max(0, pageY(pointerOnPage.y)));
@@ -543,7 +565,7 @@ public final class PdfPageCanvas extends JPanel {
             if(inkPreview.size()==1)g.fillOval(Math.round(inkPreview.get(0).x-x)-1,
                     Math.round(inkPreview.get(0).y-y)-1,3,3);
         } finally {g.dispose();}
-        controller.place(MathLibrary.region("PDF ink stroke",image),x,y,w,h);
+        controller.place(MaterialStore.region("PDF ink stroke",image),x,y,w,h);
         controller.clearSelection();
         inkPreview.clear();repaint();
     }
@@ -558,7 +580,6 @@ public final class PdfPageCanvas extends JPanel {
         setTransferHandler(new TransferHandler() {
             @Override public boolean canImport(TransferSupport support) {
                 return support.isDataFlavorSupported(CanvasPdfDragController.HISTORY_SELECTION_FLAVOR)
-                        || support.isDataFlavorSupported(DataFlavor.stringFlavor)
                         || support.isDataFlavorSupported(DataFlavor.imageFlavor);
             }
             @Override public boolean importData(TransferSupport support) {
@@ -580,24 +601,14 @@ public final class PdfPageCanvas extends JPanel {
                         java.awt.Image source = (java.awt.Image) support.getTransferable()
                                 .getTransferData(DataFlavor.imageFlavor);
                         BufferedImage image = imageAsBuffered(source);
-                        MathLibrary.Material region = controller.library().addInk("Canvas selection", image);
+                        MaterialStore.Material region = controller.materials().addInk("Canvas selection", image);
                         float width = Math.min(440, Math.max(85, image.getWidth()));
                         float height = width * image.getHeight() / Math.max(1f, image.getWidth());
                         if (height > 575) { width *= 575f / height; height = 575f; }
                         controller.place(region, toPageX(location.x), toPageY(location.y), width, height);
                         repaint(); return true;
                     }
-                    String id = (String) support.getTransferable().getTransferData(DataFlavor.stringFlavor);
-                    MathLibrary.Material material = controller.library().find(id);
-                    if (material == null) return false;
-                    float itemWidth = material.isGraph() ? 260f : 300f;
-                    float itemHeight = material.isGraph()
-                            ? Math.max(25f, itemWidth * material.imageHeight() / Math.max(1f, material.imageWidth()))
-                            : 100f;
-                    if (itemHeight > 575f) { itemWidth *= 575f / itemHeight; itemHeight = 575f; }
-                    controller.place(material, toPageX(location.x), toPageY(location.y), itemWidth, itemHeight);
-                    refreshInteractiveGraphs();
-                    repaint(); return true;
+                    return false;
                 } catch (Exception ignored) { return false; }
             }
         });
@@ -784,24 +795,33 @@ public final class PdfPageCanvas extends JPanel {
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             Rectangle visible = graphScreenBounds(graph);
+            // Swing may repaint only a toolbar or the far side of the page. Do not
+            // recompose rich text and large graph overlays when the clip misses them.
+            if (!g.hitClip(visible.x, visible.y, visible.width, visible.height)) return;
             g.clipRect(visible.x, visible.y, visible.width, visible.height);
             g.translate(MARGIN, MARGIN);
             g.scale(zoom(), zoom());
             g.translate(-MARGIN, -MARGIN);
             List<PdfDocument.Placement> items = controller.placements();
             for (PdfDocument.Placement p : PdfGraphStacking.behindAbove(items, graph))
-                paintPlacement(g, p);
-            if (PdfGraphStacking.bodyAbove(graph) && !controller.body().isEmpty()) {
-                var body = PdfBodyFlowLayout.displayNote(controller.body());
+                if (hitsPlacement(g, p)) paintPlacement(g, p);
+            if (PdfGraphStacking.bodyAbove(graph) && !controller.body().isEmpty()
+                    && g.hitClip(Math.round(PdfDocument.BODY_LEFT) + MARGIN,
+                            Math.round(PdfDocument.BODY_TOP) + MARGIN,
+                            Math.round(PdfDocument.BODY_WIDTH), Math.round(PdfDocument.BODY_HEIGHT))) {
+                var spans = controller.body();
+                var body = PdfBodyFlowLayout.displayNote(spans);
                 double scale = Math.max(1.0, zoom() * Math.max(1.0,
                         g.getDeviceConfiguration().getDefaultTransform().getScaleX()));
                 int w = Math.min(3200, (int)Math.ceil(body.width()*scale));
                 int h = Math.min(3200, (int)Math.ceil(body.height()*scale));
-                g.drawImage(PdfWrapTextLayout.render(controller.body(), items, w, h),
+                g.drawImage(pdf_editor.data_access.PdfScreenRasterCache.render(new BodyRaster(spans, items), w, h,
+                                () -> PdfWrapTextLayout.render(spans, items, w, h)),
                         Math.round(body.x())+MARGIN, Math.round(body.y())+MARGIN,
                         Math.round(body.width()), Math.round(body.height()), null);
             }
             for (PdfDocument.Placement p : PdfGraphStacking.foregroundAbove(items, graph)) {
+                if (!hitsPlacement(g, p)) continue;
                 if (p.isNote()) {
                     int x = Math.round(p.x()) + MARGIN, y = Math.round(p.y()) + MARGIN;
                     int w = Math.max(8, Math.round(p.width()));
@@ -837,7 +857,48 @@ public final class PdfPageCanvas extends JPanel {
         }
     }
 
+    private static boolean hitsPlacement(Graphics2D g, PdfDocument.Placement p) {
+        return g.hitClip(Math.round(p.x()) + MARGIN - 4, Math.round(p.y()) + MARGIN - 4,
+                Math.round(p.width()) + 8, Math.round(p.height()) + 8);
+    }
+
+    /** All PDF screen layers share a cache, including the existing behind-text painter. */
+    @Override public void paint(Graphics g) {
+        screenRasters.duringPaint(() -> super.paint(g));
+    }
+
+    @Override public void removeNotify() {
+        viewportPaint.clear();
+        screenRasters.clear();
+        super.removeNotify();
+    }
+
     @Override protected void paintComponent(Graphics g) {
+        // Preserve the original live rendering for ink, lasso, transforms and printing.
+        // Inline text editors and interactive graphs are Swing children, not cached pixels.
+        if (isPaintingForPrint()) { paintPage(g); return; }
+        if (g instanceof Graphics2D target && isOpaque()
+                && !dragStarted && !selectingBox
+                && inkPreview.isEmpty() && erasePreview.isEmpty() && liveErasedInk.isEmpty()
+                && selectionCandidates.isEmpty()) {
+            Rectangle visible = getVisibleRect();
+            Rectangle componentBounds = new Rectangle(0, 0, getWidth(), getHeight());
+            Rectangle dirty = target.getClipBounds() == null ? componentBounds
+                    : target.getClipBounds().intersection(componentBounds);
+            if (getParent() == null) visible = visible.intersection(dirty);
+            // Explicit full-page/offscreen callers can ask for more than the visible
+            // viewport; preserve their original drawing rather than omitting content.
+            if (!dirty.isEmpty() && visible.contains(dirty)) {
+                StablePage state = new StablePage(controller.currentPage(), zoom(), getSize(), getBackground(),
+                        controller.placements(), controller.body(), controller.selectedIds(),
+                        inlineBody != null, inlineNote == null ? null : editingId);
+                if (viewportPaint.paint(target, visible, state, this::paintPage)) return;
+            }
+        } else viewportPaint.clear();
+        paintPage(g);
+    }
+
+    private void paintPage(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g.create();
         try {
@@ -877,13 +938,15 @@ public final class PdfPageCanvas extends JPanel {
                 if (inlineNote != null && p.id().equals(editingId)) continue;
                 int x = Math.round(p.x()) + MARGIN, y = Math.round(p.y()) + MARGIN;
                 int width = Math.round(p.width()), height = Math.round(p.height());
-                // Render at device-visible resolution on every paint/zoom: a single
-                // low-res bitmap must never be stretched when the user zooms in.
+                // A small moving drag ghost should not render off-clip placements.
+                if (!g2.hitClip(x - 4, y - 4, width + 8, height + 8)) continue;
+                // Screen raster keys include actual device resolution, so zoom remains sharp.
                 double deviceScale = Math.max(1.0, zoom() * Math.max(1.0,
                         g2.getDeviceConfiguration().getDefaultTransform().getScaleX()));
                 int rasterWidth = Math.min(3200, Math.max(8, (int) Math.ceil(width * deviceScale)));
                 int rasterHeight = Math.min(3200, Math.max(8, (int) Math.ceil(height * deviceScale)));
-                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                // The raster already matches device resolution; bilinear avoids expensive resampling on repaint.
+                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
                 BufferedImage preview = liveErasedInk.get(p.id());
                 if (preview == null) {
                     g2.drawImage(p.isNote() ? NoteRenderer.render(p, rasterWidth, rasterHeight)

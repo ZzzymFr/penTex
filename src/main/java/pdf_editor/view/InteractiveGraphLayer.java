@@ -66,14 +66,32 @@ final class InteractiveGraphLayer {
             boolean selected = controller.isSelected(placement.id()) && !page.isTextEditorShowing();
             if (selected && entry.ready) {
                 Rectangle bounds = page.graphScreenBounds(placement);
-                if (!entry.card.getBounds().equals(bounds)) entry.card.setBounds(bounds);
-                if (!entry.card.isVisible()) entry.card.setVisible(true);
-            } else if (entry.card.isVisible()) entry.card.setVisible(false);
+                if (!entry.surface.getBounds().equals(bounds)) entry.surface.setBounds(bounds);
+                entry.surface.setActive(true);
+            } else entry.surface.setActive(false);
         }
         for (Live entry : live.values()) {
             PdfDocument.Placement placement = currentPlacement(entry.id);
-            if (placement == null && entry.card.isVisible()) entry.card.setVisible(false);
+            if (placement == null) entry.surface.setActive(false);
         }
+    }
+
+    /** Discard cards when opening a different document (even when IDs coincide). */
+    void reset() {
+        for (Live entry : live.values()) {
+            entry.renderRevision++;
+            entry.whenReady.clear();
+            entry.surface.setActive(false);
+            page.remove(entry.surface);
+        }
+        live.clear();
+        page.revalidate();
+        page.repaint();
+    }
+
+    /** Capture range and camera state synchronously, independent of asynchronous PNG rendering. */
+    void captureViews() {
+        for (Live entry : live.values()) entry.captureView();
     }
 
     /** The actual visible live GraphCard, if one is selected on this PDF page. */
@@ -123,6 +141,7 @@ final class InteractiveGraphLayer {
     private void prepareNext(List<Live> entries, int i, Runnable success, Consumer<String> failure) {
         if (i >= entries.size()) { success.run(); return; }
         Live entry = entries.get(i);
+        if (live.get(entry.id) != entry) { failure.accept("PDF document changed"); return; }
         if (entry.error != null) { failure.accept(entry.error); return; }
         if (!entry.ready) {
             entry.whenReady.add(() -> prepareNext(entries, i, success, failure));
@@ -130,6 +149,7 @@ final class InteractiveGraphLayer {
         }
         PdfDocument.Placement placement = anyPlacement(entry.id);
         if (placement == null) { prepareNext(entries, i+1, success, failure); return; }
+        entry.captureView();
         int width = Math.max(8, Math.min(MAX_RENDER_SIDE, Math.round(placement.width() * 4)));
         int height = Math.max(8, Math.min(MAX_RENDER_SIDE, Math.round(placement.height() * 4)));
         // Discard any older low-resolution hover/rotation callback.  Export must
@@ -157,6 +177,7 @@ final class InteractiveGraphLayer {
     private final class Live implements PlotCard.Host {
         final String id;
         final GraphCard card;
+        final PdfGraphPaintHost surface;
         final GraphSession session;
         final List<Runnable> whenReady = new ArrayList<>();
         boolean ready;
@@ -167,6 +188,8 @@ final class InteractiveGraphLayer {
             this.id = id;
             session = sessions.get();
             card = new GraphCard(session.viewModel(), session.explore());
+            surface = new PdfGraphPaintHost(card, () -> session.viewModel().getState().getKind()
+                    != interface_adapter.graph.GraphState.Kind.SURFACE);
             card.setHost(this);
             card.addMouseListener(new MouseAdapter() {
                 private boolean popupOnPress;
@@ -179,14 +202,18 @@ final class InteractiveGraphLayer {
                     popupOnPress = false;
                 }
             });
-            page.add(card, 0);
+            page.add(surface, 0);
             session.viewModel().addPropertyChangeListener(event -> {
+                if (SwingUtilities.isEventDispatchThread()) surface.invalidateFrame();
+                else SwingUtilities.invokeLater(surface::invalidateFrame);
                 if (!GraphViewModel.STATE_PROPERTY.equals(event.getPropertyName())) return;
                 SwingUtilities.invokeLater(() -> {
+                    if (live.get(id) != this) return;
                     if (session.viewModel().getState().getError() != null)
                         error = session.viewModel().getState().getError();
                     else if (session.viewModel().getState().hasGraph()) {
                         card.restoreCamera(definition.camera());
+                        surface.invalidateFrame();
                         ready = true;
                         refresh();
                         List<Runnable> callbacks = List.copyOf(whenReady);
@@ -206,6 +233,7 @@ final class InteractiveGraphLayer {
                             definition.yPair(), definition.zPair());
                 } catch (RuntimeException bad) {
                     SwingUtilities.invokeLater(() -> {
+                        if (live.get(id) != this) return;
                         error = bad.getMessage() == null ? bad.toString() : bad.getMessage();
                         List<Runnable> callbacks = List.copyOf(whenReady);
                         whenReady.clear();
@@ -244,8 +272,21 @@ final class InteractiveGraphLayer {
             controller.deleteSelected();
             refresh(); page.repaint();
         }
+        void captureView() {
+            if (!ready || live.get(id) != this || anyPlacement(id) == null) return;
+            var state = session.viewModel().getState();
+            if (!state.hasGraph() || state.getError() != null) return;
+            try {
+                controller.updateGraphView(id, interface_adapter.graph.GraphDefinitionMapper.from(state)
+                        .withCamera(card.cameraState()));
+            } catch (IllegalArgumentException invalidRange) {
+                // Retain the previous valid range during an incomplete graph interaction.
+            }
+        }
         @Override public void viewChanged() {
+            surface.invalidateFrame();
             transforming = false;
+            captureView();
             // A view change is not a PDF placement edit; refresh its static fallback separately.
             if (ready && placement() != null) {
                 PdfDocument.Placement item = placement();
@@ -253,7 +294,7 @@ final class InteractiveGraphLayer {
                 int height = Math.max(8, Math.min(MAX_RENDER_SIDE, Math.round(item.height() * 3)));
                 int token = ++renderRevision;
                 card.snapshotLater(width, height, picture -> {
-                    if (token == renderRevision && picture != null) {
+                    if (live.get(id) == this && token == renderRevision && picture != null) {
                         controller.updateGraphSnapshot(id, png(picture), picture.getWidth(), picture.getHeight());
                         page.repaint();
                     }

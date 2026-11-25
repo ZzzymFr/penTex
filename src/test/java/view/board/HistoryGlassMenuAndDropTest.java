@@ -24,27 +24,27 @@ class HistoryGlassMenuAndDropTest {
                 "Calculation", "2+3", "5", null, 0, 0, Instant.EPOCH));
     }
 
-    @Test void historyUsesGlassMenuAndRoutesLibraryPdfAndDeleteActions() {
-        AtomicInteger library = new AtomicInteger();
+    @Test void historyUsesGlassMenuAndRoutesEditPdfAndDeleteActions() {
+        AtomicInteger edits = new AtomicInteger();
         AtomicInteger pdf = new AtomicInteger();
         AtomicInteger deleted = new AtomicInteger();
         HistoryPanel panel = new HistoryPanel(new HistoryViewModel(), new HistoryPanel.DragHost() {
             @Override public void dragging(BufferedImage i, Point p) { }
             @Override public boolean dropped(BufferedImage i, Point p) { return false; }
-            @Override public void importIntoLibrary(HistoryItem item) { library.incrementAndGet(); }
+            @Override public void editHistoryFormula(HistoryItem item) { edits.incrementAndGet(); }
             @Override public void importIntoPdf(HistoryItem item) { pdf.incrementAndGet(); }
             @Override public void deleteHistory(HistoryItem item) { deleted.incrementAndGet(); }
         });
         var menu = panel.contextMenu(calc());
         assertTrue(menu instanceof GlassContextMenu);
         assertEquals(3, menu.getComponentCount());
-        assertEquals("Add to Library", ((JMenuItem) menu.getComponent(0)).getText());
+        assertEquals("Edit formula (calculate or manual)", ((JMenuItem) menu.getComponent(0)).getText());
         assertEquals("Add to PDF", ((JMenuItem) menu.getComponent(1)).getText());
         assertEquals("Delete from History", ((JMenuItem) menu.getComponent(2)).getText());
         ((JMenuItem) menu.getComponent(0)).doClick();
         ((JMenuItem) menu.getComponent(1)).doClick();
         ((JMenuItem) menu.getComponent(2)).doClick();
-        assertEquals(1, library.get());
+        assertEquals(1, edits.get());
         assertEquals(1, pdf.get());
         assertEquals(1, deleted.get());
     }

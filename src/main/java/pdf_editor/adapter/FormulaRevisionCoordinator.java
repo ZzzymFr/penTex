@@ -2,7 +2,7 @@ package pdf_editor.adapter;
 
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
-import pdf_editor.MathLibrary;
+import pdf_editor.MaterialStore;
 import pdf_editor.domain.PdfMaterial;
 import pdf_editor.domain.PdfDocument;
 
@@ -19,11 +19,11 @@ import java.util.function.Function;
  * back on the Swing event thread so Library listeners see a consistent final value.
  */
 public final class FormulaRevisionCoordinator {
-    private final MathLibrary library;
+    private final MaterialStore library;
     private final HistoryInteractor history; // optional for independent PDF-only use
     private final Function<String, String> calculator;
 
-    public FormulaRevisionCoordinator(MathLibrary library, HistoryInteractor history,
+    public FormulaRevisionCoordinator(MaterialStore library, HistoryInteractor history,
                                       Function<String, String> calculator) {
         this.library = Objects.requireNonNull(library, "library");
         this.history = history;
@@ -51,7 +51,28 @@ public final class FormulaRevisionCoordinator {
         updateLibrary(previous, formula, result);
     }
 
-    /** A Library edit also refreshes the document placements linked by material ID. */
+    /** Edit an archived formula, including copies restored from an earlier PDF session. */
+    public void editHistory(PdfEditorController pdf, HistoryEntry entry, String formula, String result)
+            throws IOException {
+        validate(formula, result);
+        if (entry.kind() != HistoryEntry.Kind.FORMULA && entry.kind() != HistoryEntry.Kind.CALCULATION)
+            throw new IllegalArgumentException("History item is not a formula");
+        if (entry.formula().equals(formula) && entry.result().equals(result)) return;
+        if (history != null && history.find(entry.id()) == null)
+            throw new IllegalStateException("History item no longer exists");
+        reviseHistory(entry.formula(), entry.result(), formula, result);
+        java.util.Set<String> matching = new java.util.LinkedHashSet<>();
+        for (var page : pdf.documentSnapshot().pages()) for (var placement : page) {
+            if (placement.isNote()) continue;
+            PdfMaterial material = placement.material();
+            if (!material.isGraph() && material.formula().equals(entry.formula()) &&
+                    material.result().equals(entry.result())) matching.add(material.id());
+        }
+        for (String id : matching) pdf.refreshMaterial(id, formula, result);
+        library.reviseFormula("", entry.formula(), entry.result(), formula, result);
+    }
+
+    /** A legacy material edit also refreshes the document placements linked by material ID. */
     public void editLibrary(PdfEditorController pdf, PdfMaterial previous, String formula, String result)
             throws IOException {
         Objects.requireNonNull(pdf, "pdf");
@@ -70,7 +91,7 @@ public final class FormulaRevisionCoordinator {
         if (oldFormula.equals(formula) && oldResult.equals(result)) return;
         reviseHistory(oldFormula, oldResult, formula, result);
         // Canvas History assets do not carry Library IDs. Match only exact old content.
-        for (MathLibrary.Material item : library.items()) {
+        for (MaterialStore.Material item : library.items()) {
             if (!item.isGraph() && item.formula().equals(oldFormula) && item.result().equals(oldResult))
                 pdf.refreshMaterial(item.id(), formula, result);
         }
@@ -126,7 +147,7 @@ public final class FormulaRevisionCoordinator {
             throws IOException {
         if (history == null) return;
         List<HistoryEntry> old = history.list().stream()
-                .filter(e -> !e.kind().equals(HistoryEntry.Kind.GRAPH))
+                .filter(e -> e.kind() == HistoryEntry.Kind.FORMULA || e.kind() == HistoryEntry.Kind.CALCULATION)
                 .filter(e -> e.formula().equals(oldFormula.trim())
                         && e.result().equals(oldResult == null ? "" : oldResult.trim()))
                 .toList();

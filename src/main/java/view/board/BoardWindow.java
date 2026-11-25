@@ -426,11 +426,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         }
     }
     @Override public void deleteHistory(HistoryItem item) { deleteHistory.apply(item.getId()); }
-    @Override public void importIntoLibrary(HistoryItem item) {
-        if (pdf instanceof PdfWorkspacePort panel) {
-            panel.addHistoryToLibrary(item);
-            setPdfOpen(true);
-        }
+    @Override public void editHistoryFormula(HistoryItem item) {
+        if (pdf instanceof PdfWorkspacePort panel) panel.editHistoryFormula(item);
     }
 
     @Override public boolean dropped(HistoryItem item, BufferedImage picture, Point screenTopLeft) {
@@ -439,7 +436,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
 
     @Override public boolean droppedAt(HistoryItem item, BufferedImage picture,
                                        Point previewTopLeft, Point cursorScreen) {
-        ghost.clear();
+        ghost.clear(); ghost.clearOutline();
         // Hit-test against the board's actual PDF bounds, not the nested editor's
         // transient Swing showing state (which can change while dragging).
         Point onBoard = new Point(cursorScreen);
@@ -447,6 +444,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         if (pdf instanceof PdfWorkspacePort panel && isPdfDropTarget(onBoard)) {
             return panel.dropHistoryItem(item, cursorScreen);
         }
+        if (historyOpen && history.isVisible() && history.getBounds().contains(onBoard)) return false;
         Point onPage = new Point(cursorScreen);
         SwingUtilities.convertPointFromScreen(onPage, page);
         if (!canvas.isShowing() || onPage.x < 0 || onPage.x >= page.getWidth()
@@ -458,18 +456,18 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         SwingUtilities.convertPointFromScreen(cursor, canvas);
         position.x = Math.max(0, Math.min(position.x, cursor.x));
         position.y = Math.max(0, Math.min(position.y, cursor.y));
-        if (item.isGraph() && item.entry().graphDefinition() != null
-                && page instanceof view.canvas.AnswerCanvasPage livePage) {
+        if (item.entry().graphDefinition() != null) {
+            if (!(page instanceof view.canvas.AnswerCanvasPage livePage)) return false;
             try {
                 entity.graph.GraphDefinition definition =
                         interface_adapter.graph.GraphDefinitionCodec.decode(item.entry().graphDefinition());
-                if (livePage.restoreHistoryGraph(definition, position)) return true;
+                return livePage.restoreHistoryGraph(definition, position);
             } catch (IllegalArgumentException invalid) {
-                return false; // corrupted graph definition must never silently become a picture
+                return false; // never silently flatten an interactive graph
             }
         }
-        canvas.addHistoryAsset(picture, item.isGraph() ? "" : item.getLatex(),
-                item.isGraph() ? "" : item.getAnswer(), position);
+        canvas.addHistoryAsset(picture, item.hasImage() ? "" : item.getLatex(),
+                item.hasImage() ? "" : item.getAnswer(), position);
         return true;
     }
 
@@ -561,9 +559,27 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         return pdfOpen && pdf.isVisible() && pdf.getBounds().contains(boardPoint);
     }
 
-    @Override public void cancelDrag() { ghost.clear(); }
+    @Override public void cancelDrag() { ghost.clear(); ghost.clearOutline(); }
 
     // ---- dragging a history row onto the canvas
+
+    @Override public void draggingAt(HistoryItem item, BufferedImage picture, Point screenTopLeft, Point cursorScreen) {
+        Point cursor = new Point(cursorScreen);
+        SwingUtilities.convertPointFromScreen(cursor, this);
+        if (isPdfDropTarget(cursor) && pdf instanceof PdfWorkspacePort port) {
+            Rectangle placement = port.historyPreviewBounds(item, cursorScreen);
+            if (placement != null) {
+                Point at = placement.getLocation(); SwingUtilities.convertPointFromScreen(at, this);
+                placement.setLocation(at);
+                ghost.clear();
+                ghost.showGraphPreview(picture, pdf.getBounds().intersects(placement) ? placement
+                        : sameSizeFallbackPreview(placement, cursor, pdf.getBounds()), pdf.getBounds());
+                return;
+            }
+        }
+        ghost.clearOutline();
+        dragging(picture, screenTopLeft);
+    }
 
     @Override
     public void dragging(BufferedImage picture, Point screenTopLeft) {
@@ -591,6 +607,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private static final class Ghost extends JComponent {
         private BufferedImage picture;
         private BufferedImage graphThumbnail;
+        private BufferedImage scaledGraphGhost;
         private Rectangle outline;
         private Rectangle previewClip;
 
@@ -600,19 +617,55 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         void showOutline(Rectangle bounds) { showGraphPreview(null, bounds, null); }
 
         void showGraphPreview(BufferedImage image, Rectangle bounds, Rectangle clip) {
-            Rectangle before = outline;
+            if (graphThumbnail == image && java.util.Objects.equals(outline, bounds)
+                    && java.util.Objects.equals(previewClip, clip)) return;
+            Rectangle before = outline, oldClip = previewClip;
+            if (image != graphThumbnail || bounds == null || before == null
+                    || before.width != bounds.width || before.height != bounds.height) {
+                scaledGraphGhost = scaledGhost(image, bounds);
+            }
             outline = bounds == null ? null : new Rectangle(bounds);
             graphThumbnail = image;
             previewClip = clip == null ? null : new Rectangle(clip);
-            repaintOutline(before);
-            repaintOutline(outline);
+            repaintOutline(before, oldClip);
+            repaintOutline(outline, previewClip);
         }
 
         void clearOutline() { showGraphPreview(null, null, null); }
 
-        private void repaintOutline(Rectangle bounds) {
-            if (bounds != null) repaint(bounds.x - 4, bounds.y - 4,
-                    bounds.width + 8, bounds.height + 8);
+        private void repaintOutline(Rectangle bounds, Rectangle clip) {
+            if (bounds == null) return;
+            Rectangle dirty = new Rectangle(bounds);
+            dirty.grow(4, 4);
+            if (clip != null) dirty = dirty.intersection(clip);
+            if (!dirty.isEmpty()) repaint(dirty.x, dirty.y, dirty.width, dirty.height);
+        }
+
+        /** Rasterize the translucent ghost only when its source or dimensions change.
+         * Mouse movement at a fixed zoom is then just a clipped image blit.
+         */
+        private static BufferedImage scaledGhost(BufferedImage source, Rectangle bounds) {
+            if (source == null || bounds == null || bounds.isEmpty()) return null;
+            double fit = Math.min((double) bounds.width / source.getWidth(),
+                    (double) bounds.height / source.getHeight());
+            int w = Math.max(1, (int)Math.round(source.getWidth() * fit));
+            int h = Math.max(1, (int)Math.round(source.getHeight() * fit));
+            // Guard against unbounded allocations while retaining the precise placement outline.
+            double cap = Math.min(1.0, 1800.0 / Math.max(w, h));
+            w = Math.max(1, (int)Math.round(w * cap));
+            h = Math.max(1, (int)Math.round(h * cap));
+            BufferedImage raster = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+            Graphics2D g = raster.createGraphics();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.setComposite(AlphaComposite.SrcOver.derive(.55f));
+                // Preserve the previous rounded-outline clipping, but do it only once.
+                g.clip(new java.awt.geom.RoundRectangle2D.Float(
+                        -(bounds.width - w) / 2f, -(bounds.height - h) / 2f,
+                        bounds.width, bounds.height, 12, 12));
+                g.drawImage(source, 0, 0, w, h, null);
+            } finally { g.dispose(); }
+            return raster;
         }
 
         void showPicture(BufferedImage picture, Point at) {
@@ -664,15 +717,11 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
                     java.awt.Shape originalClip = g2.getClip();
                     if (previewClip != null) g2.clip(previewClip);
                     java.awt.Shape pdfClip = g2.getClip();
-                    if (graphThumbnail != null) {
-                        java.awt.Shape shape = new java.awt.geom.RoundRectangle2D.Float(
-                                outline.x, outline.y, outline.width, outline.height, 12, 12);
-                        g2.clip(shape);
-                        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                        g2.setComposite(AlphaComposite.SrcOver.derive(0.55f));
-                        g2.drawImage(graphThumbnail, outline.x, outline.y,
-                                outline.width, outline.height, null);
+                    if (scaledGraphGhost != null) {
+                        int w = scaledGraphGhost.getWidth(), h = scaledGraphGhost.getHeight();
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.drawImage(scaledGraphGhost, outline.x + (outline.width - w) / 2,
+                                outline.y + (outline.height - h) / 2, null);
                         g2.setClip(pdfClip);
                         g2.setComposite(AlphaComposite.SrcOver);
                         g2.setColor(new Color(49, 119, 227, 175));

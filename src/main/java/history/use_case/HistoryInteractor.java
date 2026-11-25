@@ -13,6 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class HistoryInteractor {
     private final HistoryRepository repository;
     private final Clock clock;
+    private java.time.Instant lastRecordedAt;
     private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final java.util.Deque<HistoryEntry> deleted = new java.util.ArrayDeque<>();
 
@@ -27,33 +28,36 @@ public final class HistoryInteractor {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    public boolean recordFormula(String latex) throws IOException {
+    public synchronized boolean recordFormula(String latex) throws IOException {
         if (latex == null || latex.isBlank()) return false;
         String formula = latex.trim();
         // A calculation already containing this formula is more informative than a formula-only copy.
-        for (HistoryEntry previous : repository.findAll()) {
-            if (previous.kind() == HistoryEntry.Kind.CALCULATION && previous.formula().equals(formula))
+        // When only a formula is available, promote the most recent matching calculation.
+        for (HistoryEntry previous : list()) {
+            if (previous.kind() == HistoryEntry.Kind.CALCULATION && previous.formula().equals(formula)) {
+                repository.saveOrRefresh(previous.revisitedAt(nextTimestamp()));
+                changed();
                 return false;
+            }
         }
-        boolean saved = repository.saveIfAbsent(newEntry(HistoryEntry.Kind.FORMULA, "Formula", formula, "", null, 0, 0));
-        if (saved) changed();
+        boolean saved = repository.saveOrRefresh(newEntry(HistoryEntry.Kind.FORMULA, "Formula", formula, "", null, 0, 0));
+        changed();
         return saved;
     }
 
-    public boolean recordCalculation(String latex, String result) throws IOException {
+    public synchronized boolean recordCalculation(String latex, String result) throws IOException {
         if (latex == null || latex.isBlank()) return false;
         String formula = latex.trim();
         if (result == null || result.isBlank()) return recordFormula(formula);
         HistoryEntry entry = newEntry(HistoryEntry.Kind.CALCULATION, "Calculation", formula,
                 result.trim(), null, 0, 0);
-        boolean saved = repository.saveIfAbsent(entry);
+        boolean saved = repository.saveOrRefresh(entry);
         // Upgrade earlier formula-only records, including when this calculation already existed.
-        boolean removed = false;
         for (HistoryEntry previous : repository.findAll()) {
             if (previous.kind() == HistoryEntry.Kind.FORMULA && previous.formula().equals(formula))
-                removed |= repository.deleteById(previous.id());
+                repository.deleteById(previous.id());
         }
-        if (saved || removed) changed();
+        changed();
         return saved;
     }
 
@@ -61,15 +65,33 @@ public final class HistoryInteractor {
     public boolean recordGraph(String source, byte[] png, int width, int height) throws IOException {
         return recordGraph(source, png, width, height, null);
     }
-    public boolean recordGraph(String source, byte[] png, int width, int height,
+    public synchronized boolean recordGraph(String source, byte[] png, int width, int height,
                                String graphDefinition) throws IOException {
         if (png == null) return false;
-        boolean saved = repository.saveIfAbsent(new HistoryEntry(
+        boolean saved = repository.saveOrRefresh(new HistoryEntry(
                 UUID.randomUUID().toString(), HistoryEntry.Kind.GRAPH, "Graph",
                 source == null ? "" : source.trim(), "", png, width, height,
-                clock.instant(), graphDefinition));
-        if (saved) changed();
+                nextTimestamp(), graphDefinition));
+        changed();
         return saved;
+    }
+
+    /** Persist a reusable handwritten selection with its own kind and content key. */
+    public synchronized boolean recordInk(String title, byte[] png, int width, int height) throws IOException {
+        String label = title == null || title.isBlank() ? "Handwritten notes" : title.strip();
+        boolean saved = repository.saveOrRefresh(new HistoryEntry(UUID.randomUUID().toString(),
+                HistoryEntry.Kind.INK, label, "", "", png, width, height, nextTimestamp()));
+        changed();
+        return saved;
+    }
+
+    /** Existing material already matched by an adapter (for example a native graph with a new thumbnail). */
+    public synchronized boolean refresh(String id) throws IOException {
+        HistoryEntry existing = find(id);
+        if (existing == null) return false;
+        repository.saveOrRefresh(existing.revisitedAt(nextTimestamp()));
+        changed();
+        return true;
     }
 
     public List<HistoryEntry> list() throws IOException {
@@ -114,18 +136,29 @@ public final class HistoryInteractor {
     }
 
     /** Automatic source invalidation is separate from explicit user deletion/Undo delete. */
-    synchronized boolean suspendLinked(String id) throws IOException {
-        if (id == null || !repository.deleteById(id)) return false;
-        changed(); return true;
+    synchronized HistoryEntry suspendLinked(String id) throws IOException {
+        HistoryEntry current = find(id);
+        if (current == null || !repository.deleteById(id)) return null;
+        changed(); return current;
     }
     synchronized boolean restoreLinked(HistoryEntry entry) throws IOException {
         if (!repository.saveIfAbsent(Objects.requireNonNull(entry))) return false;
         changed(); return true;
     }
 
+    /** Break same-clock ties deterministically and initialize from persisted records after restart. */
+    private java.time.Instant nextTimestamp() throws IOException {
+        if (lastRecordedAt == null) lastRecordedAt = repository.findAll().stream()
+                .map(HistoryEntry::createdAt).max(java.util.Comparator.naturalOrder()).orElse(null);
+        java.time.Instant now = clock.instant();
+        if (lastRecordedAt != null && !now.isAfter(lastRecordedAt)) now = lastRecordedAt.plusNanos(1);
+        lastRecordedAt = now;
+        return now;
+    }
+
     private HistoryEntry newEntry(HistoryEntry.Kind kind, String title, String formula, String result,
-                                  byte[] png, int width, int height) {
+                                  byte[] png, int width, int height) throws IOException {
         return new HistoryEntry(UUID.randomUUID().toString(), kind, title, formula, result,
-                png, width, height, clock.instant());
+                png, width, height, nextTimestamp());
     }
 }

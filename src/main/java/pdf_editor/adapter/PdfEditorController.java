@@ -1,6 +1,6 @@
 package pdf_editor.adapter;
 
-import pdf_editor.MathLibrary;
+import pdf_editor.MaterialStore;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.adapter.PdfWrapTextLayout;
 import pdf_editor.domain.PdfMaterial;
@@ -19,7 +19,7 @@ import java.util.Objects;
 
 /** Interface adapter translating view events into application use-case commands. No Swing dependency. */
 public final class PdfEditorController {
-    private final MathLibrary library;
+    private final MaterialStore library;
     private final DocumentEditor editor;
     private final AutoLayoutInteractor layout;
     private final PdfExportInteractor output;
@@ -49,15 +49,26 @@ public final class PdfEditorController {
         return null;
     }
 
-    public PdfEditorController(MathLibrary library, DocumentEditor editor,
+    public PdfEditorController(MaterialStore library, DocumentEditor editor,
                                AutoLayoutInteractor layout, PdfExportInteractor output) {
         this.library = Objects.requireNonNull(library);
         this.editor = Objects.requireNonNull(editor);
         this.layout = Objects.requireNonNull(layout);
         this.output = Objects.requireNonNull(output);
     }
-    public MathLibrary library() { return library; }
+    public MaterialStore materials() { return library; }
+    /** @deprecated Use materials(). */
+    @Deprecated public MaterialStore library() { return materials(); }
     public int currentPage() { return page; }
+    public void loadDocument(PdfDocument document, int targetPage) {
+        editor.load(document);
+        page = Math.max(0, Math.min(targetPage, editor.pageCount() - 1));
+        selection.clear();
+    }
+    public boolean updateGraphView(String id, entity.graph.GraphDefinition definition) {
+        return editor.updateGraphView(id, definition);
+    }
+
     public int pageCount() { return editor.pageCount(); }
     public List<PdfDocument.Placement> placements() { return editor.placements(page); }
     public List<PdfDocument.NoteSpan> body() { return editor.body(page); }
@@ -186,7 +197,7 @@ public final class PdfEditorController {
     public void replaceInkImages(java.util.Map<String, java.awt.image.BufferedImage> images) {
         if (images.isEmpty()) return;
         java.util.Map<String, pdf_editor.domain.PdfMaterial> materials = new java.util.LinkedHashMap<>();
-        images.forEach((id, image) -> materials.put(id, MathLibrary.region("PDF ink stroke", image)));
+        images.forEach((id, image) -> materials.put(id, MaterialStore.region("PDF ink stroke", image)));
         editor.replaceInkMaterials(page, materials);
     }
 

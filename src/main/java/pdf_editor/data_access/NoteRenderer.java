@@ -11,6 +11,10 @@ import java.awt.image.BufferedImage;
 public final class NoteRenderer {
     private NoteRenderer() { }
     public static BufferedImage render(PdfDocument.Placement note, int width, int height) {
+        int w = Math.max(8, width), h = Math.max(8, height);
+        return PdfScreenRasterCache.render(note, w, h, () -> renderUncached(note, w, h));
+    }
+    private static BufferedImage renderUncached(PdfDocument.Placement note, int width, int height) {
         width = Math.max(8, width); height = Math.max(8, height);
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();

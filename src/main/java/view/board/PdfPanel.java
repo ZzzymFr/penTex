@@ -33,7 +33,10 @@ public final class PdfPanel extends JPanel implements PdfWorkspacePort {
     public void close() { editor.close(); }
     @Override public void fitWhenOpened() { editor.fitWhenOpened(); }
     @Override public void addHistoryItem(HistoryItem item) { editor.addHistoryItem(item); }
-    @Override public void addHistoryToLibrary(HistoryItem item) { editor.addHistoryToLibrary(item); }
+    @Override public void editHistoryFormula(HistoryItem item) { editor.editHistoryFormula(item); }
+    @Override public java.awt.Rectangle historyPreviewBounds(HistoryItem item, Point cursorOnScreen) {
+        return editor.historyPreviewBounds(item, cursorOnScreen);
+    }
     @Override public boolean dropHistoryItem(HistoryItem item, Point screenTopLeft) {
         return editor.dropHistoryItem(item, screenTopLeft);
     }
