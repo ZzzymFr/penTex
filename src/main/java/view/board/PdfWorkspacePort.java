@@ -7,9 +7,10 @@ import java.awt.Point;
 public interface PdfWorkspacePort {
     void fitWhenOpened();
     void addHistoryItem(HistoryItem item);
-    /** Import a saved calculation as structured LaTeX/answer, not as a screenshot. */
-    default void addHistoryToLibrary(HistoryItem item) { }
+    /** Edit a reusable formula via the existing PDF/History revision coordinator. */
+    default void editHistoryFormula(HistoryItem item) { }
     boolean dropHistoryItem(HistoryItem item, Point screenTopLeft);
+    default java.awt.Rectangle historyPreviewBounds(HistoryItem item, Point cursorOnScreen) { return null; }
     /** Native graph handoff; older PDF implementations can decline it safely. */
     default boolean dropInteractiveGraph(entity.graph.GraphDefinition definition,
                                          java.awt.image.BufferedImage thumbnail, Point cursorOnScreen) {

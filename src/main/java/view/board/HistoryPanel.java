@@ -48,6 +48,9 @@ public class HistoryPanel extends JPanel {
     /** The board shows a ghost under the mouse and takes the drop. */
     public interface DragHost {
         void dragging(BufferedImage picture, Point screenTopLeft);
+        default void draggingAt(HistoryItem item, BufferedImage picture, Point screenTopLeft, Point cursorScreen) {
+            dragging(picture, screenTopLeft);
+        }
 
         // true if it landed on the canvas
         boolean dropped(BufferedImage picture, Point screenTopLeft);
@@ -55,7 +58,7 @@ public class HistoryPanel extends JPanel {
             return dropped(picture, screenTopLeft);
         }
         default void importIntoPdf(HistoryItem item) { }
-        default void importIntoLibrary(HistoryItem item) { }
+        default void editHistoryFormula(HistoryItem item) { }
         /** Drop target is determined by cursor, not by the artwork's offset top-left. */
         default boolean droppedAt(HistoryItem item, BufferedImage picture,
                                   Point previewTopLeft, Point cursorScreen) {
@@ -96,7 +99,7 @@ public class HistoryPanel extends JPanel {
         JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
         header.setBorder(BorderFactory.createEmptyBorder(TOP_ROOM + 4, 16, 8, 10));
-        JLabel title = new JLabel("Saved calculations");
+        JLabel title = new JLabel("Saved materials");
         title.setFont(BoardTheme.font(13f));
         header.add(title, BorderLayout.WEST);
         JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
@@ -120,7 +123,7 @@ public class HistoryPanel extends JPanel {
 
     private void clearHistory() {
         if (!GlassDialogs.confirm(this, "Clear History",
-                "Delete all saved calculations and graphs? This cannot be undone.", "Clear All")) return;
+                "Delete all saved materials? This cannot be undone.", "Clear All")) return;
         if (!clearAll.getAsBoolean()) {
             GlassDialogs.error(this, "History could not be cleared. Please check storage permissions.");
         }
@@ -129,7 +132,7 @@ public class HistoryPanel extends JPanel {
     private void show(List<HistoryItem> items) {
         list.removeAll();
         if (items.isEmpty()) {
-            JLabel empty = new JLabel("Calculations show up here.");
+            JLabel empty = new JLabel("Saved materials show up here.");
             empty.setFont(BoardTheme.font(14f));
             empty.setForeground(BoardTheme.LABEL_DISABLED);
             list.add(empty);
@@ -154,7 +157,7 @@ public class HistoryPanel extends JPanel {
 
     // formula (typeset) and "= answer" in Kalam, no background, PICTURE_SCALE x
     static BufferedImage picture(HistoryItem item) {
-        if (item.isGraph()) {
+        if (item.hasImage()) {
             try {
                 // Keep the original full-resolution PNG for drag and Canvas placement.
                 // The History row scales it only at paint time; never rasterize a
@@ -231,7 +234,7 @@ public class HistoryPanel extends JPanel {
     /** The same translucent context surface used by PDF materials on all platforms. */
     GlassContextMenu contextMenu(HistoryItem item) {
         GlassContextMenu menu = new GlassContextMenu();
-        menu.addAction("Add to Library", () -> host.importIntoLibrary(item));
+        if (!item.hasImage()) menu.addAction("Edit formula (calculate or manual)", () -> host.editHistoryFormula(item));
         menu.addAction("Add to PDF", () -> host.importIntoPdf(item));
         menu.addAction("Delete from History", () -> host.deleteHistory(item));
         return menu;
@@ -246,6 +249,7 @@ public class HistoryPanel extends JPanel {
         private BufferedImage dragged;  // full-resolution payload while dragging
         private BufferedImage dragPreview;  // only the screen ghost uses this low-cost preview
         private Point grab;
+        private Point pressScreen;
         private java.awt.event.AWTEventListener releaseWatcher;
 
         private void watchExternalRelease() {
@@ -254,13 +258,17 @@ public class HistoryPanel extends JPanel {
                 if (event instanceof MouseEvent mouse && mouse.getID() == MouseEvent.MOUSE_DRAGGED
                         && mouse.getSource() != Row.this && dragged != null && dragPreview != null) {
                     Point screen = mouse.getLocationOnScreen();
-                    host.dragging(dragPreview, new Point(screen.x - grab.x, screen.y - grab.y));
+                    host.draggingAt(item, dragPreview, new Point(screen.x - grab.x, screen.y - grab.y), screen);
                 } else if (event instanceof MouseEvent mouse && mouse.getID() == MouseEvent.MOUSE_RELEASED
                         && SwingUtilities.isLeftMouseButton(mouse)) {
                     // AWT can deliver the release to the Canvas, a popup or the window
                     // instead of the original History row (notably on macOS).
                     Point screen = mouse.getLocationOnScreen();
                     SwingUtilities.invokeLater(() -> finishDrag(screen));
+                } else if (event instanceof java.awt.event.KeyEvent key
+                        && key.getID() == java.awt.event.KeyEvent.KEY_PRESSED
+                        && key.getKeyCode() == java.awt.event.KeyEvent.VK_ESCAPE) {
+                    cancelDrag();
                 } else if (event instanceof java.awt.event.WindowEvent window
                         && (window.getID() == java.awt.event.WindowEvent.WINDOW_DEACTIVATED
                             || window.getID() == java.awt.event.WindowEvent.WINDOW_LOST_FOCUS)) {
@@ -268,8 +276,8 @@ public class HistoryPanel extends JPanel {
                 }
             };
             java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(releaseWatcher,
-                    java.awt.AWTEvent.MOUSE_EVENT_MASK | java.awt.AWTEvent.WINDOW_EVENT_MASK
-                            | java.awt.AWTEvent.WINDOW_FOCUS_EVENT_MASK);
+                    java.awt.AWTEvent.MOUSE_EVENT_MASK | java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK | java.awt.AWTEvent.WINDOW_EVENT_MASK
+                            | java.awt.AWTEvent.WINDOW_FOCUS_EVENT_MASK | java.awt.AWTEvent.KEY_EVENT_MASK);
         }
 
         private void stopWatchingRelease() {
@@ -285,6 +293,7 @@ public class HistoryPanel extends JPanel {
             // Clear the view even if the host rejects the drop or throws.
             dragged = null;
             grab = null;
+            pressScreen = null;
             dragPreview = null;
             picture = null;
             stopWatchingRelease();
@@ -303,6 +312,7 @@ public class HistoryPanel extends JPanel {
         private void cancelDrag() {
             dragged = null;
             grab = null;
+            pressScreen = null;
             picture = null;
             dragPreview = null;
             stopWatchingRelease();
@@ -312,9 +322,9 @@ public class HistoryPanel extends JPanel {
 
         Row(HistoryItem item) {
             this.item = item;
-            this.icon = item.isGraph() ? null : typeset(HistoryAnswerArtwork.formulaLatex(item));
-            this.graphImage = item.isGraph() ? picture(item) : null;
-            setToolTipText("Drag to Canvas / PDF. Right-click for Library, PDF or Delete actions.");
+            this.icon = item.hasImage() ? null : typeset(HistoryAnswerArtwork.formulaLatex(item));
+            this.graphImage = item.hasImage() ? picture(item) : null;
+            setToolTipText("Drag to Canvas / PDF. Right-click for more actions.");
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setAlignmentX(LEFT_ALIGNMENT);
             MouseAdapter m = new MouseAdapter() {
@@ -324,6 +334,7 @@ public class HistoryPanel extends JPanel {
                         picture = graphImage != null ? graphImage : picture(item);
                         dragPreview = graphImage == null ? picture : graphPreview(graphImage);
                         int previewHeight = dragPreview.getHeight() / PICTURE_SCALE;
+                        pressScreen = e.getLocationOnScreen();
                         grab = new Point(e.getX() - CONTENT_X, e.getY() - (ROW_H - previewHeight) / 2);
                     }
                 }
@@ -334,11 +345,13 @@ public class HistoryPanel extends JPanel {
                         return;
                     }
                     if (dragged == null) {
+                        // Suppress accidental drags on tiny trackpad movements.
+                        if (pressScreen != null && pressScreen.distance(e.getLocationOnScreen()) < 4) return;
                         dragged = picture;
                         watchExternalRelease();
                         repaint();
                     }
-                    host.dragging(dragPreview, topLeft(e));
+                    host.draggingAt(item, dragPreview, topLeft(e), e.getLocationOnScreen());
                 }
 
                 @Override
@@ -405,7 +418,7 @@ public class HistoryPanel extends JPanel {
             Icons.grip(grip);
             grip.dispose();
             g2.clipRect(CONTENT_X, 0, getWidth() - CONTENT_X - ROW_H / 2, ROW_H);
-            if (item.isGraph()) {
+            if (item.hasImage()) {
                 BufferedImage graph = graphImage;
                 double ratio = Math.min(220.0 / graph.getWidth(), 42.0 / graph.getHeight());
                 int dw = Math.max(1, (int) Math.round(graph.getWidth() * ratio));

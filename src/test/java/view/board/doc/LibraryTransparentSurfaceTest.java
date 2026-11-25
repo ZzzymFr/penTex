@@ -14,9 +14,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Library rows and the scrolling pane must not paint opaque white rectangles. */
+/** Removed Library surface must not remain in the component hierarchy. */
 class LibraryTransparentSurfaceTest {
-    @Test void libraryRowsAndViewportAreTransparent() {
+    @Test void noHiddenLibraryRowsOrViewportRemain() {
         DocumentEditor editor = new DocumentEditor();
         MathLibrary library = new MathLibrary();
         library.addFormula("x^2");
@@ -27,21 +27,7 @@ class LibraryTransparentSurfaceTest {
         try {
             List<JList<?>> lists = new ArrayList<>();
             findLists(panel, lists);
-            assertEquals(1, lists.size());
-            JList<?> list = lists.get(0);
-            assertFalse(list.isOpaque());
-            JScrollPane scroll = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, list);
-            assertNotNull(scroll);
-            assertFalse(scroll.isOpaque());
-            assertFalse(scroll.getViewport().isOpaque());
-            @SuppressWarnings("unchecked")
-            JList<MathLibrary.Material> materials = (JList<MathLibrary.Material>) list;
-            Component row = materials.getCellRenderer().getListCellRendererComponent(
-                    materials, library.items().get(0), 0, false, false);
-            assertFalse(((JComponent)row).isOpaque());
-            Component selectedRow = materials.getCellRenderer().getListCellRendererComponent(
-                    materials, library.items().get(0), 0, true, false);
-            assertFalse(((JComponent)selectedRow).isOpaque());
+            assertTrue(lists.isEmpty(), "The removed Library must not leave a second, hidden list/viewport");
         } finally {panel.close();}
     }
     private static void findLists(Container root, List<JList<?>> found) {

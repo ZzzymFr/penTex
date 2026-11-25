@@ -16,7 +16,7 @@ public record HistoryEntry(String id, Kind kind, String title, String formula, S
                         byte[] png, int imageWidth, int imageHeight, Instant createdAt) {
         this(id, kind, title, formula, result, png, imageWidth, imageHeight, createdAt, null);
     }
-    public enum Kind { FORMULA, CALCULATION, GRAPH }
+    public enum Kind { FORMULA, CALCULATION, GRAPH, INK }
     public static final int MAX_PNG_BYTES = 12 * 1024 * 1024;
 
     public HistoryEntry {
@@ -29,18 +29,20 @@ public record HistoryEntry(String id, Kind kind, String title, String formula, S
         if (id.isBlank() || id.length() > 100) throw new IllegalArgumentException("Invalid history ID");
         if (title.isBlank() || title.length() > 200 || formula.length() > 32768 || result.length() > 32768)
             throw new IllegalArgumentException("History text is empty or too long");
-        if (kind == Kind.GRAPH) {
+        if (kind == Kind.GRAPH || kind == Kind.INK) {
             if (png == null || png.length == 0 || png.length > MAX_PNG_BYTES
                     || imageWidth <= 0 || imageHeight <= 0 || imageWidth > 16384 || imageHeight > 16384)
-                throw new IllegalArgumentException("Invalid graph PNG or dimensions");
-            // At minimum, refuse arbitrary bytes mislabeled as a PNG graph.
+                throw new IllegalArgumentException("Invalid image PNG or dimensions");
+            // At minimum, refuse arbitrary bytes mislabeled as a PNG image.
             byte[] signature = {(byte) 137, 80, 78, 71, 13, 10, 26, 10};
             if (png.length < signature.length ||
                     !Arrays.equals(Arrays.copyOf(png, signature.length), signature))
-                throw new IllegalArgumentException("Graph bytes must have a PNG signature");
+                throw new IllegalArgumentException("Image bytes must have a PNG signature");
         } else if (png != null || imageWidth != 0 || imageHeight != 0) {
-            throw new IllegalArgumentException("Only graphs may contain image bytes");
+            throw new IllegalArgumentException("Only graphs and ink may contain image bytes");
         }
+        if (kind == Kind.INK && (!formula.isBlank() || !result.isBlank()))
+            throw new IllegalArgumentException("Ink must not contain calculation metadata");
         if (kind == Kind.FORMULA && (formula.isBlank() || !result.isBlank()))
             throw new IllegalArgumentException("Formula entry requires LaTeX without a result");
         if (kind == Kind.CALCULATION && formula.isBlank())
@@ -55,6 +57,12 @@ public record HistoryEntry(String id, Kind kind, String title, String formula, S
     }
 
     @Override public byte[] png() { return png == null ? null : png.clone(); }
+
+    /** Preserve identity/content when a repeated action makes this record recent again. */
+    public HistoryEntry revisitedAt(Instant time) {
+        return new HistoryEntry(id, kind, title, formula, result, png, imageWidth, imageHeight,
+                time, graphDefinition);
+    }
 
     /** Same mathematical content = same key, even after restarting the application. */
     public String contentKey() {

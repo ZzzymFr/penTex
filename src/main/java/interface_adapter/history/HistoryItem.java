@@ -11,6 +11,8 @@ public final class HistoryItem {
     public String getId() { return entry.id(); }
     public String getLatex() { return entry.formula(); }
     public String getAnswer() { return entry.result(); }
+    public boolean hasImage() { return entry.kind() == HistoryEntry.Kind.GRAPH || entry.kind() == HistoryEntry.Kind.INK; }
+    public boolean isInk() { return entry.kind() == HistoryEntry.Kind.INK; }
     public boolean isGraph() { return entry.kind() == HistoryEntry.Kind.GRAPH; }
     public byte[] imagePng() { return entry.png(); }
 }

@@ -1,11 +1,11 @@
 package pdf_editor.adapter;
 
 import interface_adapter.history.CanvasHistorySelection;
-import pdf_editor.MathLibrary;
+import pdf_editor.MaterialStore;
 import java.util.Objects;
 
 /** Adapter from a Canvas History selection into structured PDF materials.
- * Source Canvas entries remain untouched; each imported entry appears in Library and on PDF.
+ * Source Canvas entries remain untouched; each imported entry appears on PDF and is archived in History if not already present.
  */
 public final class CanvasHistoryImporter {
     private CanvasHistoryImporter() { }
@@ -17,13 +17,13 @@ public final class CanvasHistoryImporter {
         double minX = selection.assets().stream().mapToDouble(CanvasHistorySelection.Asset::x).min().orElse(0);
         double minY = selection.assets().stream().mapToDouble(CanvasHistorySelection.Asset::y).min().orElse(0);
         for (CanvasHistorySelection.Asset asset : selection.assets()) {
-            MathLibrary.Material material;
+            MaterialStore.Material material;
             if (asset.isGraph()) {
-                material = controller.library().addGraph("", asset.image());
+                material = controller.materials().addGraph("", asset.image());
             } else if (asset.result().isBlank()) {
-                material = controller.library().addFormula(asset.latex());
+                material = controller.materials().addFormula(asset.latex());
             } else {
-                material = controller.library().addCalculation(asset.latex(), asset.result());
+                material = controller.materials().addCalculation(asset.latex(), asset.result());
             }
             float width = (float) Math.max(85, Math.min(440, asset.width()));
             float height = asset.isGraph()
@@ -33,6 +33,7 @@ public final class CanvasHistoryImporter {
             float x = pageX + (float) (asset.x() - minX);
             float y = pageY + (float) (asset.y() - minY);
             controller.place(material, x, y, width, height);
+            controller.materials().archive(material);
         }
         return selection.assets().size();
     }

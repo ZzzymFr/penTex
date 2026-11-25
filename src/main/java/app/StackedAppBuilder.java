@@ -14,9 +14,9 @@ import history.adapter.HistoryBoardPresenter;
 import view.board.PdfPanel;
 import pdf_editor.view.CanvasPdfDragController;
 import pdf_editor.view.CanvasRegionCaptureController;
-import pdf_editor.view.CanvasLibrarySelectionMenu;
+import pdf_editor.view.CanvasHistorySelectionMenu;
 import pdf_editor.adapter.SelectedInkRegistry;
-import pdf_editor.use_case.SelectionToLibrary;
+import pdf_editor.use_case.SelectionToHistory;
 import data_access.InMemoryGraphSessionDataAccessObject;
 import entity.LatexFunctionParser;
 import interface_adapter.MathLabViewModel;
@@ -197,8 +197,9 @@ public class StackedAppBuilder {
                         800, 190), historyEditCalculator::calculate,
                 (latex, result) -> {
                     if (latex.isBlank()) return;
-                    if (result.isBlank()) pdfStudio.getLibrary().addFormula(latex);
-                    else pdfStudio.getLibrary().addCalculation(latex, result);
+                    pdfStudio.getCollector().recordSelectedFormula(latex, result);
+                    if (result.isBlank()) pdfStudio.getMaterialStore().addFormula(latex);
+                    else pdfStudio.getMaterialStore().addCalculation(latex, result);
                 }, change -> {
                     try {
                         pdfStudio.reviseCanvasHistory(change.oldFormula(), change.oldResult(),
@@ -207,9 +208,10 @@ public class StackedAppBuilder {
                         System.err.println("Formula revision sync failed: " + failure.getMessage());
                     }
                 });
-        CanvasLibrarySelectionMenu.install(drawing,
-                new SelectionToLibrary(sharedCanvas::recognizeFormula, pdfStudio.getLibrary()),
-                new SelectedInkRegistry(drawing, pdfStudio.getLibrary()));
+        CanvasHistorySelectionMenu.install(drawing,
+                new SelectionToHistory(sharedCanvas::recognizeFormula, pdfStudio.getMaterialStore(),
+                        pdfStudio.getCollector()::recordSelectedFormula),
+                new SelectedInkRegistry(drawing, pdfStudio.getMaterialStore()));
         AnswerCanvasPage page = new AnswerCanvasPage(sharedCanvas, evaluate, mathViewModel, results,
                 graphSessions, graphCheck::canGraph, BoardTheme.CANVAS);
         page.setDefinitionCheck(definitionCheck::isDefinition);
@@ -219,12 +221,19 @@ public class StackedAppBuilder {
         page.enablePhasePortrait(phaseSessions, phaseCheck::isDifferentialEquation);
         sharedCanvas.attachTo(page);
         PdfPanel pdfPanel = pdfStudio.createPanel();
+        pdfPanel.editor().enablePersistence(new pdf_editor.use_case.PdfWorkspace(
+                        new pdf_editor.data_access.FilePdfDocumentRepository(
+                                pdf_editor.data_access.FilePdfDocumentRepository.defaultDirectory())),
+                new pdf_editor.data_access.PdfBoxOutputAdapter());
         // Use the live selection (lasso or whole ink), not an outdated startup screenshot.
         pdfPanel.setCanvasCapture(() -> {
             try { return drawing.toFormulaImage(); }
             catch (RuntimeException empty) { return null; }
         });
         java.util.concurrent.atomic.AtomicReference<Runnable> cancelCapture = new java.util.concurrent.atomic.AtomicReference<>();
+        // Open the existing History panel after a successful explicit screenshot capture.
+        Runnable[] historyReveal = { () -> { } };
+        Runnable revealHistory = () -> historyReveal[0].run();
         pdfPanel.setRegionCapture(() -> {
             if (cancelCapture.get() != null) {
                 cancelCapture.getAndSet(null).run();
@@ -233,8 +242,8 @@ public class StackedAppBuilder {
             pdfPanel.setCaptureAreaActive(true);
             Runnable close = CanvasRegionCaptureController.begin(
                     page.boardArea(), drawing, image -> {
-                        pdfStudio.getLibrary().addInk("Canvas screenshot", image);
-                        pdfPanel.editor().showLibrary();
+                        pdfStudio.getMaterialStore().addInk("Canvas screenshot", image);
+                        revealHistory.run();
                     }, () -> {
                         cancelCapture.set(null);
                         pdfPanel.setCaptureAreaActive(false);
@@ -248,7 +257,8 @@ public class StackedAppBuilder {
                 pdfPanel, historyPresenter::delete,
                 () -> dialogs.get().save(), () -> dialogs.get().saveAs(),
                 () -> dialogs.get().open());
-        // A graph enters Library/History once its native card has successfully appeared.
+        historyReveal[0] = () -> board.setHistoryOpen(true);
+        // A graph enters History once its native card has successfully appeared.
         // VIEW changes and opening saved canvases must not republish duplicate materials.
         page.setGraphCreatedListener(pdfStudio::addInteractiveGraph);
         page.setGraphRestoreSessions(restoredGraphSessions);

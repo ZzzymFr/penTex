@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 
 /** Composition root for US4: wires incoming team events, use cases and external adapters. */
 public final class PdfStudioLauncher implements Us4InputBoundary {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private final MathLabCollector collector;
     private final PdfEditorController controller;
     private Runnable showPdf = () -> { };
@@ -72,7 +72,9 @@ public final class PdfStudioLauncher implements Us4InputBoundary {
         snapshotGateway = canvas == null ? () -> null
                 : new DrawingCanvasSnapshotAdapter(canvas);
     }
-    public MathLibrary getLibrary() { return library; }
+    public MaterialStore getMaterialStore() { return library; }
+    /** @deprecated Use getMaterialStore(). */
+    @Deprecated public MaterialStore getLibrary() { return getMaterialStore(); }
     public MathLabCollector getCollector() { return collector; }
     @Override public void addCalculation(String latex, String result) { collector.acceptCalculation(latex, result); }
     public void addCalculationWithSource(long sourceId, String latex, String result) {

@@ -24,6 +24,10 @@ public final class MaterialRenderer {
     private static final Map<PdfMaterial, BufferedImage> GRAPH_CACHE =
             Collections.synchronizedMap(new WeakHashMap<>());
     public static BufferedImage render(PdfMaterial material, int width, int height) {
+        int w = Math.max(8, width), h = Math.max(8, height);
+        return PdfScreenRasterCache.render(material, w, h, () -> renderUncached(material, w, h));
+    }
+    private static BufferedImage renderUncached(PdfMaterial material, int width, int height) {
         width = Math.max(8, width); height = Math.max(8, height);
         BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = out.createGraphics();

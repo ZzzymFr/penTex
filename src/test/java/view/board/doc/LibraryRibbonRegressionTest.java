@@ -44,37 +44,26 @@ class LibraryRibbonRegressionTest {
                 .filter(b -> "ribbon.Library".equals(b.getName())).count();
     }
 
-    @Test void libraryHasExactlyOneTopLevelEntryAndNoRibbonDuplicates() {
+    @Test void saveAndOpenReplaceLibraryAcrossAllRibbonTabs() {
         DocEditorPanel editor = editor();
         try {
-            JButton libraryButton = find(editor, JButton.class).stream()
-                    .filter(b -> "libraryTopButton".equals(b.getName())).findFirst().orElseThrow();
-            assertEquals("Library", libraryButton.getText());
             for (String name : List.of("Home", "Insert", "Layout", "View")) {
                 tab(editor, name);
-                assertEquals(0L, activeLibraryCommands(editor), name + " ribbon should not duplicate Library");
+                var buttons = find(editor, JButton.class);
+                assertEquals(1L, buttons.stream().filter(b -> "pdfSaveButton".equals(b.getName())).count());
+                assertEquals(1L, buttons.stream().filter(b -> "pdfOpenButton".equals(b.getName())).count());
+                assertFalse(buttons.stream().anyMatch(b -> "Library".equals(b.getText()) || "libraryTopButton".equals(b.getName())));
+                assertEquals(0L, activeLibraryCommands(editor));
             }
-            assertFalse(editor.isLibraryVisible());
-            libraryButton.doClick();
-            assertTrue(editor.isLibraryVisible());
-            libraryButton.doClick();
             assertFalse(editor.isLibraryVisible());
         } finally { editor.close(); }
     }
 
-    @Test void libraryHeaderHasDistinctAccessibleCloseControlAndActuallyCloses() {
+    @Test void noStandaloneLibraryHeaderOrCloseControlRemains() {
         DocEditorPanel editor = editor();
         try {
-            editor.showLibrary();
-            assertTrue(editor.isLibraryVisible());
-            LibraryHeaderCloseButton button = find(editor, LibraryHeaderCloseButton.class).stream()
-                    .findFirst().orElseThrow();
-            assertEquals("Close Library", button.getToolTipText());
-            assertEquals("Close Library", button.getAccessibleContext().getAccessibleName());
-            assertEquals("libraryCloseButton", button.getName());
-            assertTrue(button.getPreferredSize().width >= 27);
-            button.doClick();
-            assertFalse(editor.isLibraryVisible());
+            assertTrue(find(editor, LibraryHeaderCloseButton.class).isEmpty());
+            assertTrue(find(editor, javax.swing.JList.class).isEmpty());
         } finally { editor.close(); }
     }
 }

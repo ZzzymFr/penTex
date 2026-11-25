@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class CanvasSelectionPopupSurfaceTest {
     @Test void selectionMenuHasNoOpaqueNativeRectangle() throws Exception {
-        Class<?> type = Class.forName("pdf_editor.view.CanvasLibrarySelectionMenu$GlassSelectionMenu");
+        Class<?> type = Class.forName("pdf_editor.view.CanvasHistorySelectionMenu$GlassSelectionMenu");
         Constructor<?> constructor = type.getDeclaredConstructor();
         constructor.setAccessible(true);
         JPopupMenu menu = (JPopupMenu) constructor.newInstance();

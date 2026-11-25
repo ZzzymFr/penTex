@@ -29,25 +29,25 @@ public final class CanvasHistoryEditMenu {
         install(canvas, render, calculate, (latex, result) -> { });
     }
 
-    /** The optional Library command is injected; this view never manipulates repository state. */
+    /** The optional History command is injected; this view never manipulates repository state. */
     public static void install(DrawingCanvas canvas,
                                BiFunction<String, String, BufferedImage> render,
                                Function<String, String> calculate,
-                               BiConsumer<String, String> addToLibrary) {
-        install(canvas, render, calculate, addToLibrary, change -> { });
+                               BiConsumer<String, String> saveToHistory) {
+        install(canvas, render, calculate, saveToHistory, change -> { });
     }
 
     /** Called only for a completed calculation, after the Canvas asset has been revised. */
     public static void install(DrawingCanvas canvas,
                                BiFunction<String, String, BufferedImage> render,
                                Function<String, String> calculate,
-                               BiConsumer<String, String> addToLibrary,
+                               BiConsumer<String, String> saveToHistory,
                                java.util.function.Consumer<FormulaRevision> onRevised) {
         Objects.requireNonNull(onRevised);
         Objects.requireNonNull(canvas);
         Objects.requireNonNull(render);
         Objects.requireNonNull(calculate);
-        Objects.requireNonNull(addToLibrary);
+        Objects.requireNonNull(saveToHistory);
         canvas.addMouseListener(new MouseAdapter() {
             @Override public void mousePressed(MouseEvent e) { show(e); }
             @Override public void mouseReleased(MouseEvent e) { show(e); }
@@ -81,7 +81,7 @@ public final class CanvasHistoryEditMenu {
                         }
                     }.execute();
                 });
-                menu.addAction("Add to Library", () -> addToLibrary.accept(
+                menu.addAction("Save to History", () -> saveToHistory.accept(
                         canvas.selectedHistoryFormula(), canvas.selectedHistoryResult()));
                 menu.addAction("Delete selected item", canvas::deleteSelection);
                 menu.show(canvas, e.getX(), e.getY());

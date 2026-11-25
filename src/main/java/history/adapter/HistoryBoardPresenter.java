@@ -25,7 +25,7 @@ public final class HistoryBoardPresenter {
             List<HistoryItem> items = history.list().stream()
                     .filter(entry -> (entry.kind() == HistoryEntry.Kind.FORMULA && meaningfulFormula(entry.formula()))
                             || entry.kind() == HistoryEntry.Kind.CALCULATION
-                            || entry.kind() == HistoryEntry.Kind.GRAPH)
+                            || entry.kind() == HistoryEntry.Kind.GRAPH || entry.kind() == HistoryEntry.Kind.INK)
                     .map(HistoryItem::new).toList();
             model.setItems(items);
         } catch (IOException e) {

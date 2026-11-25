@@ -34,6 +34,22 @@ public final class FileHistoryRepository implements HistoryRepository {
         Files.createDirectories(directory);
         Path target = directory.resolve(entry.contentKey() + ".properties");
         if (Files.exists(target)) return false;
+        write(entry, target, false);
+        return true;
+    }
+
+    @Override public synchronized boolean saveOrRefresh(HistoryEntry entry) throws IOException {
+        Objects.requireNonNull(entry);
+        Path target = directory.resolve(entry.contentKey() + ".properties");
+        if (!Files.exists(target)) return saveIfAbsent(entry);
+        HistoryEntry previous = read(target);
+        if (!previous.contentKey().equals(entry.contentKey())) throw new IOException("History content mismatch");
+        if (entry.createdAt().isAfter(previous.createdAt()))
+            write(previous.revisitedAt(entry.createdAt()), target, true);
+        return false;
+    }
+
+    private void write(HistoryEntry entry, Path target, boolean replace) throws IOException {
         Path temp = Files.createTempFile(directory, "history-", ".tmp");
         boolean moved = false;
         try {
@@ -53,12 +69,13 @@ public final class FileHistoryRepository implements HistoryRepository {
                 fields.store(writer, "Math Lab History v1");
             }
             try {
-                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
+                if (replace) Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                else Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(temp, target);
+                if (replace) Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                else Files.move(temp, target);
             }
             moved = true;
-            return true;
         } finally {
             if (!moved) Files.deleteIfExists(temp);
         }

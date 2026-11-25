@@ -15,6 +15,26 @@ public final class DocumentEditor {
     private boolean inBatch;
 
     public PdfDocument snapshot() { return document.copy(); }
+    /** Opening another document starts a new undo/redo session. */
+    public void load(PdfDocument restored) {
+        document = Objects.requireNonNull(restored).copy();
+        undo.clear();
+        redo.clear();
+        inBatch = false;
+    }
+    /** A live plot view is independent of document layout undo/redo. */
+    public boolean updateGraphView(String id, entity.graph.GraphDefinition definition) {
+        for (int page = 0; page < document.pageCount(); page++) {
+            PdfDocument.Placement item = document.find(page, id);
+            if (item != null && !item.isNote() && item.material().isInteractiveGraph()) {
+                if (definition.equals(item.material().graphDefinition())) return false;
+                document.replace(page, item.withMaterial(item.material().withGraphDefinition(definition)));
+                return true;
+            }
+        }
+        return false;
+    }
+
     public int pageCount() { return document.pageCount(); }
     public List<PdfDocument.Placement> placements(int page) { return document.placements(page); }
     public List<PdfDocument.NoteSpan> body(int page) { return document.body(page); }

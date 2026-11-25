@@ -46,6 +46,19 @@ public class PdfMaterial {
             throw new IllegalArgumentException("Invalid image dimensions");
     }
 
+    /** Reconstruct a stored value, retaining source identity and native graph metadata. */
+    public static PdfMaterial restore(String id, String title, String formula, String result,
+                                      byte[] png, int width, int height, GraphDefinition definition) {
+        return new PdfMaterial(id, title, formula, result, png, width, height, definition);
+    }
+
+    /** Capture an independent placement's current interactive graph view. */
+    public final PdfMaterial withGraphDefinition(GraphDefinition definition) {
+        if (!isInteractiveGraph()) throw new IllegalStateException("Not an interactive graph");
+        return new PdfMaterial(id, title, formula, result, imagePng, imageWidth, imageHeight,
+                Objects.requireNonNull(definition));
+    }
+
     /** Domain rule: split a calculation without duplicating the equals sign. */
     public static PdfMaterial formulaPart(PdfMaterial source) {
         Objects.requireNonNull(source, "source");
