@@ -11,7 +11,7 @@ import java.util.function.Consumer;
 /** Local optical layer for the Apple-style hover droplet. The original magnification,
  * edge bending and RGB dispersion are retained without a full-bar HiDPI raster. */
 final class GlassLensRaster {
-    private static final int PIXEL_BUDGET = 24_000;
+    private static final int PIXEL_BUDGET = 96_000;
     private static final int SOURCE_PAD = 16;
     private static final double EDGE_BAND = 11;
     private static final double EDGE_STRENGTH = 9;
@@ -30,9 +30,9 @@ final class GlassLensRaster {
         int x = Math.round(lens.x * 2), y = Math.round(lens.y * 2);
         int w = Math.max(2, Math.round(lens.width * 2)), h = Math.max(2, Math.round(lens.height * 2));
         double logicalWidth = w / 2.0 + 2 * SOURCE_PAD, logicalHeight = h / 2.0 + 2 * SOURCE_PAD;
-        // At Retina scale only the droplet texture has a bounded optical resolution.
-        // The normal labels, icons and rim remain at the display's native resolution.
-        double scale = Math.min(Math.min(1.5, Math.max(1.0, deviceScale)),
+        // Keep the small lens at native display resolution whenever the padded
+        // texture fits the bounded budget; avoid downsampling fine text on Retina.
+        double scale = Math.min(Math.min(2.0, Math.max(1.0, deviceScale)),
                 Math.sqrt(PIXEL_BUDGET / (logicalWidth * logicalHeight)));
         Key wanted = new Key(sample, scene, x, y, w, h, scale, magnification);
         if (!wanted.equals(key)) rebuild(wanted, painter);

@@ -260,11 +260,17 @@ public class HistoryPanel extends JPanel {
                     Point screen = mouse.getLocationOnScreen();
                     host.draggingAt(item, dragPreview, new Point(screen.x - grab.x, screen.y - grab.y), screen);
                 } else if (event instanceof MouseEvent mouse && mouse.getID() == MouseEvent.MOUSE_RELEASED
+                        && mouse.getSource() != Row.this
                         && SwingUtilities.isLeftMouseButton(mouse)) {
                     // AWT can deliver the release to the Canvas, a popup or the window
                     // instead of the original History row (notably on macOS).
                     Point screen = mouse.getLocationOnScreen();
-                    SwingUtilities.invokeLater(() -> finishDrag(screen));
+                    // A release delivered to this row is handled synchronously by its own
+                    // listener. Only external releases need deferred routing.
+                    java.awt.event.AWTEventListener gesture = releaseWatcher;
+                    SwingUtilities.invokeLater(() -> {
+                        if (releaseWatcher == gesture && gesture != null) finishDrag(screen);
+                    });
                 } else if (event instanceof java.awt.event.KeyEvent key
                         && key.getID() == java.awt.event.KeyEvent.KEY_PRESSED
                         && key.getKeyCode() == java.awt.event.KeyEvent.VK_ESCAPE) {
@@ -272,7 +278,14 @@ public class HistoryPanel extends JPanel {
                 } else if (event instanceof java.awt.event.WindowEvent window
                         && (window.getID() == java.awt.event.WindowEvent.WINDOW_DEACTIVATED
                             || window.getID() == java.awt.event.WindowEvent.WINDOW_LOST_FOCUS)) {
-                    SwingUtilities.invokeLater(this::cancelDrag);
+                    // Other windows (including dialogs) must not cancel this row
+                    // just because they lost focus. Ignore queued events from old gestures.
+                    if (window.getWindow() == SwingUtilities.getWindowAncestor(Row.this)) {
+                        java.awt.event.AWTEventListener gesture = releaseWatcher;
+                        SwingUtilities.invokeLater(() -> {
+                            if (releaseWatcher == gesture && gesture != null) cancelDrag();
+                        });
+                    }
                 }
             };
             java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(releaseWatcher,

@@ -802,8 +802,9 @@ public class GlassBar extends JComponent {
         hints(g2);
         if (appear < 1f) g2.setComposite(AlphaComposite.SrcOver.derive(appear));
         RoundRectangle2D.Float cap = capsule(press.x * 3f);
+        double deviceScale = Math.hypot(g2.getTransform().getScaleX(), g2.getTransform().getShearY());
         GlassBackdropCache.Sample sample = opticalBackdrop.region(lw(), lh(), vertical, origin(),
-                version.getAsLong(), timer.isRunning(), this::captureBackdrop);
+                version.getAsLong(), timer.isRunning(), deviceScale, this::captureBackdrop);
         paintFace(g2, sample, cap);
         float scale = cap.width / capW;
         paintForeground(g2, cap, scale);
@@ -814,7 +815,6 @@ public class GlassBar extends JComponent {
             Graphics2D optical = (Graphics2D) g2.create();
             float base = optical.getComposite() instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
             optical.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha));
-            double deviceScale = Math.hypot(optical.getTransform().getScaleX(), optical.getTransform().getShearY());
             lensRaster.paint(optical, lens, sample, sceneVersion(), deviceScale, HOVER_MAG,
                     scene -> {
                         sample.paint(scene);
@@ -878,8 +878,7 @@ public class GlassBar extends JComponent {
     }
 
     // Capture a fixed reference-space rectangle, not the currently animated size.
-    private BufferedImage captureBackdrop(Rectangle bounds) {
-        double scale = GlassBackdropCache.SCALE;
+    private BufferedImage captureBackdrop(Rectangle bounds, double scale) {
         BufferedImage raw = new BufferedImage(Math.max(1, (int)Math.ceil(bounds.width * scale)),
                 Math.max(1, (int)Math.ceil(bounds.height * scale)), BufferedImage.TYPE_INT_ARGB);
         Graphics2D bg = raw.createGraphics();
