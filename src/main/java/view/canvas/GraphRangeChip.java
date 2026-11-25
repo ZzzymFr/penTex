@@ -572,19 +572,7 @@ final class GraphRangeChip extends JComponent {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 double w = getWidth();
-                double h = getHeight();
-                double arc = s(16);
-                // soft shadow, a few faint rings
-                for (int i = 4; i >= 1; i--) {
-                    g.setColor(new Color(15, 23, 42, 7));
-                    g.fill(new RoundRectangle2D.Double(i * 0.5, i * 0.9, w - i, h - i * 0.9, arc + i, arc + i));
-                }
-                RoundRectangle2D body = new RoundRectangle2D.Double(2, 1, w - 4, h - 4, arc, arc);
-                g.setColor(Color.WHITE);
-                g.fill(body);
-                g.setColor(new Color(15, 23, 42, 22));
-                g.setStroke(new BasicStroke(1f));
-                g.draw(body);
+                paintPopover(g, w, getHeight(), s(16));
 
                 int y = s(PAD) + rows.size() * s(ROW) + (rows.size() - 1) * s(ROW_GAP);
                 if (error != null) {
@@ -821,6 +809,20 @@ final class GraphRangeChip extends JComponent {
                 super.paintComponent(g0);
             }
         }
+    }
+
+    /** White rounded popover body with a soft shadow, the look both floating panels share. */
+    static void paintPopover(Graphics2D g, double w, double h, double arc) {
+        for (int i = 4; i >= 1; i--) {   // soft shadow, a few faint rings
+            g.setColor(new Color(15, 23, 42, 7));
+            g.fill(new RoundRectangle2D.Double(i * 0.5, i * 0.9, w - i, h - i * 0.9, arc + i, arc + i));
+        }
+        RoundRectangle2D body = new RoundRectangle2D.Double(2, 1, w - 4, h - 4, arc, arc);
+        g.setColor(Color.WHITE);
+        g.fill(body);
+        g.setColor(new Color(15, 23, 42, 22));
+        g.setStroke(new BasicStroke(1f));
+        g.draw(body);
     }
 
     /** Text button: a blue link, a filled blue pill (Done), or an outlined pill that lights up (Auto). */

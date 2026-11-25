@@ -42,6 +42,11 @@ public final class GraphCard extends PlotCard {
         viewModel.addPropertyChangeListener(this::stateChanged);
     }
 
+    /** The colour function number {@code layer} is drawn in when several share a graph. */
+    public static java.awt.Color functionColor(int layer) {
+        return GraphTheme.layer(layer);
+    }
+
     @Override
     public BufferedImage snapshot(int width, int height) {
         return GraphSnapshot.render(viewModel.getState(), width, height, camera, pinned);
@@ -93,6 +98,7 @@ public final class GraphCard extends PlotCard {
                         pg.drawImage(picture, (int) Math.round(plot.getX()), (int) Math.round(plot.getY()),
                                 (int) Math.round(plot.getWidth()), (int) Math.round(plot.getHeight()), null);
                     }
+                    SurfacePainter.paintLookup(pg, s, sceneFor(s), ui);
                     SurfacePainter.paintTraces(pg, sceneFor(s), ui, s.getTrace(), pinned);
                 });
     }

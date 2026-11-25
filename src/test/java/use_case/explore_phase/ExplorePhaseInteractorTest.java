@@ -71,4 +71,23 @@ class ExplorePhaseInteractorTest {
         explore.endTrace();
         assertNull(presenter.traces.get(2));
     }
+
+    @Test
+    void lookupWithBothValuesPinsASolutionThenOneValueReadsOffIt() {
+        draw("x'=y\\\\y'=-x");
+        explore.lookup(java.util.List.of("", "1"));
+        assertEquals(use_case.lookup.LookupOutputData.Problem.NO_SOLUTIONS, presenter.lookup.getProblem());
+
+        explore.lookup(java.util.List.of("3", "0"));
+        assertEquals(1, presenter.last().getSolutions().size(), "typed start pinned");
+        assertFalse(presenter.fresh.get(presenter.fresh.size() - 1));
+
+        explore.lookup(java.util.List.of("0", ""));
+        assertEquals(2, presenter.lookup.getPoints().size(), "the circle crosses x = 0 at y = ±3");
+        for (use_case.lookup.LookupOutputData.Point p : presenter.lookup.getPoints()) {
+            assertEquals(3, Math.abs(p.y()), 1e-3);
+        }
+        explore.clearLookup();
+        assertNull(presenter.lookup);
+    }
 }

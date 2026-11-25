@@ -25,6 +25,9 @@ final class GraphTheme {
     static final Color BUTTON_HOVER = new Color(0, 0, 0, 20);
     static final Color BADGE = new Color(232, 232, 237);
     static final Color FLOOR = new Color(236, 237, 242);
+    // what a find puts on the card
+    static final Color LOOKUP = new Color(0, 122, 255);
+    static final Color LOOKUP_LINE = new Color(0, 122, 255, 150);
     // phase portraits
     static final Color PHASE = new Color(88, 86, 214);
     static final Color SLOPE = new Color(88, 86, 214, 150);

@@ -1,6 +1,8 @@
 package entity.phase;
 
 import entity.graph.Curve;
+import entity.graph.LookupQuery;
+import entity.graph.LookupResult;
 import entity.graph.Viewport;
 
 import java.util.ArrayList;
@@ -15,6 +17,7 @@ public final class PhasePlot {
     public static final int COLS = 23;
     public static final int ROWS = 15;
     static final int MAX_SOLUTIONS = 8;
+    static final int MAX_LOOKUP_POINTS = 40;
 
     private final DifferentialEquation equation;
     private final Viewport viewport;
@@ -106,6 +109,62 @@ public final class PhasePlot {
             more.remove(0);   // oldest goes
         }
         return new PhasePlot(equation, viewport, home, more);
+    }
+
+    /** Pins the solution through (h, v), as if it were clicked exactly there (already pinned: unchanged). */
+    public PhasePlot withSolutionThrough(double h, double v) {
+        for (double[] s : seeds) {
+            if (s[0] == h && s[1] == v) {
+                return this;
+            }
+        }
+        List<double[]> more = new ArrayList<>(seeds);
+        more.add(new double[]{h, v});
+        while (more.size() > MAX_SOLUTIONS) {
+            more.remove(0);   // oldest goes
+        }
+        return new PhasePlot(equation, viewport, home, more);
+    }
+
+    /**
+     * Reads the typed values off the pinned solutions: h gives v on each one that crosses h, v gives h.
+     * Both given = the point itself, on the solution through it (pin it first with
+     * {@link #withSolutionThrough}).
+     */
+    public LookupResult lookup(LookupQuery query) {
+        if (query.badAxis() >= 0 && query.badAxis() < 2) {
+            return LookupResult.problem(query, LookupResult.Problem.BAD_NUMBER);
+        }
+        int given = query.givenCount(2);
+        if (given == 0) {
+            return LookupResult.problem(query, LookupResult.Problem.NOTHING_GIVEN);
+        }
+        if (given == 2) {
+            double h = query.get(0);
+            double v = query.get(1);
+            int layer = 0;
+            for (int i = 0; i < seeds.size(); i++) {
+                if (seeds.get(i)[0] == h && seeds.get(i)[1] == v) {
+                    layer = i;
+                }
+            }
+            return LookupResult.found(query, List.of(new LookupResult.Point(h, v, Double.NaN, layer)), List.of(),
+                    false, false);
+        }
+        if (seeds.isEmpty()) {
+            return LookupResult.problem(query, LookupResult.Problem.NO_SOLUTIONS);
+        }
+        boolean alongH = query.given(0);
+        if (alongH && equation.getKind() == DifferentialEquation.Kind.SLOPE_FIELD) {
+            // each solution is v(h): follow it from its start to any h, not just what's in view
+            return LookupResult.found(query, SolutionCrossings.atH(equation, seeds, viewport, query.get(0)),
+                    List.of(), false, false);
+        }
+        List<LookupResult.Point> points = SolutionCrossings.find(equation, getSolutions(), viewport, alongH,
+                query.get(alongH ? 0 : 1), MAX_LOOKUP_POINTS);
+        boolean truncated = points.size() > MAX_LOOKUP_POINTS;
+        return LookupResult.found(query, truncated ? points.subList(0, MAX_LOOKUP_POINTS) : points, List.of(),
+                true, truncated);
     }
 
     public PhasePlot withoutSolutions() {

@@ -23,6 +23,7 @@ final class SurfacePainter {
 
     static void paint(Graphics2D g, GraphState s, SurfaceScene scene, float ui, GraphTrace hover, GraphTrace pinned) {
         paintBody(g, s, scene, ui);
+        paintLookup(g, s, scene, ui);
         paintTraces(g, scene, ui, hover, pinned);
     }
 
@@ -43,6 +44,12 @@ final class SurfacePainter {
         } finally {
             g.dispose();
         }
+    }
+
+    // a find's cut / points, dark over the colour ramp (one surface) or each surface's own colour
+    static void paintLookup(Graphics2D g, GraphState s, SurfaceScene scene, float ui) {
+        LookupPainter.paintSurface(g, s.getLookup(), scene, ui,
+                layer -> s.getZLayers().size() > 1 ? GraphTheme.layer(layer) : GraphTheme.TITLE);
     }
 
     // just the cursor / pin readouts, cheap so they stay on the edt and follow the mouse right away

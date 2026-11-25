@@ -43,6 +43,7 @@ final class PhasePainter {
                         hover.getVText(), ui);
             }
             dots(g, s, f, ui);
+            LookupPainter.paintFlat(g, s.getLookup(), f, ui, layer -> GraphTheme.LOOKUP);
             if (hover != null) {
                 double px = f.px(hover.getH());
                 double py = f.py(hover.getV());

@@ -2,6 +2,7 @@ package view.canvas;
 
 import interface_adapter.graph.GraphController;
 import interface_adapter.graph.GraphExploreController;
+import interface_adapter.graph.GraphLookup;
 import interface_adapter.graph.GraphState;
 import interface_adapter.graph.GraphViewModel;
 import view.FormulaCapture;
@@ -110,6 +111,37 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
         @Override
         BufferedImage firstPicture() {
             return GraphSnapshot.render(viewModel.getState(), SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+        }
+
+        private boolean surface() {
+            return viewModel.getState().getKind() == GraphState.Kind.SURFACE;
+        }
+
+        @Override
+        List<String> lookupNames() {
+            return surface() ? List.of("x", "y", "z") : List.of("x", "y");
+        }
+
+        @Override
+        String lookupHint() {
+            return surface() ? "Type two of x, y, z to get the third, or just one to draw the cut through the"
+                    + " graph there."
+                    : "Type x to get y, or y to get every x in view.";
+        }
+
+        @Override
+        void lookup(List<String> typed) {
+            kit.explore().lookup(typed);
+        }
+
+        @Override
+        void clearLookup() {
+            kit.explore().clearLookup();
+        }
+
+        @Override
+        GraphLookup lookupResult() {
+            return viewModel.getState().getLookup();
         }
     }
 }

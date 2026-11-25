@@ -34,4 +34,13 @@ public class GraphExploreController {
     public void endTrace() {
         interactor.endTrace();
     }
+
+    // find: what's typed in each box (x, y, z on 3d), blank = work it out
+    public void lookup(java.util.List<String> typed) {
+        interactor.lookup(typed);
+    }
+
+    public void clearLookup() {
+        interactor.clearLookup();
+    }
 }

@@ -1,5 +1,6 @@
 package view.canvas;
 
+import interface_adapter.graph.GraphLookup;
 import interface_adapter.phase.PhaseController;
 import interface_adapter.phase.PhaseExploreController;
 import interface_adapter.phase.PhaseState;
@@ -103,6 +104,40 @@ final class PopupPhasePortrait extends PopupCardTool<PhaseSession> {
         @Override
         BufferedImage firstPicture() {
             return PhaseSnapshot.render(viewModel.getState(), SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+        }
+
+        @Override
+        List<String> lookupNames() {
+            PhaseState s = viewModel.getState();
+            return List.of(s.getHorizontalLabel(), s.getVerticalLabel());
+        }
+
+        // both at once is allowed: that starts a solution there
+        @Override
+        int lookupMaxGiven() {
+            return 2;
+        }
+
+        @Override
+        String lookupHint() {
+            List<String> n = lookupNames();
+            return "Type " + n.get(0) + " to read " + n.get(1) + " off the pinned solutions (or " + n.get(1)
+                    + " for " + n.get(0) + "). Type both to start a solution there.";
+        }
+
+        @Override
+        void lookup(List<String> typed) {
+            kit.explore().lookup(typed);
+        }
+
+        @Override
+        void clearLookup() {
+            kit.explore().clearLookup();
+        }
+
+        @Override
+        GraphLookup lookupResult() {
+            return viewModel.getState().getLookup();
         }
     }
 }
