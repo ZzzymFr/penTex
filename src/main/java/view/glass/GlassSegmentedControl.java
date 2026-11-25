@@ -1,5 +1,7 @@
 package view.glass;
 
+import view.board.Motion;
+import view.board.Spring;
 import view.stack.Fonts;
 
 import javax.swing.JComponent;
@@ -27,17 +29,18 @@ public class GlassSegmentedControl extends JComponent {
     private static final int HEIGHT = 32;
     private static final int INSET = 3;          // gap between the track edge and the lens
     private static final int SEGMENT_PADDING = 14;
-    private static final int DURATION_MS = 340;
+    private static final float STRETCH_SPEED = 6f;  // segments/sec at which the lens is fully stretched
     private static final Color LABEL_SELECTED = new Color(0, 98, 210);
 
     private final String[] labels;
     private final List<IntConsumer> listeners = new ArrayList<>();
-    private final Timer animator = new Timer(15, e -> step());
+    private final Timer animator = new Timer(Motion.FRAME_MS, e -> step());
+    private final Motion.Clock clock = new Motion.Clock();
     private int selected;
     private int hoverIndex = -1;
-    private double lens;      // lens position in segments: 0 = first segment, 1 = second, ...
-    private double lensFrom;
-    private long animationStart;
+    // lens position in segments: 0 = first segment, 1 = second, ...; a spring, so a quick
+    // second click redirects it mid-slide without losing its speed
+    private final Spring lens = new Spring(0.002f);
 
     public GlassSegmentedControl(String... labels) {
         if (labels.length == 0) {
@@ -94,26 +97,17 @@ public class GlassSegmentedControl extends JComponent {
         }
         selected = index;
         if (isShowing()) {
-            lensFrom = lens;
-            animationStart = System.nanoTime();
             animator.start();
         } else {
-            lens = index;
+            lens.snap(index);
             repaint();
         }
     }
 
-    private double progress() {
-        return Math.min(1, (System.nanoTime() - animationStart) / (DURATION_MS * 1_000_000.0));
-    }
-
     private void step() {
-        double t = progress();
-        double eased = 1 - Math.pow(1 - t, 3);
-        lens = lensFrom + (selected - lensFrom) * eased;
-        if (t >= 1) {
-            lens = selected;
+        if (lens.step(selected, Motion.SELECT, clock.tick())) {
             animator.stop();
+            clock.reset();
         }
         repaint();
     }
@@ -182,10 +176,10 @@ public class GlassSegmentedControl extends JComponent {
         }
 
         // the lens: stretches sideways and flattens a little mid-slide, like a moving drop
-        double stretch = animator.isRunning() ? Math.sin(Math.PI * progress()) : 0;
+        double stretch = Math.min(1, Math.abs(lens.v) / STRETCH_SPEED);
         double lensWidth = seg + seg * 0.32 * stretch;
         double squash = 2.5 * stretch;
-        double lensX = track.getX() + INSET + lens * seg - (lensWidth - seg) / 2;
+        double lensX = track.getX() + INSET + lens.x * seg - (lensWidth - seg) / 2;
         lensX = Math.max(track.getX() + 1, Math.min(lensX, track.getX() + track.getWidth() - lensWidth - 1));
         RoundRectangle2D lensShape = Glass.capsule(lensX, track.getY() + INSET + squash / 2,
                 lensWidth, lensHeight - squash);
@@ -196,7 +190,7 @@ public class GlassSegmentedControl extends JComponent {
         FontMetrics fm = g2.getFontMetrics();
         int textY = (int) Math.round((getHeight() + fm.getAscent() - fm.getDescent()) / 2.0);
         for (int i = 0; i < labels.length; i++) {
-            double closeness = Math.max(0, 1 - Math.abs(i - lens));
+            double closeness = Math.max(0, 1 - Math.abs(i - lens.x));
             double centre = track.getX() + INSET + (i + 0.5) * seg;
             Glass.drawText(g2, labels[i], centre, textY, Glass.mix(Glass.TEXT_MUTED, LABEL_SELECTED, closeness));
         }

@@ -10,6 +10,7 @@ import java.awt.Insets;
 
 // FlowLayout that grows taller when its row wraps
 public class WrapLayout extends FlowLayout {
+    private final java.util.Map<Container, Integer> askedAtWidth = new java.util.WeakHashMap<>();
     public WrapLayout(int align, int hgap, int vgap) {
         super(align, hgap, vgap);
     }
@@ -17,6 +18,25 @@ public class WrapLayout extends FlowLayout {
     @Override
     public Dimension preferredLayoutSize(Container target) {
         return size(target, true);
+    }
+
+    // its height was worked out before it had a real width (e.g. PDF panel opening): once laid out
+    // at the real width, ask for the right height again instead of staying a tall empty card
+    @Override
+    public void layoutContainer(Container target) {
+        super.layoutContainer(target);
+        if (target.getWidth() <= 0) {
+            return;
+        }
+        int wanted = preferredLayoutSize(target).height;
+        // once per width, so a parent that stretches us can't make this loop
+        if (wanted != target.getHeight() && !java.util.Objects.equals(askedAtWidth.put(target, target.getWidth()), target.getWidth())) {
+            SwingUtilities.invokeLater(() -> {
+                if (target.getWidth() > 0 && preferredLayoutSize(target).height != target.getHeight()) {
+                    target.revalidate();
+                }
+            });
+        }
     }
 
     @Override

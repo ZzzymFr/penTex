@@ -31,7 +31,10 @@ final class FaintEquals extends JComponent {
 
     private final Component canvas;
     private final Runnable tapped;
-    private final Timer fade = new Timer(15, e -> repaint());
+    private final Timer fade = new Timer(view.board.Motion.FRAME_MS, e -> repaint());
+    // hover brightens over ~0.2s instead of jumping from faint to dark
+    private final view.board.Spring hoverMix = new view.board.Spring(0.004f, true);
+    private final view.board.Motion.Clock hoverClock = new view.board.Motion.Clock();
     private boolean shown;
     private boolean hover;
     private long shownAt;
@@ -83,6 +86,7 @@ final class FaintEquals extends JComponent {
 
     void showAt(Rectangle bounds) {
         setBounds(bounds);
+        hoverMix.snap(hover ? 1f : 0f);
         shown = true;
         shownAt = System.currentTimeMillis();
         fade.restart();
@@ -166,6 +170,8 @@ final class FaintEquals extends JComponent {
         }
         hover = on;
         setCursor(on ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+        hoverClock.reset();
+        fade.start();
         repaint();
     }
 
@@ -175,12 +181,16 @@ final class FaintEquals extends JComponent {
             return;
         }
         float in = Math.min(1f, (System.currentTimeMillis() - shownAt) / (float) FADE_MILLIS);
-        if (in >= 1f) {
+        in = 1f - (1f - in) * (1f - in);  // ease out: arrives quickly, settles softly
+        boolean mixed = hoverMix.step(hover ? 1f : 0f, view.board.Motion.HOVER, hoverClock.tick());
+        if (in >= 1f && mixed) {
             fade.stop();
+            hoverClock.reset();
         }
+        float alpha = ALPHA + (HOVER_ALPHA - ALPHA) * Math.max(0f, Math.min(1f, hoverMix.x));
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (hover ? HOVER_ALPHA : ALPHA) * in));
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha * in));
         double d = Math.min(getWidth(), getHeight()) - 2;
         float pen = (float) Math.max(1.5, d / 12);
         g2.setColor(new Color(INK.getRed(), INK.getGreen(), INK.getBlue(), 40));

@@ -334,6 +334,13 @@ public class StackedAppBuilder {
 
         root.registerKeyboardAction(e -> board.setPdfFullscreen(false),
                 KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        // reduce motion on/off, remembered; same keys on mac + windows (cmd / ctrl)
+        root.registerKeyboardAction(e -> {
+            boolean on = !view.board.Motion.reduced();
+            view.board.Motion.setReduced(on);
+            view.glass.GlassNotices.showSuccess(root, on ? "Reduce Motion on" : "Reduce Motion off");
+        }, KeyStroke.getKeyStroke(KeyEvent.VK_M, shortcut | java.awt.event.InputEvent.SHIFT_DOWN_MASK),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
         frame.setContentPane(board);
         // Closing asks about unsaved ink first. EXIT_ON_CLOSE quit before windowClosed ran, so
         // unsaved work was lost and the PDF editor and model were never closed.

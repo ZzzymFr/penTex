@@ -39,9 +39,20 @@ final class SavedPdfChooser {
         java.util.Map<UUID, ImageIcon> thumbnails = new java.util.HashMap<>();
         for (Summary entry : entries) thumbnails.put(entry.id(), thumbnail(entry));
         list.setCellRenderer((source, value, index, selected, focused) -> {
-            JPanel row = new JPanel(new BorderLayout(10, 0));
+            JPanel row = new JPanel(new BorderLayout(10, 0)) {
+                @Override protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    if (selected) {
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(new Color(0, 122, 255, 30));
+                        g2.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, 12, 12);
+                        g2.dispose();
+                    }
+                }
+            };
             row.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
-            row.setBackground(selected ? new Color(231, 240, 255) : Color.WHITE);
+            row.setBackground(Color.WHITE);
             JLabel image = new JLabel(thumbnails.get(value.id())); image.setPreferredSize(new Dimension(60, 80));
             JPanel text = new JPanel(); text.setOpaque(false); text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
             JLabel title = new JLabel(value.name()); title.setFont(new Font(Font.DIALOG, Font.BOLD, 14));
@@ -49,9 +60,14 @@ final class SavedPdfChooser {
             title.setForeground(new Color(35, 43, 56));
             detail.setFont(new Font(Font.DIALOG, Font.PLAIN, 12)); detail.setForeground(new Color(111, 111, 117));
             text.add(Box.createVerticalGlue()); text.add(title); text.add(detail); text.add(Box.createVerticalGlue());
-            JLabel remove = new JLabel("×", SwingConstants.CENTER);
-            remove.setFont(new Font(Font.DIALOG, Font.PLAIN, 20));
-            remove.setForeground(new Color(125, 133, 148));
+            JComponent remove = new JComponent() {
+                @Override protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.translate(0, (getHeight() - 26) / 2.0);
+                    view.glass.AppleLook.paintClose(g2, 26, 26, selected, false);
+                    g2.dispose();
+                }
+            };
             remove.setPreferredSize(new Dimension(32, 48));
             row.add(image, BorderLayout.WEST); row.add(text, BorderLayout.CENTER);
             row.add(remove, BorderLayout.EAST); return row;
@@ -70,7 +86,7 @@ final class SavedPdfChooser {
             @Override public void changedUpdate(DocumentEvent e) { filter.run(); }
         });
         JScrollPane scroll = new JScrollPane(list); scroll.setPreferredSize(new Dimension(440, 290));
-        scroll.setBorder(BorderFactory.createLineBorder(new Color(223, 228, 238)));
+        scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(Color.WHITE); scroll.getVerticalScrollBar().setUnitIncrement(28);
         panel.add(scroll, BorderLayout.CENTER);
         filter.run();

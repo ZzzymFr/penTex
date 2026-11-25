@@ -75,6 +75,7 @@ public class AnswerCanvasPage extends CanvasPage {
     private final PopupGate gate = new PopupGate(latex -> question.test(latex));
     private Predicate<String> faintCheck = latex -> false;
     private final FaintOffer faint;   // faint "=" chip for a done formula w/o one
+    private final ReadingHint reading;  // ring at the formula's end while it's being read
     private final CaptureReader reader = new CaptureReader(this::recognizeFormula);  // puts a lost trailing = back
 
     // no evaluate feature, just a placeholder
@@ -85,6 +86,7 @@ public class AnswerCanvasPage extends CanvasPage {
         this.popup = null;
         this.pauseTimer = null;
         this.faint = null;
+        this.reading = null;
         setFunctionArea(placeholder("Answer tools go here: evaluate or solve the expression on the canvas."));
     }
 
@@ -109,6 +111,8 @@ public class AnswerCanvasPage extends CanvasPage {
         pauseTimer.setRepeats(false);
         faint = new FaintOffer(sharedCanvas.getDrawingCanvas(), new FaintHost());
         addCanvasOverlay(faint.chip());
+        reading = new ReadingHint();
+        addCanvasOverlay(reading);
 
         sharedCanvas.addFormulaChangeListener(this::formulaChanged);
         sharedCanvas.addFormulaMoveListener(this::formulaMoved);
@@ -382,6 +386,7 @@ public class AnswerCanvasPage extends CanvasPage {
         hover.forget();
         closePopup();
         faint.hide();
+        reading.hideNow();
     }
 
     // just take it down, hover keeps its state
@@ -472,11 +477,25 @@ public class AnswerCanvasPage extends CanvasPage {
     private void recognize(FormulaCapture capture, long gen) {
         Read r = reads.get(capture.getId());
         boolean known = r != null && r.revision == capture.getRevision();  // same ink, read it already
+        if (!known) {
+            reading.showSoon(readingSpot(capture.getId()));
+        }
         worker.recognize(known ? () -> r.latex : () -> reader.read(capture),
                 (latex, problem) -> recognized(capture, gen, latex, problem));
     }
 
+    // a little square just past the formula's right end, like the faint "=" chip
+    private Rectangle readingSpot(long id) {
+        Rectangle world = getSharedCanvas().formulaBounds(id);
+        if (world == null) {
+            return null;
+        }
+        Rectangle f = toArea(world);
+        return FaintEquals.spot(f, Math.max(18, Math.min(f.height, 60)));
+    }
+
     private void recognized(FormulaCapture capture, long gen, String latex, String problem) {
+        if (gen == generation) reading.hideNow();
         if (!getSharedCanvas().isCurrent(capture.getId(), capture.getRevision())) {
             return;  // ink changed while we were reading it
         }

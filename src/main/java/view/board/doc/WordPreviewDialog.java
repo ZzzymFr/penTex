@@ -23,14 +23,14 @@ public final class WordPreviewDialog {
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 
         JPanel root = new JPanel(new BorderLayout(0, 12));
-        root.setBackground(new Color(245, 247, 250));
+        root.setBackground(BoardTheme.CANVAS);
         root.setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 16));
         JPanel header = new JPanel(new BorderLayout(8, 0));
         header.setOpaque(false);
         JPanel heading = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
         heading.setOpaque(false);
         heading.add(DocumentGlyphs.component(20, Icons::preview));
-        JLabel title = new JLabel("PDF preview"); title.setFont(BoardTheme.font(17f));
+        JLabel title = new JLabel("PDF preview"); title.setFont(BoardTheme.semibold(17f));
         heading.add(title); header.add(heading, BorderLayout.WEST);
         JLabel counter = new JLabel(); counter.setFont(BoardTheme.font(12f));
         header.add(counter, BorderLayout.EAST);
@@ -38,8 +38,8 @@ public final class WordPreviewDialog {
 
         PreviewPage view = new PreviewPage();
         JScrollPane scroll = new JScrollPane(view);
-        scroll.setBorder(BorderFactory.createLineBorder(new Color(220, 226, 235)));
-        scroll.getViewport().setBackground(new Color(233, 238, 245));
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getViewport().setBackground(BoardTheme.PANEL);
         scroll.getVerticalScrollBar().setUnitIncrement(96);
         scroll.getHorizontalScrollBar().setUnitIncrement(96);
         scroll.getVerticalScrollBar().setBlockIncrement(400);
@@ -129,15 +129,24 @@ public final class WordPreviewDialog {
         dialog.setVisible(true);
     }
 
+    // grey capsule (Apple secondary button), darkens on press
     private static JButton pill(String text) {
-        JButton button = new JButton(text);
-        button.setFont(BoardTheme.font(12f));
+        JButton button = new JButton(text) {
+            @Override protected void paintComponent(Graphics g) {
+                view.glass.AppleLook.paintButton((Graphics2D) g, getWidth(), getHeight(), getHeight(),
+                        view.glass.AppleLook.Tone.SECONDARY, getModel().isRollover(),
+                        getModel().isArmed() && getModel().isPressed(), isEnabled());
+                super.paintComponent(g);
+            }
+        };
+        button.setFont(BoardTheme.font(12.5f));
+        button.setForeground(BoardTheme.LABEL);
         button.setFocusable(false);
         button.setFocusPainted(false);
         button.setContentAreaFilled(false);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(202, 213, 227), 1, true),
-                BorderFactory.createEmptyBorder(7, 12, 7, 12)));
+        button.setBorderPainted(false);
+        button.setRolloverEnabled(true);
+        button.setBorder(BorderFactory.createEmptyBorder(7, 13, 7, 13));
         return button;
     }
 

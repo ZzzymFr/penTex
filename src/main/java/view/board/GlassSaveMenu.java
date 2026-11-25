@@ -11,7 +11,6 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
-import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
@@ -23,8 +22,8 @@ import java.util.Objects;
  * the menu neither mutates the canvas nor accesses storage. No shortcut/icon columns are reserved.
  */
 final class GlassSaveMenu extends JPopupMenu {
-    private static final Color INK = new Color(28, 35, 47);
-    private static final Color MUTED = new Color(99, 105, 117);
+    private static final Color INK = BoardTheme.LABEL;
+    private static final Color MUTED = BoardTheme.LABEL_SECONDARY;
     private static final int INNER_GAP = 4;
     private final JPanel rows;
 
@@ -43,11 +42,10 @@ final class GlassSaveMenu extends JPopupMenu {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 RoundRectangle2D border = new RoundRectangle2D.Double(.5, .5,
                         getWidth() - 1.0, getHeight() - 1.0, 19, 19);
-                g.setPaint(new GradientPaint(0, 0, new Color(255, 255, 255, 253),
-                        0, getHeight(), new Color(246, 248, 253, 248)));
+                g.setColor(new Color(255, 255, 255, 252));
                 g.fill(border);
                 g.setStroke(new BasicStroke(1f));
-                g.setColor(new Color(198, 205, 216, 145));
+                g.setColor(new Color(0, 0, 0, 38));
                 g.draw(border);
                 g.dispose();
             }
@@ -132,16 +130,17 @@ final class GlassSaveMenu extends JPopupMenu {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            if (getModel().isPressed() || getModel().isRollover()) {
-                g.setColor(getModel().isPressed() ? new Color(213, 229, 251)
-                        : new Color(234, 242, 255));
-                g.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, 12, 12);
+            // macOS menu highlight: accent row, white text; a touch darker while held
+            boolean lit = isEnabled() && (getModel().isPressed() || getModel().isRollover());
+            if (lit) {
+                g.setColor(getModel().isPressed() ? new Color(0, 100, 215) : BoardTheme.ACCENT);
+                g.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, 10, 10);
             }
             g.setFont(getFont());
-            g.setColor(INK);
+            g.setColor(lit ? Color.WHITE : INK);
             g.drawString(getText(), 14, 25);
             g.setFont(BoardTheme.font(11.3f));
-            g.setColor(MUTED);
+            g.setColor(lit ? new Color(255, 255, 255, 210) : MUTED);
             g.drawString(description, 14, 42);
             g.dispose();
         }

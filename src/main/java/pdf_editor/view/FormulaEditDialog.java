@@ -18,10 +18,10 @@ import java.util.function.Function;
 public final class FormulaEditDialog {
     public record Result(String formula, String result) { }
 
-    private static final Color INK = new Color(36, 42, 55);
-    private static final Color SECONDARY = new Color(111, 119, 134);
-    private static final Color BORDER = new Color(209, 216, 230);
-    private static final Color BLUE = new Color(15, 117, 236);
+    private static final Color INK = view.board.BoardTheme.LABEL;
+    private static final Color SECONDARY = new Color(110, 110, 115);
+    private static final Color BORDER = new Color(0, 0, 0, 34);
+    private static final Color BLUE = view.board.BoardTheme.ACCENT;
     private FormulaEditDialog() { }
 
     /** Compatibility for standalone consumers that do not yet inject US2. */
@@ -48,7 +48,7 @@ public final class FormulaEditDialog {
         surface.setBorder(BorderFactory.createEmptyBorder(20, 22, 18, 22));
         JLabel title = new JLabel("Edit formula");
         title.setForeground(INK);
-        title.setFont(Fonts.ui(Font.BOLD, 18f));
+        title.setFont(view.board.BoardTheme.semibold(18f));
         JLabel subtitle = new JLabel("Choose how to save this expression.");
         subtitle.setForeground(SECONDARY);
         subtitle.setFont(Fonts.ui(Font.PLAIN, 12f));
@@ -82,6 +82,15 @@ public final class FormulaEditDialog {
         editor.setOpaque(false);
         editor.setBorder(BorderFactory.createLineBorder(BORDER, 1, true));
         editor.setPreferredSize(new Dimension(432, 79));
+        // focus ring: the field you type in lights up in the accent colour
+        formula.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusGained(java.awt.event.FocusEvent e) {
+                editor.setBorder(BorderFactory.createLineBorder(new Color(0, 122, 255, 150), 1, true));
+            }
+            @Override public void focusLost(java.awt.event.FocusEvent e) {
+                editor.setBorder(BorderFactory.createLineBorder(BORDER, 1, true));
+            }
+        });
 
         JLabel previewLabel = new JLabel("PREVIEW");
         previewLabel.setFont(Fonts.ui(Font.BOLD, 10f));
@@ -246,10 +255,9 @@ public final class FormulaEditDialog {
             Graphics2D g = (Graphics2D) source.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             int w = getWidth() - 1, h = getHeight() - 1;
-            g.setPaint(new GradientPaint(0, 0, new Color(255, 255, 255, 253),
-                    0, h, new Color(245, 247, 252, 252)));
+            g.setColor(Color.WHITE);
             g.fillRoundRect(0, 0, w, h, 24, 24);
-            g.setColor(new Color(197, 205, 218));
+            g.setColor(new Color(0, 0, 0, 40));
             g.drawRoundRect(0, 0, w, h, 24, 24);
             g.dispose();
         }
@@ -259,10 +267,8 @@ public final class FormulaEditDialog {
         @Override protected void paintComponent(Graphics source) {
             Graphics2D g = (Graphics2D) source.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setColor(new Color(255, 255, 255, 245));
+            g.setColor(new Color(0, 0, 0, 8));
             g.fillRoundRect(0, 0, getWidth()-1, getHeight()-1, 14, 14);
-            g.setColor(new Color(224, 229, 239));
-            g.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 14, 14);
             g.dispose();
         }
     }
@@ -271,7 +277,8 @@ public final class FormulaEditDialog {
         CapsuleButton(String text, boolean primary) {
             super(text);
             this.primary = primary;
-            setFont(Fonts.ui(primary ? Font.BOLD : Font.PLAIN, 12f));
+            setFont(primary ? view.board.BoardTheme.semibold(12.5f) : view.board.BoardTheme.font(12.5f));
+            setRolloverEnabled(true);
             setForeground(primary ? Color.WHITE : INK);
             setFocusPainted(false);
             setBorderPainted(false);
@@ -281,14 +288,10 @@ public final class FormulaEditDialog {
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         }
         @Override protected void paintComponent(Graphics source) {
-            Graphics2D g = (Graphics2D) source.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color bg = primary ? BLUE : new Color(234, 237, 244);
-            if (getModel().isRollover()) bg = primary ? new Color(4, 104, 219) : new Color(225, 231, 243);
-            if (!isEnabled()) bg = new Color(171, 188, 210);
-            g.setColor(bg);
-            g.fillRoundRect(0, 0, getWidth()-1, getHeight()-1, 18, 18);
-            g.dispose();
+            var tone = primary ? view.glass.AppleLook.Tone.PRIMARY : view.glass.AppleLook.Tone.SECONDARY;
+            view.glass.AppleLook.paintButton((Graphics2D) source, getWidth(), getHeight(), getHeight(), tone,
+                    getModel().isRollover(), getModel().isArmed() && getModel().isPressed(), isEnabled());
+            setForeground(view.glass.AppleLook.buttonText(tone, isEnabled()));
             super.paintComponent(source);
         }
     }

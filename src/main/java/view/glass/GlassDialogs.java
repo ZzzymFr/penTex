@@ -249,6 +249,15 @@ public final class GlassDialogs {
         };
         private final KeyEventDispatcher keys;
         private final PropertyChangeListener focusListener;
+        // dims in and the card materialises (fade + slight grow) instead of popping
+        private final view.board.Spring appear = new view.board.Spring(0.004f, true);
+        private final view.board.Motion.Clock clock = new view.board.Motion.Clock();
+        private final javax.swing.Timer appearTimer = new javax.swing.Timer(view.board.Motion.FRAME_MS, e -> {
+            if (appear.step(1f, view.board.Motion.ENTER, clock.tick())) {
+                ((javax.swing.Timer) e.getSource()).stop();
+            }
+            repaint();
+        });
 
         private ModalOverlay(Window owner, JRootPane root, String title, String message,
                              Tone tone, JComponent extra, String[] labels,
@@ -342,6 +351,9 @@ public final class GlassDialogs {
             if (finished.get()) return selected.get();
             try {
                 layers.add(this, JLayeredPane.MODAL_LAYER, 0);
+                appear.snap(0f);
+                clock.reset();
+                appearTimer.start();
                 updateBounds();
                 layers.addComponentListener(resizeListener);
                 owner.addWindowListener(closeListener);
@@ -380,8 +392,25 @@ public final class GlassDialogs {
 
         @Override protected void paintComponent(Graphics graphics) {
             Graphics2D g2 = (Graphics2D) graphics.create();
-            g2.setColor(SCRIM);
+            g2.setColor(Glass.withAlpha(SCRIM, Math.round(SCRIM.getAlpha() * level())));
             g2.fillRect(0, 0, getWidth(), getHeight());
+            g2.dispose();
+        }
+
+        private float level() {
+            return Math.max(0f, Math.min(1f, appear.x));
+        }
+
+        @Override protected void paintChildren(Graphics graphics) {
+            float a = level();
+            if (a >= 0.999f) {
+                super.paintChildren(graphics);
+                return;
+            }
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            g2.setComposite(java.awt.AlphaComposite.SrcOver.derive(a));
+            // Fade without a visual-only scale: child hit targets remain aligned.
+            super.paintChildren(g2);
             g2.dispose();
         }
 
@@ -421,6 +450,7 @@ public final class GlassDialogs {
                 return;
             }
             if (!finished.compareAndSet(false, true)) return;
+            appearTimer.stop();
             selected.set(answer);
             focusManager.removePropertyChangeListener("focusOwner", focusListener);
             focusManager.removeKeyEventDispatcher(keys);
@@ -575,11 +605,26 @@ public final class GlassDialogs {
             Glass.setUp(g2);
             int inset = 3;
             int w = getWidth() - 2 * inset, h = getHeight() - 2 * inset;
+            double press = pressAmount();
+            double hover = hoverAmount();
+            // shrinks a touch under the finger, darkens while held
+            double k = 1 - 0.03 * press;
+            g2.translate(getWidth() / 2.0, getHeight() / 2.0);
+            g2.scale(k, k);
+            g2.translate(-getWidth() / 2.0, -getHeight() / 2.0);
             RoundRectangle2D shape = new RoundRectangle2D.Double(inset, inset, w, h, h, h);
             if (style != Style.DESTRUCTIVE) {
-                g2.setColor(style == Style.PRIMARY ? new Color(0, 122, 255) : new Color(238, 238, 240));
+                g2.setColor(style == Style.PRIMARY ? Glass.ACCENT : new Color(238, 238, 240));
+                g2.fill(shape);
+            } else if (hover > 0) {
+                g2.setColor(new Color(220, 38, 38, (int) (22 * hover)));
                 g2.fill(shape);
             }
+            if (press > 0 || hover > 0) {
+                g2.setColor(new Color(0, 0, 0, (int) (8 * hover + 22 * press)));
+                g2.fill(shape);
+            }
+            paintFocusRing(g2, shape);
             g2.setColor(style == Style.PRIMARY ? Color.WHITE :
                     style == Style.DESTRUCTIVE ? new Color(220, 38, 38) : new Color(27, 29, 33));
             g2.setFont(getFont());

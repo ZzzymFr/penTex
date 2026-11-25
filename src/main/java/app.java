@@ -34,6 +34,7 @@ public class app {
             } catch (Exception ignored) {
                 // Fall back to the default look.
             }
+            view.glass.AppleLook.install();  // same Apple-style controls on mac + windows
             frame = new StackedAppBuilder()
                     .setFormulaRecognizer(new VitalMiniFormulaRecognizer(model))
                     .build();

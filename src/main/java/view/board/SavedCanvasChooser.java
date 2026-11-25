@@ -43,7 +43,7 @@ import java.util.Locale;
 
 /** View-only searchable save browser. No example rows or persistence logic live here. */
 public final class SavedCanvasChooser extends JPanel {
-    private static final Color BLUE = new Color(0, 122, 255);
+    private static final Color BLUE = BoardTheme.ACCENT;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("MMM d, yyyy 'at' h:mm a", Locale.ENGLISH)
             .withZone(ZoneId.systemDefault());
     private final List<SavedCanvas> all;
@@ -67,7 +67,7 @@ public final class SavedCanvasChooser extends JPanel {
         JPanel heading = new JPanel(new BorderLayout());
         heading.setOpaque(false);
         JLabel title = new JLabel("Open Canvas");
-        title.setFont(BoardTheme.font(18f).deriveFont(Font.BOLD));
+        title.setFont(BoardTheme.semibold(19f));
         heading.add(title, BorderLayout.WEST);
         count.setForeground(new Color(111, 111, 117));
         count.setFont(BoardTheme.font(12f));
@@ -103,7 +103,7 @@ public final class SavedCanvasChooser extends JPanel {
             public void changedUpdate(DocumentEvent e) { filter(); }
         });
         JScrollPane scroll = new JScrollPane(list);
-        scroll.setBorder(BorderFactory.createLineBorder(new Color(223, 228, 238)));
+        scroll.setBorder(BorderFactory.createEmptyBorder());  // rows float on the sheet, no box
         // Opaque: a translucent fill on an opaque viewport leaves stale grey paint below the rows.
         scroll.getViewport().setBackground(Color.WHITE);
         scroll.getVerticalScrollBar().setUnitIncrement(28);
@@ -157,16 +157,29 @@ public final class SavedCanvasChooser extends JPanel {
     private static final class Cell implements ListCellRenderer<SavedCanvas> {
         @Override public Component getListCellRendererComponent(JList<? extends SavedCanvas> list, SavedCanvas item,
                                                                   int index, boolean selected, boolean focused) {
-            JPanel panel = new JPanel(new BorderLayout(12, 0));
+            // opaque white row with a rounded, inset selection (macOS list), not a full-width bar
+            JPanel panel = new JPanel(new BorderLayout(12, 0)) {
+                @Override protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    if (selected) {
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(new Color(0, 122, 255, 30));
+                        g2.fill(new java.awt.geom.RoundRectangle2D.Double(2, 2, getWidth() - 4, getHeight() - 4, 12, 12));
+                        g2.dispose();
+                    }
+                }
+            };
             panel.setOpaque(true);
-            panel.setBackground(selected ? new Color(231, 240, 255) : Color.WHITE);
+            panel.setBackground(Color.WHITE);
             panel.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 10));
             panel.add(new Thumbnail(item.state()), BorderLayout.WEST);
             JPanel labels = new JPanel();
             labels.setOpaque(false);
             labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
             JLabel name = new JLabel(item.name());
-            name.setFont(new Font(Font.DIALOG, Font.BOLD, 14));
+            name.setFont(BoardTheme.semibold(14f));
+            name.setForeground(BoardTheme.LABEL);
             JLabel date = new JLabel(WHEN.format(item.modifiedAt()));
             date.setForeground(new Color(111, 111, 117));
             date.setFont(BoardTheme.font(12f));
@@ -176,10 +189,15 @@ public final class SavedCanvasChooser extends JPanel {
             labels.add(date);
             labels.add(Box.createVerticalGlue());
             panel.add(labels, BorderLayout.CENTER);
-            JLabel remove = new JLabel("×", SwingConstants.CENTER);
+            JComponent remove = new JComponent() {
+                @Override protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.translate(0, (getHeight() - 26) / 2.0);
+                    view.glass.AppleLook.paintClose(g2, 26, 26, selected, false);
+                    g2.dispose();
+                }
+            };
             remove.setToolTipText("Delete saved canvas");
-            remove.setFont(BoardTheme.font(20f));
-            remove.setForeground(new Color(125, 133, 148));
             remove.setPreferredSize(new Dimension(32, 48));
             panel.add(remove, BorderLayout.EAST);
             return panel;

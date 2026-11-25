@@ -73,8 +73,7 @@ public class GlassBar extends JComponent {
     private static final float HOVER_EDGE_BAND = 11f;
     private static final float HOVER_EDGE_K = 9f;
     private static final float HOVER_DISPERSION = 0.45f;
-    private static final int FRAME_MS = 16;
-    private static final float REF_MS = 16f;
+    private static final int FRAME_MS = Motion.FRAME_MS;
 
     public enum Kind { SEGMENT, ACTION, SWATCH, SEPARATOR, GRIP }
 
@@ -92,6 +91,10 @@ public class GlassBar extends JComponent {
         int splitGroup = -1;
         BooleanSupplier onActivate = () -> true;  // false keeps the old selection
         BooleanSupplier enabled = () -> true;
+        // hover-label mode: 0 = icon only, 1 = label shown; grows on a spring instead of popping
+        final Spring reveal = new Spring(0.002f);
+        float compactW;
+        float labelW;
 
         Item(Kind kind, String label, Icons.Glyph icon, int group, float w) {
             this.kind = kind;
@@ -172,6 +175,7 @@ public class GlassBar extends JComponent {
     private static final AffineTransform FLIP = new AffineTransform(0, 1, 1, 0, 0, 0);  // swaps x and y
     private GripListener gripListener;
     private boolean hoverToolLabels;
+    private float hoverGrowthBudget = Float.MAX_VALUE;
     private Runnable hoverLayoutListener = () -> { };
 
     /** Compact tool icons expand their own label only while hovered. */
@@ -186,7 +190,7 @@ public class GlassBar extends JComponent {
     private Item pressItem;
     private boolean dragSwitched;
     private float mouseX;
-    private final Spring press = new Spring();
+    private final Spring press = new Spring(0.002f);
     private float pressTarget;
     private float glow;
     private final Point2D.Float glowAt = new Point2D.Float();
@@ -197,7 +201,7 @@ public class GlassBar extends JComponent {
     private float lensAlpha;
 
     private final Timer timer = new Timer(FRAME_MS, e -> step());
-    private long lastNanos;
+    private final Motion.Clock clock = new Motion.Clock();
     private long glassKey;
     private BufferedImage glassCache;
     private BufferedImage sceneCache;
@@ -296,8 +300,7 @@ public class GlassBar extends JComponent {
                 Item next = itemAt(mainOf(e));
                 if (hoverToolLabels && next != hoverItem) {
                     hoverItem = next;
-                    finish();
-                    hoverLayoutListener.run();
+                    timer.start();  // labels grow / shrink in step()
                 } else {
                     hoverItem = next;
                 }
@@ -309,10 +312,6 @@ public class GlassBar extends JComponent {
             @Override
             public void mouseExited(MouseEvent e) {
                 hoverItem = null;
-                if (hoverToolLabels) {
-                    finish();
-                    hoverLayoutListener.run();
-                }
                 timer.start();
             }
         };
@@ -363,12 +362,34 @@ public class GlassBar extends JComponent {
         items.add(new Item(Kind.GRIP, null, Icons::grip, -1, GRIP_W));
     }
 
+    // label shown only while hovered, and there's room for labels at all
+    private boolean revealsLabel(Item it) {
+        return hoverToolLabels && !compact && !vertical && it.label != null && it.splitGroup < 0
+                && (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION);
+    }
+
+    private float revealTarget(Item it) {
+        return hoverItem == it && it.enabled.getAsBoolean() ? 1f : 0f;
+    }
+
     /** Measures labels and lays the items out left to right. */
     public void finish() {
         FontRenderContext frc = new FontRenderContext(null, true, true);
         float x = 0;
+        float growthScale = hoverGrowthScale(frc);
+        boolean revealing = false;
         for (Item it : items) {
-            if (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION) {
+            if (revealsLabel(it)) {
+                float text = (float) font.getStringBounds(it.label, frc).getWidth();
+                it.compactW = Math.max(minWidth(it), COMPACT_W * squeeze);
+                it.labelW = Math.max(73, 23 + ICON + ICON_GAP + text);
+                if (!isShowing()) {
+                    it.reveal.snap(revealTarget(it));
+                }
+                revealing |= it.reveal.x != revealTarget(it);
+                it.w = it.compactW + (it.labelW - it.compactW) * clamp01(it.reveal.x) * growthScale;
+            } else if (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION) {
+                it.reveal.snap(0f);
                 if ((hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null) {
                     it.w = Math.max(minWidth(it), (it.splitGroup >= 0 && it.label == null ? SPLIT_CHEVRON_W : COMPACT_W) * squeeze);
                 } else {
@@ -391,7 +412,71 @@ public class GlassBar extends JComponent {
             e.getValue().w.x = t.w;
         }
         setSize(getPreferredSize());
+        if (revealing) {
+            timer.start();
+        }
         repaint();
+    }
+
+    private static float clamp01(float v) {
+        return Math.max(0f, Math.min(1f, v));
+    }
+
+    // one frame of labels growing / shrinking: re-lay the items, platters ride along
+    private boolean stepReveal(float dt) {
+        boolean any = false;
+        boolean settled = true;
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                any = true;
+                settled &= it.reveal.step(revealTarget(it), Motion.HOVER, dt);
+            }
+        }
+        if (!any) {
+            return true;
+        }
+        Map<Integer, float[]> before = new HashMap<>();
+        for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
+            Item t = selected.get(e.getKey());
+            before.put(e.getKey(), new float[]{t.x, t.w});
+        }
+        float x = 0;
+        float growthScale = hoverGrowthScale(new FontRenderContext(null, true, true));
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                it.w = it.compactW + (it.labelW - it.compactW) * clamp01(it.reveal.x) * growthScale;
+            }
+            it.x = x;
+            x += it.w;
+        }
+        float newCap = x + 2 * PAD;
+        for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
+            Item t = selected.get(e.getKey());
+            float[] was = before.get(e.getKey());
+            e.getValue().x.x += t.x - was[0];
+            e.getValue().w.x += t.w - was[1];
+        }
+        if (Math.abs(newCap - capW) > 0.01f) {
+            capW = newCap;
+            setSize(getPreferredSize());
+            hoverLayoutListener.run();
+        }
+        return settled;
+    }
+
+    // The resting capsule is centered; all hover expansion must fit on its right.
+    // During a fast hover transition more than one spring may still be open.
+    private float hoverGrowthScale(FontRenderContext frc) {
+        float growth = 0;
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                float label = Math.max(73, 23 + ICON + ICON_GAP
+                        + (float) font.getStringBounds(it.label, frc).getWidth());
+                float fraction = isShowing() ? clamp01(it.reveal.x) : revealTarget(it);
+                growth += Math.max(0, label - Math.max(minWidth(it), COMPACT_W * squeeze)) * fraction;
+            }
+        }
+        return growth > hoverGrowthBudget ? hoverGrowthBudget / growth : 1f;
     }
 
     // narrowest an item gets when squeezed
@@ -415,12 +500,28 @@ public class GlassBar extends JComponent {
      */
     public void fitTo(int maxCapW) {
         boolean c = vertical || capsuleWidth(false) > maxCapW;  // standing up is icons only
+        float previousBudget = hoverGrowthBudget;
+        if (hoverToolLabels) {
+            int resting = capsuleWidth(true);
+            hoverGrowthBudget = Math.max(0f, (maxCapW - resting) / 2f);
+            FontRenderContext frc = new FontRenderContext(null, true, true);
+            float maxGrowth = 0;
+            for (Item it : items) {
+                if (it.label != null && it.splitGroup < 0 && (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION)) {
+                    float label = Math.max(73, 23 + ICON + ICON_GAP
+                            + (float) font.getStringBounds(it.label, frc).getWidth());
+                    maxGrowth = Math.max(maxGrowth, label - COMPACT_W);
+                }
+            }
+            c = vertical || maxGrowth > hoverGrowthBudget;
+        }
         float s = 1f;
         if (c) {
             float natural = capsuleWidth(true) - 2 * PAD;
             s = Math.max(0f, Math.min(1f, (maxCapW - 2 * PAD) / natural));
         }
-        if (c != compact || Math.abs(s - squeeze) > 0.002f) {
+        if (c != compact || Math.abs(s - squeeze) > 0.002f
+                || (hoverToolLabels && previousBudget != hoverGrowthBudget)) {
             compact = c;
             squeeze = s;
             finish();
@@ -469,6 +570,30 @@ public class GlassBar extends JComponent {
 
     public int capsuleWidth() {
         return (int) Math.ceil(capW);
+    }
+
+    /** Capsule width with every hover label folded away: where the bar rests. */
+    public int restingCapsuleWidth() {
+        float x = 0;
+        for (Item it : items) {
+            x += revealsLabel(it) ? it.compactW : it.w;
+        }
+        return (int) Math.ceil(x + 2 * PAD);
+    }
+
+    /** The visible capsule in this component's coords (standing up when vertical). */
+    public java.awt.Rectangle capsuleBounds() {
+        int len = (int) Math.ceil(capW);
+        int thick = (int) capH;
+        return vertical ? new java.awt.Rectangle(MARGIN, MARGIN, thick, len)
+                : new java.awt.Rectangle(MARGIN, MARGIN, len, thick);
+    }
+
+    /** Centre of an item in this component's coords. */
+    public Point centerOf(Item it) {
+        int along = Math.round(MARGIN + PAD + it.center());
+        int across = MARGIN + (int) capH / 2;
+        return vertical ? new Point(across, along) : new Point(along, across);
     }
 
     @Override
@@ -605,17 +730,16 @@ public class GlassBar extends JComponent {
     }
 
     private void step() {
-        long now = System.nanoTime();
-        float f = lastNanos == 0 ? FRAME_MS / REF_MS
-                : Math.max(0.1f, Math.min(2f, (now - lastNanos) / (REF_MS * 1e6f)));
-        lastNanos = now;
+        float dt = clock.tick();
+        float f = dt * 1000f / FRAME_MS;  // in 16ms frames, for the plain fades below
         boolean settled = true;
         for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
             Item t = selected.get(e.getKey());
-            settled &= e.getValue().x.step(t.x, 0.16f, 0.70f, f);
-            settled &= e.getValue().w.step(t.w, 0.16f, 0.70f, f);
+            settled &= e.getValue().x.step(t.x, Motion.SELECT, dt);
+            settled &= e.getValue().w.step(t.w, Motion.SELECT, dt);
         }
-        settled &= press.step(pressTarget, 0.30f, 0.62f, f);
+        settled &= press.step(pressTarget, Motion.PRESS, dt);
+        settled &= stepReveal(dt);
         if (pressTarget == 0f) {
             glow *= (float) Math.pow(0.86, f);
             if (glow < 0.01f) {
@@ -652,8 +776,8 @@ public class GlassBar extends JComponent {
                 lensX.v = 0;
                 lensW.v = 0;
             }
-            settled &= lensX.step(cx, 0.20f, 0.68f, f);
-            settled &= lensW.step(w, 0.20f, 0.68f, f);
+            settled &= lensX.step(cx, Motion.HOVER, dt);
+            settled &= lensW.step(w, Motion.HOVER, dt);
         }
         lensAlpha += (alphaTarget - lensAlpha) * ease(0.25f, f);
         if (Math.abs(alphaTarget - lensAlpha) < 0.01f) {
@@ -664,7 +788,7 @@ public class GlassBar extends JComponent {
 
         if (settled) {
             timer.stop();
-            lastNanos = 0;
+            clock.reset();
         }
         repaint();
     }
@@ -757,7 +881,10 @@ public class GlassBar extends JComponent {
             }
         }
         h = h * 31 + (compact ? 1 : 0) + (vertical ? 2 : 0);
-        if (hoverToolLabels) h = h * 31 + (hoverItem == null ? 0 : System.identityHashCode(hoverItem));
+        if (hoverToolLabels) {
+            h = h * 31 + (hoverItem == null ? 0 : System.identityHashCode(hoverItem));
+            for (Item it : items) h = h * 31 + Math.round(it.w * 2);
+        }
         h = h * 31 + version.getAsLong();
         Point o = origin();
         h = h * 31 + o.x;
@@ -913,9 +1040,15 @@ public class GlassBar extends JComponent {
                 Color c = !it.enabled.getAsBoolean() ? BoardTheme.LABEL_DISABLED
                         : selected.get(it.group) == it ? BoardTheme.LABEL_SELECTED : BoardTheme.LABEL;
                 g2.setColor(c);
-                boolean iconOnly = (hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null;
+                float r = revealsLabel(it) ? clamp01(it.reveal.x) : -1f;
+                boolean iconOnly = r >= 0 ? r < 0.01f
+                        : (hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null;
                 float textW = iconOnly ? 0 : fm.stringWidth(it.label);
-                double total = iconOnly ? ICON * scale : (ICON + ICON_GAP) * scale + textW;
+                double total = iconOnly ? ICON * scale
+                        : (ICON + ICON_GAP) * scale + textW;
+                if (r >= 0 && !iconOnly) {
+                    total = ICON * scale + ((ICON_GAP * scale) + textW) * r;  // icon eases left as the word arrives
+                }
                 double x0 = b.getCenterX() - total / 2;
                 AffineTransform t = g2.getTransform();
                 g2.translate(x0 + ICON * scale / 2, b.getCenterY());
@@ -926,8 +1059,16 @@ public class GlassBar extends JComponent {
                 it.icon.paint(g2);
                 g2.setTransform(t);
                 if (!iconOnly) {
-                    g2.drawString(it.label, (float) (x0 + (ICON + ICON_GAP) * scale),
+                    Graphics2D tg = (Graphics2D) g2.create();
+                    if (r >= 0) {
+                        tg.clip(b);
+                        java.awt.Composite base = tg.getComposite();
+                        float baseAlpha = base instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
+                        tg.setComposite(AlphaComposite.SrcOver.derive(baseAlpha * r * r));
+                    }
+                    tg.drawString(it.label, (float) (x0 + (ICON + ICON_GAP) * scale),
                             (float) (b.getCenterY() - fm.getHeight() / 2.0 + fm.getAscent()));
+                    tg.dispose();
                 }
             } else if (it.kind == Kind.SWATCH) {
                 paintSwatch(g2, it, b.getCenterX(), b.getCenterY(), scale);

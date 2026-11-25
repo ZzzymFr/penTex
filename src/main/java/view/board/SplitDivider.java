@@ -14,7 +14,7 @@ import java.util.function.IntConsumer;
 public class SplitDivider extends JComponent {
     public static final int HIT = 8;
     private static final Color LINE = new Color(0, 0, 0, 23);
-    private static final Color ACTIVE = new Color(0x007AFF);
+    private static final Color ACTIVE = BoardTheme.ACCENT;
 
     private boolean hover;
     private boolean dragging;

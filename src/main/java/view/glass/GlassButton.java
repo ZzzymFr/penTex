@@ -1,5 +1,7 @@
 package view.glass;
 
+import view.board.Motion;
+import view.board.Spring;
 import view.stack.Fonts;
 
 import javax.swing.JButton;
@@ -21,10 +23,11 @@ public class GlassButton extends JButton {
     private static final int PADDING = 16;
 
     private final int height;
-    private double hover;
-    private double press;
+    private final Spring hover = new Spring(0.004f, true);
+    private final Spring press = new Spring(0.004f);
     private boolean hovering;
-    private final Timer animator = new Timer(15, e -> step());
+    private final Motion.Clock clock = new Motion.Clock();
+    private final Timer animator = new Timer(Motion.FRAME_MS, e -> step());
 
     public GlassButton(String text) {
         this(text, HEIGHT);
@@ -39,7 +42,13 @@ public class GlassButton extends JButton {
         setContentAreaFilled(false);
         setBorderPainted(false);
         setFocusPainted(false);
-        setFocusable(false);
+        // reachable with Tab (focus ring), but a mouse click doesn't grab focus
+        setFocusable(true);
+        setRequestFocusEnabled(false);
+        addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusGained(java.awt.event.FocusEvent e) { repaint(); }
+            @Override public void focusLost(java.awt.event.FocusEvent e) { repaint(); }
+        });
         setOpaque(false);
         setRolloverEnabled(true);
         addMouseListener(new MouseAdapter() {
@@ -57,6 +66,9 @@ public class GlassButton extends JButton {
 
             @Override
             public void mousePressed(MouseEvent e) {
+                // feedback on the way down, not on release: jump most of the way this frame
+                press.x = Math.max(press.x, 0.6f);
+                repaint();
                 animator.start();
             }
 
@@ -67,18 +79,39 @@ public class GlassButton extends JButton {
         });
     }
 
-    /** Eases hover and press towards their targets; stops once both arrive. */
+    /** Springs hover and press towards their targets; stops once both arrive. */
     private void step() {
-        double hoverTarget = hovering && isEnabled() ? 1 : 0;
-        double pressTarget = getModel().isPressed() ? 1 : 0;
-        hover += (hoverTarget - hover) * 0.25;
-        press += (pressTarget - press) * 0.45;
-        if (Math.abs(hoverTarget - hover) < 0.01 && Math.abs(pressTarget - press) < 0.01) {
-            hover = hoverTarget;
-            press = pressTarget;
+        float dt = clock.tick();
+        boolean still = hover.step(hovering && isEnabled() ? 1f : 0f, Motion.HOVER, dt);
+        still &= press.step(getModel().isArmed() && getModel().isPressed() ? 1f : 0f, Motion.PRESS, dt);
+        if (still) {
             animator.stop();
+            clock.reset();
         }
         repaint();
+    }
+
+    /** 0..1, for subclasses that paint their own face. */
+    protected double hoverAmount() {
+        return Math.max(0, Math.min(1, hover.x));
+    }
+
+    protected double pressAmount() {
+        return Math.max(0, Math.min(1, press.x));
+    }
+
+    /** Keyboard focus ring around a capsule, only when focus came from the keyboard. */
+    protected void paintFocusRing(Graphics2D g2, java.awt.geom.RoundRectangle2D shape) {
+        if (!isFocusOwner()) {
+            return;
+        }
+        Graphics2D r = (Graphics2D) g2.create();
+        Glass.setUp(r);
+        r.setStroke(new java.awt.BasicStroke(2.5f));
+        r.setColor(Glass.withAlpha(Glass.ACCENT, 150));
+        r.draw(new java.awt.geom.RoundRectangle2D.Double(shape.getX() - 1.5, shape.getY() - 1.5,
+                shape.getWidth() + 3, shape.getHeight() + 3, shape.getArcWidth() + 3, shape.getArcHeight() + 3));
+        r.dispose();
     }
 
     @Override
@@ -93,11 +126,14 @@ public class GlassButton extends JButton {
     protected void paintComponent(Graphics g) {
         Graphics2D g2 = (Graphics2D) g.create();
         Glass.setUp(g2);
-        double sink = press * 0.6;  // the glass dips a little when pressed
+        double p = pressAmount();
+        double sink = p * 0.6;  // the glass dips a little when pressed
         double s = Glass.SHADOW;
         double w = getWidth() - 2 * s - 2 * sink;
         double h = getHeight() - 2 * s - 2 * sink;
-        Glass.paint(g2, Glass.capsule(s + sink, s + sink * 0.5, w, h), null, 0, hover, press, 0);
+        java.awt.geom.RoundRectangle2D cap = Glass.capsule(s + sink, s + sink * 0.5, w, h);
+        Glass.paint(g2, cap, null, 0, hoverAmount(), p, 0);
+        paintFocusRing(g2, cap);
 
         g2.setFont(getFont());
         FontMetrics fm = g2.getFontMetrics();

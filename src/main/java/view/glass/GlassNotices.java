@@ -71,6 +71,7 @@ public final class GlassNotices {
     public static final int DEFAULT_DURATION_MS = SUCCESS_DURATION_MS;
     private static final int TOP = 105;
     private static final int GAP = 8;
+    private static final int TRAVEL = 18;  // comes down from above, leaves back up the same way
 
     private static NoticeHandle show(Component parent, Kind kind, String title, String message, Icon formula) {
         Objects.requireNonNull(kind);
@@ -105,11 +106,12 @@ public final class GlassNotices {
         private final List<Displayed> active = new ArrayList<>();
         private final List<Displayed> exiting = new ArrayList<>();
         private final Timer animator;
+        private final view.board.Motion.Clock clock = new view.board.Motion.Clock();
         private final ComponentAdapter resizeListener;
 
         NoticeStack(JRootPane root) {
             this.root = root;
-            animator = new Timer(16, event -> tick());
+            animator = new Timer(view.board.Motion.FRAME_MS, event -> tick());
             resizeListener = new ComponentAdapter() {
                 @Override public void componentResized(ComponentEvent event) { arrange(); }
             };
@@ -123,8 +125,8 @@ public final class GlassNotices {
             root.getLayeredPane().add(view, JLayeredPane.POPUP_LAYER);
             active.add(entry);
             arrange();
-            entry.y = entry.destination + 16;
-            entry.opacity = 0f;
+            entry.y.snap(entry.destination - TRAVEL);
+            entry.fade.snap(0f);
             view.setOpacity(0f);
             if (kind == Kind.SUCCESS) {
                 entry.expiry = new Timer(DEFAULT_DURATION_MS, event -> dismiss(entry));
@@ -158,25 +160,26 @@ public final class GlassNotices {
             if (!active.remove(entry)) return;
             if (entry.expiry != null) entry.expiry.stop();
             entry.leaving = true;
+            entry.destination = (int) entry.y.x - TRAVEL;
             exiting.add(entry);
             arrange();
         }
 
-        /** Spring-like movement and opacity easing on the Swing EDT. No background threads. */
+        /** Springs on real time, on the Swing EDT. No background threads. */
         void tick() {
+            float dt = clock.tick();
             boolean moving = false;
             for (Displayed entry : active) {
-                entry.y += (entry.destination - entry.y) * 0.27;
-                entry.opacity += (1f - entry.opacity) * 0.23f;
-                if (Math.abs(entry.destination - entry.y) < 0.6) entry.y = entry.destination;
-                if (entry.opacity > 0.985f) entry.opacity = 1f;
+                boolean still = entry.y.step(entry.destination, view.board.Motion.ENTER, dt);
+                still &= entry.fade.step(1f, view.board.Motion.ENTER, dt);
                 entry.render();
-                moving |= entry.y != entry.destination || entry.opacity != 1f;
+                moving |= !still;
             }
             for (int i = exiting.size() - 1; i >= 0; i--) {
                 Displayed entry = exiting.get(i);
-                entry.opacity *= 0.65f;
-                if (entry.opacity < 0.045f) {
+                entry.y.step(entry.destination, view.board.Motion.ENTER, dt);
+                entry.fade.step(0f, 1f, 0.2f, dt);  // gone a bit before it's done moving
+                if (entry.fade.x < 0.03f) {
                     root.getLayeredPane().remove(entry.view);
                     exiting.remove(i);
                 } else {
@@ -184,7 +187,10 @@ public final class GlassNotices {
                     moving = true;
                 }
             }
-            if (!moving) animator.stop();
+            if (!moving) {
+                animator.stop();
+                clock.reset();
+            }
             if (active.isEmpty() && exiting.isEmpty()) {
                 animator.stop();
                 root.getLayeredPane().removeComponentListener(resizeListener);
@@ -202,14 +208,14 @@ public final class GlassNotices {
     private static final class Displayed {
         final NoticeView view;
         Timer expiry;
-        double y;
+        final view.board.Spring y = new view.board.Spring(0.3f);
+        final view.board.Spring fade = new view.board.Spring(0.004f, true);
         int x, width, destination;
-        float opacity;
         boolean leaving;
         Displayed(NoticeView view) { this.view = view; }
         void render() {
-            view.setOpacity(opacity);
-            view.setBounds(x, (int) Math.round(y), width, view.getPreferredSize().height);
+            view.setOpacity(fade.x);
+            view.setBounds(x, Math.round(y.x), width, view.getPreferredSize().height);
             view.doLayout();
         }
     }
