@@ -1,14 +1,18 @@
 package use_case.explore_graph;
 
+import entity.graph.LookupQuery;
 import entity.graph.Plot;
+import entity.graph.PlotLookup;
 import entity.graph.Viewport;
 import use_case.graph_function.GraphFunctionOutputBoundary;
 import use_case.graph_function.GraphSessionDataAccessInterface;
 import use_case.graph_function.PlotPublisher;
 
+import java.util.List;
 import java.util.function.UnaryOperator;
 
-// pan / zoom / reset re-sample the graph that's up, trace reads the real value under the cursor
+// pan / zoom / reset re-sample the graph that's up, trace reads the real value under the cursor,
+// lookup works out the blank boxes of a find
 public class ExploreGraphInteractor implements ExploreGraphInputBoundary {
     private final GraphSessionDataAccessInterface session;
     private final PlotPublisher publisher;
@@ -52,6 +56,19 @@ public class ExploreGraphInteractor implements ExploreGraphInputBoundary {
     @Override
     public void endTrace() {
         publisher.publishTrace(null);
+    }
+
+    @Override
+    public void lookup(List<String> typed) {
+        Plot plot = session.current();
+        if (plot != null) {
+            publisher.publishLookup(plot.accept(new PlotLookup(LookupQuery.read(typed))));
+        }
+    }
+
+    @Override
+    public void clearLookup() {
+        publisher.publishLookup(null);
     }
 
     private void move(UnaryOperator<Viewport> change) {

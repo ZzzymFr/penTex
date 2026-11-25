@@ -2,14 +2,17 @@ package use_case.graph_function;
 
 import entity.graph.Curve;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitCurvePlot;
 import entity.graph.ImplicitPlot;
 import entity.graph.KeyPoint;
+import entity.graph.LookupResult;
 import entity.graph.Plot;
 import entity.graph.PlotVisitor;
 import entity.graph.SurfaceGrid;
 import entity.graph.SurfacePlot;
 import entity.graph.TracePoint;
 import entity.graph.Viewport;
+import use_case.lookup.LookupOutputData;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,12 +44,22 @@ public class PlotPublisher {
                 presenter.prepareSurfaceView(meshData(implicit), fresh);
                 return null;
             }
+
+            @Override
+            public Void visitImplicitCurve(ImplicitCurvePlot implicit) {
+                presenter.prepareCurveView(contourData(implicit), fresh);
+                return null;
+            }
         });
     }
 
     public void publishTrace(TracePoint point) {
         presenter.prepareTraceView(point == null ? null
                 : new TraceOutputData(point.getX(), point.getY(), point.getZ(), point.getKind()));
+    }
+
+    public void publishLookup(LookupResult result) {
+        presenter.prepareLookupView(result == null ? null : LookupOutputData.from(result));
     }
 
     static CurveOutputData curveData(CurvePlot plot) {
@@ -77,6 +90,17 @@ public class PlotPublisher {
         List<String> names = plot.getFunctions().stream().map(f -> f.getLatex()).toList();
         return new SurfaceOutputData(names, plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
                 z[0], z[1], layers);
+    }
+
+    // same 2d card as y = f(x): one layer of line pieces, no key points
+    static CurveOutputData contourData(ImplicitCurvePlot plot) {
+        Viewport v = plot.getViewport();
+        List<double[][]> pieces = new ArrayList<>();
+        for (Curve.Piece piece : plot.getCurve().getPieces()) {
+            pieces.add(new double[][]{piece.getXs(), piece.getYs()});
+        }
+        return new CurveOutputData(plot.getLatex(), v.getXMin(), v.getXMax(), v.getYMin(), v.getYMax(),
+                pieces, List.of());
     }
 
     // z range is the box's, not the values', no grid

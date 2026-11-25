@@ -7,6 +7,8 @@ import use_case.phase_portrait.EquilibriumOutputData;
 import use_case.phase_portrait.PhasePortraitOutputBoundary;
 import use_case.phase_portrait.PhasePortraitOutputData;
 import use_case.phase_portrait.PhaseTraceOutputData;
+import use_case.lookup.LookupOutputData;
+import interface_adapter.graph.LookupWording;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +31,7 @@ public class PhasePresenter implements PhasePortraitOutputBoundary {
         state.setTrace(null);   // old readout is for the old window
         if (fresh) {
             state.setRevision(state.getRevision() + 1);
+            state.setLookup(null);   // found points belong to the old portrait
         }
         state.setKind(data.isSlopeField() ? PhaseState.Kind.SLOPE_FIELD : PhaseState.Kind.PHASE_PLANE);
         state.setLatex(title(data.getLatex()));
@@ -55,6 +58,15 @@ public class PhasePresenter implements PhasePortraitOutputBoundary {
     public void prepareTraceView(PhaseTraceOutputData data) {
         PhaseState state = new PhaseState(viewModel.getState());
         state.setTrace(data == null ? null : readout(state, data));
+        viewModel.setState(state);
+        viewModel.fireViewChanged();
+    }
+
+    @Override
+    public void prepareLookupView(LookupOutputData data) {
+        PhaseState state = new PhaseState(viewModel.getState());
+        state.setLookup(data == null ? null : LookupWording.word(data,
+                List.of(state.getHorizontalLabel(), state.getVerticalLabel()), false, true));
         viewModel.setState(state);
         viewModel.fireViewChanged();
     }

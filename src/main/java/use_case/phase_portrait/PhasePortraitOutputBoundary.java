@@ -8,4 +8,7 @@ public interface PhasePortraitOutputBoundary {
     void prepareTraceView(PhaseTraceOutputData data);
 
     void prepareFailView(String error);
+
+    // what a find came back with, null = take it off the portrait
+    void prepareLookupView(use_case.lookup.LookupOutputData data);
 }

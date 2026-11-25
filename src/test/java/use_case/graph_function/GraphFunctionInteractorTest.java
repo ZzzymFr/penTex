@@ -3,6 +3,7 @@ package use_case.graph_function;
 import data_access.InMemoryGraphSessionDataAccessObject;
 import entity.LatexFunctionParser;
 import entity.graph.CurvePlot;
+import entity.graph.ImplicitCurvePlot;
 import entity.graph.ImplicitPlot;
 import entity.graph.SurfacePlot;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,7 @@ class GraphFunctionInteractorTest {
         CurveOutputData curve;
         SurfaceOutputData surface;
         TraceOutputData trace;
+        use_case.lookup.LookupOutputData lookup;
         boolean traceCleared;
         Boolean fresh;
         String error;
@@ -41,6 +43,11 @@ class GraphFunctionInteractorTest {
         @Override
         public void prepareFailView(String errorMessage) {
             error = errorMessage;
+        }
+
+        @Override
+        public void prepareLookupView(use_case.lookup.LookupOutputData data) {
+            lookup = data;
         }
     }
 
@@ -288,6 +295,54 @@ class GraphFunctionInteractorTest {
         assertTrue(presenter.error.contains("undefined"));
         interactor.execute(new GraphFunctionInputData("z=\\sqrt{-x^2-y^2-1}", -5, 5));
         assertTrue(presenter.error.contains("undefined everywhere"));
+    }
+
+    @Test
+    void xyEquationWithoutALoneYIsTracedAsAContour() {
+        interactor.execute(new GraphFunctionInputData("4=3y^3+2-9x^2", -3, 3));
+
+        assertNull(presenter.error);
+        assertTrue(session.current() instanceof ImplicitCurvePlot);
+        CurveOutputData data = presenter.curve;
+        assertEquals("4=3y^3+2-9x^2", data.getLatex());
+        assertEquals(-3, data.getYMin(), 1e-9, "y range follows x when it's automatic");
+        assertFalse(data.getPieces().isEmpty());
+        for (double[][] piece : data.getPieces()) {
+            for (int k = 0; k < piece[0].length; k++) {
+                double x = piece[0][k];
+                double y = piece[1][k];
+                assertEquals(4, 3 * y * y * y + 2 - 9 * x * x, 0.2, "on the curve at x=" + x);
+            }
+        }
+    }
+
+    @Test
+    void circleComesBackAsOneClosedLoop() {
+        interactor.execute(new GraphFunctionInputData("x^2+y^2=4", -5, 5));
+
+        assertNull(presenter.error);
+        assertEquals(1, presenter.curve.getPieces().size());
+        double[][] loop = presenter.curve.getPieces().get(0);
+        int last = loop[0].length - 1;
+        assertEquals(loop[0][0], loop[0][last], 1e-12);
+        assertEquals(loop[1][0], loop[1][last], 1e-12);
+        for (int k = 0; k <= last; k++) {
+            assertEquals(2, Math.hypot(loop[0][k], loop[1][k]), 0.01);
+        }
+    }
+
+    @Test
+    void xyEquationOutsideTheWindowIsReported() {
+        interactor.execute(new GraphFunctionInputData("x^2+y^2=400", -5, 5));
+        assertTrue(presenter.error.contains("has no points"), presenter.error);
+    }
+
+    @Test
+    void xyEquationCantShareAGraph() {
+        interactor.execute(new GraphFunctionInputData(java.util.List.of("y=x", "x^2+y^2=1"), -5, 5,
+                GraphFunctionInputData.AUTOMATIC, GraphFunctionInputData.AUTOMATIC,
+                GraphFunctionInputData.AUTOMATIC, GraphFunctionInputData.AUTOMATIC));
+        assertTrue(presenter.error.contains("x y equation"), presenter.error);
     }
 
     @Test

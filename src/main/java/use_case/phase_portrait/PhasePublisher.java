@@ -1,12 +1,15 @@
 package use_case.phase_portrait;
 
 import entity.graph.Curve;
+import entity.graph.LookupResult;
 import entity.graph.Viewport;
 import entity.phase.ArrowField;
 import entity.phase.DifferentialEquation;
 import entity.phase.Equilibrium;
 import entity.phase.PhasePlot;
 import entity.phase.PhaseTracePoint;
+
+import use_case.lookup.LookupOutputData;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +34,10 @@ public class PhasePublisher {
         presenter.prepareTraceView(new PhaseTraceOutputData(point.getH(), point.getV(), point.getDh(), point.getDv(),
                 slope(plot), point.getEquilibrium() == null ? null : equilibrium(point.getEquilibrium()),
                 pieces(List.of(point.getPath()))));
+    }
+
+    public void publishLookup(LookupResult result) {
+        presenter.prepareLookupView(result == null ? null : LookupOutputData.from(result));
     }
 
     static PhasePortraitOutputData data(PhasePlot plot) {

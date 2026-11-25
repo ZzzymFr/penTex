@@ -17,6 +17,8 @@ class ExploreGraphInteractorTest {
     private CurveOutputData curve;
     private SurfaceOutputData surface;
     private TraceOutputData trace;
+    private use_case.lookup.LookupOutputData lookup;
+    private boolean lookedUp;
     private boolean fresh;
 
     private final GraphFunctionOutputBoundary presenter = new GraphFunctionOutputBoundary() {
@@ -40,6 +42,12 @@ class ExploreGraphInteractorTest {
         @Override
         public void prepareFailView(String errorMessage) {
             fail(errorMessage);
+        }
+
+        @Override
+        public void prepareLookupView(use_case.lookup.LookupOutputData data) {
+            lookup = data;
+            lookedUp = true;
         }
     };
 
@@ -114,5 +122,55 @@ class ExploreGraphInteractorTest {
         explore.zoom(0, 0, 0.5, 0.5);
         assertEquals(-2, surface.getXMin(), 1e-9);
         assertEquals(4, surface.getZ()[0][0], 1e-9, "corner is now (-2, -2)");
+    }
+
+    @Test
+    void lookupWorksOutTheBlankBoxOnTheGraphThatsUp() {
+        graph.execute(new GraphFunctionInputData("y=x^2", -5, 5));
+        explore.lookup(java.util.List.of("3", ""));
+        assertEquals(use_case.lookup.LookupOutputData.Problem.NONE, lookup.getProblem());
+        assertEquals(1, lookup.getPoints().size());
+        assertEquals(9, lookup.getPoints().get(0).y(), 1e-12);
+
+        explore.lookup(java.util.List.of("", "4"));
+        assertEquals(2, lookup.getPoints().size(), "both x = -2 and x = 2");
+        assertEquals(-2, lookup.getPoints().get(0).x(), 1e-9);
+        assertEquals(2, lookup.getPoints().get(1).x(), 1e-9);
+
+        explore.lookup(java.util.List.of("pi/2", ""));
+        assertEquals(Math.PI * Math.PI / 4, lookup.getPoints().get(0).y(), 1e-9, "pi/2 reads as a number");
+
+        explore.clearLookup();
+        assertTrue(lookedUp);
+        assertNull(lookup);
+    }
+
+    @Test
+    void lookupOnASurfaceGivesZOrACut() {
+        graph.execute(new GraphFunctionInputData("z=x^2+y^2", -3, 3));
+        explore.lookup(java.util.List.of("1", "2", ""));
+        assertEquals(5, lookup.getPoints().get(0).z(), 1e-12);
+
+        explore.lookup(java.util.List.of("1", "", ""));
+        assertTrue(lookup.getPoints().isEmpty());
+        assertFalse(lookup.getPaths().isEmpty(), "x = 1 alone is a cut through the surface");
+        for (use_case.lookup.LookupOutputData.Path p : lookup.getPaths()) {
+            for (int k = 0; k < p.xs().length; k++) {
+                assertEquals(1, p.xs()[k], 1e-12);
+                assertEquals(1 + p.ys()[k] * p.ys()[k], p.zs()[k], 1e-9);
+            }
+        }
+    }
+
+    @Test
+    void lookupSaysWhatsWrongWithTheBoxes() {
+        graph.execute(new GraphFunctionInputData("y=x", -5, 5));
+        explore.lookup(java.util.List.of("abc", ""));
+        assertEquals(use_case.lookup.LookupOutputData.Problem.BAD_NUMBER, lookup.getProblem());
+        assertEquals(0, lookup.getBadAxis());
+        explore.lookup(java.util.List.of("1", "2"));
+        assertEquals(use_case.lookup.LookupOutputData.Problem.NOTHING_TO_FIND, lookup.getProblem());
+        explore.lookup(java.util.List.of("", ""));
+        assertEquals(use_case.lookup.LookupOutputData.Problem.NOTHING_GIVEN, lookup.getProblem());
     }
 }

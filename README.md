@@ -1,496 +1,165 @@
 # penTex
 
-Write math by hand. penTex reads it, calculates it, graphs it and exports it as a PDF.
+penTex is a Java desktop math notebook for students who work problems by hand. Write a formula on the canvas, inspect the predicted LaTeX, then calculate an answer, graph a relation or explore a differential equation. The result stays beside the work that produced it. A History panel and an A4 page editor let a student reuse that work in a PDF without retyping it. The application window is titled **Math Lab**.
 
-## Team Information
+[Use cases and requirements](docs/USE_CASES.md) · [Architecture and file inventory](docs/CODEBASE_AUDIT.md) · [Individual contributions and Git evidence](docs/CONTRIBUTIONS.md)
 
-**Project name:** penTex
+## Run the desktop app
 
-### Team Members
-- Yuanmo (Frank) Zha
-- Haoxiang Zhao
-- Haoyu Wang
-- Bojun (Eric) Yang
+Use JDK 17 or newer, Maven and a graphical desktop. This checkout compiles with Java release 17. The audit used OpenJDK 21 and Maven 3.9.11. On a fresh machine Maven needs access to Maven Central, and DJL needs a compatible PyTorch native runtime. DJL can download the native libraries on first use. The cloud setup supplies a matching Linux CPU runtime from Maven Central. Python and model training are optional for desktop users. [Build configuration](pom.xml) · [Model bootstrap](src/main/java/model/ModelRuntime.java)
 
----
+Clone the repository if needed, then run from its root. The entry point resolves the model and tokenizer relative to the checkout.
 
-## Project Description
-
-### Domain
-
-**Education (mathematics)**
-
-penTex is a Java Swing desktop app for students who would rather write math than type it. The window is a single infinite canvas. A student writes a formula with the pen. When they pause after an "=", a neural network we trained reads the ink as LaTeX, and a small popup shows the typeset formula with **Calculate** and **Graph** buttons. **Calculate** writes the answer on the canvas right after the "=", in a handwriting-style font. **Graph** draws the function in a live card beside the formula. A differential equation gets a **Phase Portrait** button instead, which draws its slope field or phase plane in the same kind of card. Every calculation and graph is saved to a local **History** panel. Anything on the canvas or in History can be dragged into the built-in **PDF** editor and exported.
-
-**Specification (for noun/verb analysis).** A *student* draws *strokes* on a *canvas*. Strokes are grouped into *formulas*, and each formula is *recognized* as a LaTeX string. A formula can be *calculated*: evaluated to a *value*, solved as an equation or inequality in one unknown, differentiated, or saved as a *user-defined function* such as f(x) = x². The *answer* is shown next to the formula. A formula of the form y = … or f(x) = … can be *graphed* over an x range. Every calculation, defined function and graph becomes a *history entry* that is kept between sessions. History entries and canvas selections become *materials*, which the student places on the *pages* of a *PDF document* and exports. The whole canvas can be *saved* under a name and *reopened* later.
-
-**What the calculator supports:** arithmetic, fractions, powers and roots, trig, inverse trig and hyperbolic functions, log / ln / exp, ±, user-defined functions, derivatives (at a point and symbolic d/dx), limits, sums and products, equations and inequalities in one unknown, vectors, sets, and logic (∧, ∨, ¬, ⇒, ∀, ∃). Integrals (∫ f(x) dx on its own, with or without finite bounds) use the Newton API.
-
----
-
-## User Stories
-
-### US1: Handwriting Recognition
-**Lead:** Yuanmo Zha
-
-As a student, I want to write mathematical expressions on a digital drawing canvas or upload a photo of handwritten mathematics and have the system recognize them, so that I can input mathematical expressions naturally without manually typing mathematical notation.
-
-### US2: Mathematical Calculation
-**Lead:** Haoxiang Zhao
-
-As a student, I want to request calculations for my handwritten mathematical expressions, so that I can obtain solutions and answers to my mathematical problems.
-
-### US3: Result Display on Canvas
-**Lead:** Haoxiang Zhao
-
-As a student, I want to see calculated results displayed directly on the canvas near their corresponding original expressions, so that I can easily review the answers in the context of my handwritten work.
-
-### US4: Function Graphing
-**Lead:** Haoyu Wang
-
-As a student, I want to enter a mathematical function, such as y = x² + 1, and see its graph, so that I can visualize and understand how the function behaves.
-
-### US5: Export to LaTeX PDF
-**Lead:** Bojun (Eric) Yang
-
-As a student, I want to convert my mathematical expressions into properly formatted LaTeX and export them as a PDF, so that I can include cleanly formatted mathematics in my notes or assignments.
-
-### US6: Calculation History and Local Persistence
-**Lead:** Bojun (Eric) Yang
-
-As a student, I want my previously recognized expressions, calculated answers, and generated graphs to be saved locally and accessible through a History panel, so that I can reuse my previous work in future study sessions and drag saved content onto my editable PDF documents without having to write it again.
-
----
-
-## Use Cases
-
-The actor in every use case is the **student**.
-
-### Use Case 1: Recognize a handwritten formula
-**User story:** US1 · **Lead:** Yuanmo Zha · **MVP:** yes
-
-**Main flow:**
-1. The student writes a formula on the canvas with the pen, ending with "=", e.g. `3x+5=`.
-2. The student stops writing for about 1.5 seconds.
-3. The system groups the new strokes into one formula, crops them to a dark-on-white image and runs the recognition model on it.
-4. The system shows a popup next to the "=" with the typeset LaTeX and the actions that fit it: **Calculate**, **Graph**, or both; a differential equation gets **Phase Portrait** alone.
-
-**Alternative flows:**
-- **Lasso selection:** the student circles some ink with the lasso (or drags a box). The selection is read as one formula, with or without an "=". This is the fallback when no popup came up on its own, so the popup always shows all four buttons: **Calculate**, **Graph**, **Recognize** and **Phase Portrait**. The ones that don't fit the formula are grayed out. **Recognize** puts the formula into History; a `f(x)=…` is saved as a function again, so an older definition can be brought back. A formula that already has an answer gets the popup too, with **Calculate** grayed out.
-- **Finished equation or inequality:** a formula with something on both sides of the sign, such as `x^2=4` or `2x>5`, gets a popup without a trailing "=". An unfinished one such as `2x>` does not.
-- **Still writing:** while the pen is down, no popup appears. The system waits for the next pause.
-- **Formula edited:** if the student adds to or erases part of a formula, its old answer is removed and the formula is read again after the next pause.
-- **Function definition:** if the formula reads as `f(x)=…`, nothing is saved on its own. The popup offers only **Recognize**, which saves the function (see Use Case 2). To graph it instead, lasso it: the lasso popup has **Graph** too.
-- **Recognition fails:** the popup shows the problem instead of a formula, and nothing is calculated.
-- **Photo upload:** not implemented yet. Only canvas ink is recognized for now.
-
-**Main classes:** `FormulaRecognizer` (interface), `VitalMiniFormulaRecognizer`, `FormulaImagePreprocessor`, `model.vital_mini` (model runtime), `AnswerCanvasPage`, `AnswerPopup`
-
-### Use Case 2: Calculate a formula
-**User story:** US2 · **Lead:** Haoxiang Zhao · **MVP:** yes
-
-**Main flow:**
-1. In the popup from Use Case 1, the student clicks **Calculate**.
-2. The system splits the LaTeX into tokens and parses it into an expression tree, using any functions the student has defined.
-3. The system works out the answer for that kind of formula:
-   - no unknowns: the value, e.g. `3+4\cdot2=` gives `11` (one value for each ± choice);
-   - an equation or inequality in one unknown: its solutions or intervals, e.g. `x^2=4` gives `x = -2 or x = 2`, and `2x>300` gives `x > 150`;
-   - a derivative of an unknown: the derivative written out, e.g. `\frac{d}{dx}(x^3)` gives `3x²`.
-4. The system sends the answer to the presenter, which formats it for the canvas (Use Case 3) and passes it on to History and the PDF library.
-
-**Alternative flows:**
-- **Function definition:** `f(x)=x^2` is stored and confirmed in a card. Later formulas can use `f`, e.g. `f(3)=` gives `9`.
-- **Invalid formula:** for input such as `3+=`, `x+1` (x has no value) or two unknowns, the system shows an *Invalid formula* card with a one-line reason.
-- **Can't calculate:** for valid input outside what the calculator handles (an integral mixed into a bigger expression, numbers too large, too much work), the system shows a *Can't calculate* card with a short reason.
-- **Graph only:** `y=3x` is a function to graph, not a question, so the popup offers only **Graph**.
-
-**Main classes:** `EvaluateController`, `EvaluateInteractor` (with `EvaluateInputBoundary`, `EvaluateOutputBoundary`, `EvaluateInputData` and the output data classes), `FunctionDataAccessInterface` / `InMemoryFunctionDataAccessObject`, `EvaluatePresenter`, `MathLabViewModel`. `CalculateCheckInteractor`, `DefinitionCheckInteractor` and `QuestionCheckInteractor` decide which buttons the popup offers.
-
-### Use Case 3: Show the result on the canvas
-**User story:** US3 · **Lead:** Haoxiang Zhao · **MVP:** yes
-
-**Main flow:**
-1. After Use Case 2 succeeds, the view model reports the new answer.
-2. The system finds the "=" in the student's ink and measures the height of their handwriting.
-3. The system writes the answer right after the "=" in a handwriting-style font (Kalam), at the same size as the student's writing, with exponents raised.
-4. The answer stays attached to its formula. It is saved with the canvas and is removed when the formula's ink changes.
-
-**Alternative flows:**
-- **No "=" at the end:** for an equation or inequality such as `x^2=4` or `2x>5`, the answer is written below the formula. For a lasso selection with no relation sign, such as `3+4`, it goes to the right.
-- **Answer too long:** a derivative too long to fit next to the formula is reported as *Can't calculate* instead of being drawn.
-- **Error:** an *Invalid formula* or *Can't calculate* notice appears at the top of the canvas and nothing is written in the ink. The notice stays until the student closes it or fixes the formula.
-
-**Main classes:** `EvaluatePresenter`, `AnswerFormatter`, `MathLabViewModel` / `MathLabState`, `AnswerCanvasPage`, `view.answer` (`EqualsSpot`, `AnswerLayout`, `AnswerInk`, `FormulaBook`), `GlassNotices`
-
-### Use Case 4: Graph a function
-**User story:** US4 · **Lead:** Haoyu Wang · **MVP:** yes
-
-**Main flow:**
-1. The student writes `y = …` or `f(x) = …` (a curve) or `z = …` / `f(x,y) = …` (a surface), and the popup offers **Graph**.
-2. The student clicks **Graph**.
-3. The system parses the LaTeX and builds a plot in plain Java, no web API. A curve is sampled over x ∈ [−10, 10], broken at gaps and asymptotes, with a y window that ignores blow-ups; its roots, minima, maxima and y-intercept are found. A surface is sampled on a grid.
-4. The system shows a live graph card beside the formula, with the typeset function in its title bar, and adds a picture of it to History and the PDF library.
-
-**Alternative flows:**
-- **Equation in x, y and z:** any equation using exactly x, y and z (`x + y + z = 1`, `x^2 + y^2 + z^2 = 1`, `z^2 = x^2 + y^2`) also gets **Graph**. The surface F(x, y, z) = 0 is cut into quads (surface nets) inside a box that ends flush on the walls; on the default range a small closed surface such as a sphere gets a box it fills, with z scaled so it stays round. Hovering reads the highest point of the surface under the cursor.
-- **Read a value:** hovering over a curve shows the real point on it, with dashed guides and the values on both axes; near a root, minimum, maximum or y-intercept it snaps onto that point and names it. On a surface it shows (x, y, z) under the cursor. A click pins the readout.
-- **Explore:** dragging the plot pans (2D) or rotates (3D), scrolling zooms, double click or ↺ goes back to the start. The range boxes under the card follow the window.
-- **Move or resize the card:** dragging the title bar moves the card, the corner grip resizes it, × closes it.
-- **Change range:** the student types new x and y ranges in the bar under the card, and the graph is redrawn (steps 3–4).
-- **Not a function of x (or of x and y):** the popup does not offer **Graph**.
-- **Bad range or nothing to draw:** if min ≥ max, the function is undefined on the whole range, or the graph lies entirely outside the y range, the system shows an error notice.
-
-**Main classes:** `GraphController`, `GraphFunctionInteractor`, `GraphExploreController` / `ExploreGraphInteractor`, `GraphSessionDataAccessInterface` / `InMemoryGraphSessionDataAccessObject`, `LatexFunctionParser`, `entity.graph` (`CurvePlot`, `SurfacePlot`, `ImplicitPlot`, `SurfaceNets`, `AutoBox`, `CurveSampler`, `KeyPointFinder`, `Viewport`), `ImplicitSurfaceReader`, `GraphPresenter`, `GraphViewModel`, `view.graph` (`GraphCard`, `PlotCard`, `CurvePainter`, `SurfacePainter`), `PopupGraphing`, `GraphRangeBar`. `GraphCheckInteractor` decides whether **Graph** is offered.
-
-### Use Case 4b: Draw the phase portrait of a differential equation
-**User story:** US4 · **Lead:** Haoyu Wang
-
-**Main flow:**
-1. The student lassoes a differential equation. The system checks that one side of every line is a derivative (`y'`, `\frac{dy}{dx}`, `\dot{x}`, `y''` …), and the popup offers **Phase Portrait** (and nothing else).
-2. The student clicks **Phase Portrait**.
-3. The system reads the equation as a plane vector field: `y' = f(x, y)` becomes a slope field, `y'' = f(y, y')` a phase plane in (y, y'), and a system `x' = f(x, y)`, `y' = g(x, y)` (two lines) a phase plane in (x, y). It finds the equilibria and classifies them (saddle, stable / unstable node, stable / unstable spiral, center; stable / unstable lines on a slope field).
-4. The system shows a live card beside the formula with arrows (or slope dashes) and the equilibria, and adds a picture to History and the PDF library.
-
-**Alternative flows:**
-- **Follow a solution:** hovering draws the solution through the cursor (RK4) and shows the point and the field there (`x′`, `y′`, or the slope); near an equilibrium it snaps onto it and names it.
-- **Pin solutions:** a click pins the solution through that point (up to 8); clicking a pinned curve removes it.
-- **Explore, move, resize, change range:** same as the graph card in Use Case 4. Graph and Phase Portrait share the canvas card slot; whichever was drawn last is shown.
-- **Can't be drawn:** a third-order equation, an `x` on the right of `y'' = …`, or an unknown letter shows a notice saying why.
-
-**Main classes:** `DifferentialEquationParser`, `entity.phase` (`DifferentialEquation`, `PhasePlot`, `EquilibriumFinder`, `SolutionTracer`, `ArrowField`), `PhasePortraitInteractor`, `ExplorePhaseInteractor`, `PhaseCheckInteractor`, `PhasePresenter`, `PhaseViewModel`, `PhaseCard`, `PhasePainter`, `PopupPhasePortrait`.
-
-### Use Case 5: Build and export a PDF
-**User story:** US5 · **Lead:** Bojun (Eric) Yang · **MVP:** yes
-
-**Main flow:**
-1. The student clicks **PDF** (top right). The PDF editor opens in a panel beside the canvas, separated by a draggable divider.
-2. The library lists this session's formulas, calculations and graphs.
-3. The student drags items onto an A4 page. Formulas and answers are typeset from their LaTeX.
-4. The student arranges the page: move and resize items, add text notes, edit a formula's LaTeX, add or remove pages, undo and redo.
-5. The student clicks **Export** and picks a file. The system writes the PDF.
-
-**Alternative flows:**
-- **Canvas content:** the student lasso-selects ink on the canvas and drags it across the divider, or uses **Capture area** to add a screenshot of part of the canvas.
-- **Preview:** the student previews the pages before exporting.
-- **Split a calculation:** the student splits a placed calculation into separate formula and answer items.
-- **File already exists:** the system asks before replacing it.
-- **Export fails:** if the file cannot be written, the system shows an error dialog and the document stays open.
-
-**Main classes:** `PdfStudioLauncher`, `PdfEditorController`, `DocumentEditor`, `AutoLayoutInteractor`, `PdfExportInteractor`, `PdfExportGateway` / `PdfPreviewGateway` (implemented by `PdfBoxOutputAdapter` and `PdfExporter`), `MathLibrary`, `MaterialRenderer`, `PdfPanel`, `DocEditorPanel`
-
-### Use Case 6: Browse and reuse history
-**User story:** US6 · **Lead:** Bojun (Eric) Yang · **MVP:** no (added after the MVP, now implemented)
-
-**Main flow:**
-1. When a formula is calculated, a function is defined or a graph is drawn, the system saves a history entry to `~/.mathlab/history`. Identical entries are stored only once.
-2. The student clicks **History** (top left). A panel opens on the left, newest entries first.
-3. The student drags an entry onto the canvas, where a copy is placed.
-
-**Alternative flows:**
-- **Delete:** the student deletes an entry and can undo the deletion.
-- **Formula erased:** if the student erases a formula's ink in the same session, its entry is hidden. It comes back if Undo restores the ink.
-- **Damaged file:** an unreadable history file is skipped and the rest of the history still loads.
-
-**Main classes:** `HistoryInteractor`, `HistoryRepository` / `FileHistoryRepository`, `CanvasHistoryLifecycle`, `HistoryBoardPresenter`, `HistoryViewModel`, `HistoryPanel`
-
-### Use Case 7: Save and reopen a canvas
-**User story:** US6 · **Lead:** Bojun (Eric) Yang · **MVP:** no (added after the MVP, now implemented)
-
-**Main flow:**
-1. The student presses ⌘S / Ctrl+S, or chooses **Save** from the save menu, and names the canvas.
-2. The system saves the ink, answers, placed images and view position to `~/.mathlab/canvases`.
-3. Later, the student chooses **Open** and picks a saved canvas, and the system restores it.
-
-**Alternative flows:**
-- **Save As:** ⌘⇧S / Ctrl+Shift+S saves a copy under a new name.
-- **Startup:** the most recently saved canvas is reopened when the app starts.
-
-**Main classes:** `CanvasWorkspace` (`CanvasWorkspaceBoundary`), `CanvasRepository` / `FileCanvasRepository`, `CanvasState`, `SavedCanvas`, `CanvasWorkspaceDialogs`, `GlassSaveMenu`, `SavedCanvasChooser`
-
----
-
-## Minimal Viable Product (MVP)
-
-| Team Member | MVP Use Case |
-|-------------|--------------|
-| Yuanmo (Frank) Zha | Use Case 1: Recognize a handwritten formula |
-| Haoxiang Zhao | Use Case 2: Calculate a formula; Use Case 3: Show the result on the canvas |
-| Haoyu Wang | Use Case 4: Graph a function, Use Case 4b: Phase portrait |
-| Bojun (Eric) Yang | Use Case 5: Build and export a PDF |
-
-Added after the MVP (both implemented, led by Bojun (Eric) Yang): Use Case 6, Browse and reuse history, and Use Case 7, Save and reopen a canvas.
-
----
-
-## Entities
-
-Entity classes live in `src/main/java/entity` plus the `domain` packages of `history`, `workspace` and `pdf_editor`. None of them depend on Swing, files or the network.
-
-### Stroke / InkPoint (`entity`)
-One pen stroke, from pen-down to pen-up.
-- `Stroke`: `points: List<InkPoint>`. Methods: `addPoint(InkPoint)`, `getPoints()`, `isEmpty()`
-- `InkPoint`: `x: int`, `y: int`, `timeMillis: long`. Getters only.
-- `InkEditor` (static helpers): `erase(...)`, `eraseAlong(...)`, `removeTouchedAlong(...)` and lasso selection. Each returns new strokes and never changes the old ones.
-
-### Node (`entity.node`)
-The parsed expression tree that `MathParser` builds from the tokens produced by `MathLexer`. The subclasses include `NumberNode`, `VariableNode`, `BinaryNode`, `UnaryNode`, `CallNode`, `RelationNode`, `DerivativeNode`, `LimitNode`, `SeriesNode`, `QuantifierNode`, `VectorNode` and `SetLiteralNode`.
-- Methods: `evaluate(Context): Value`, `accept(NodeVisitor)`, `children()`, `collectFreeVariables(Set<String>)`, `isCondition()`, `containsDerivative()`, `isApproximate(Context)`, `canBeInfinite(Context)`
-
-### Value (`entity.value`)
-The result of evaluating a `Node`.
-- Subclasses: `NumberValue` (`value: double`), `BooleanValue` (`value: boolean`), `VectorValue` (`components: List<Double>`), `FiniteSetValue`, `NumberSetValue`
-- Methods: `accept(ValueVisitor)`. `Values.areEqual(a, b)` compares two values.
-
-### Context (`entity`)
-Everything a `Node` needs while it is evaluated.
-- Instance variables: `functions: Map<String, UserFunction>`, `variables` (bound names → values), `signMask: int` (which ± branch), `depth: int`, `budget` (step limit), `derivative: PointDerivative`
-- Methods: `withVariable(name, value)`, `withSigns(mask)`, `getVariable(name)`, `getFunction(name)`, `forFunctionBody(name)`, `spendStep()`
-
-### UserFunction (`entity`)
-A function the student defined, e.g. `f(x)=x^2`.
-- Instance variables: `name: String`, `parameters: List<String>`, `body: Node`, `bodyText: String`
-- Methods: getters
-
-### MathFunction / SurfaceFunction / plots (`entity`, `entity.graph`)
-- `MathFunction`: `latex: String`, `rule: DoubleUnaryOperator`. Methods: `getLatex()`, `evaluate(x)`. `SurfaceFunction` is the same for f(x, y).
-- `Viewport`: the immutable x / y window. Methods: `panned(dx, dy)`, `zoomed(cx, cy, fx, fy)`
-- `ImplicitSurface`: F(x, y, z) = left − right of an equation in x, y and z, read by `ImplicitSurfaceReader` with the Calculate parser. `ImplicitPlot` is its `Plot`: `getMesh()` gives the quads `SurfaceNets` cuts, the z range zooms with the floor. `AutoBox` picks the box.
-- `Plot` (`CurvePlot`, `SurfacePlot`): a function seen through a viewport. Methods: `lookingAt(viewport)`, `trace(x, y, snapX)` (the real point under the cursor), `getCurve()` / `getKeyPoints()` or `getGrid()`
-
-### DifferentialEquation / PhasePlot (`entity.phase`)
-- `DifferentialEquation`: `kind` (`SLOPE_FIELD`, `PHASE_PLANE`), axis names, and the field `dh(h, v)`, `dv(h, v)`
-- `PhasePlot`: an equation, a viewport and the pinned solutions. Methods: `getArrows()`, `getEquilibria()` (each an `Equilibrium` with its `Type`), `getSolutions()`, `trace(h, v, snapH, snapV)`, `withSolutionToggled(...)`, `lookingAt(viewport)`
-
-### HistoryEntry (`history.domain`)
-One saved formula, calculation or graph. It is an immutable record.
-- Instance variables: `id: String`, `kind: Kind` (`FORMULA`, `CALCULATION`, `GRAPH`), `title: String`, `formula: String`, `result: String`, `png: byte[]` (graphs only), `imageWidth: int`, `imageHeight: int`, `createdAt: Instant`
-- Methods: `contentKey()`, a SHA-256 of the content, so identical entries are stored once
-
-### CanvasState / SavedCanvas (`workspace.domain`)
-- `CanvasState`: `ink: List<Ink>`, `formulas: List<Formula>` (stroke indexes, answer, position, font size), `assets: List<Asset>` (placed graphs and history items), `zoom: double`, `offsetX: double`, `offsetY: double`
-- `SavedCanvas`: `id: String`, `name: String`, `modifiedAt: Instant`, `state: CanvasState`
-
-### PdfDocument / PdfMaterial (`pdf_editor.domain`)
-- `PdfMaterial`: something that can be placed on a page. `id`, `title`, `formula`, `result`, `imagePng`, `imageWidth`, `imageHeight`. Methods: `isGraph()`, `hasResult()`, `withText(formula, result)`, `formulaPart(...)` / `resultPart(...)`
-- `PdfDocument`: `pages: List<List<Placement>>`, where each `Placement` holds a material or a text note with its `x`, `y`, `width` and `height` on an A4 page. Methods: `addPage()`, `removePage(i)`, `add(...)`, `insert(...)`, `remove(...)`, `find(...)`, `replace(...)`, `reorder(...)`, `copy()`
-
----
-
-## API Usage
-
-### Integrals (Newton API)
-
-Documentation: https://github.com/aunyks/newton-api
-
-Integrals are the one thing we don't calculate ourselves. Newton is free and needs no key. When the formula is a single `∫ f dx` (bounds optional, `=` at the end optional), `IntegralRouter` sends it to `IntegrateInteractor` instead of the normal evaluate use case. The interactor only knows the `AntiderivativeGateway` interface; `NewtonAntiderivativeGateway` (`data_access.newton`) implements it by turning the LaTeX into plain input and calling `https://newton.vercel.app/api/v2/integrate/<expression>`, which returns the antiderivative F as JSON (`{"result":"1/3 x^3"}`). That gets turned back into LaTeX for the canvas.
-
-- **Indefinite:** the answer is F + C.
-- **Definite:** we only ask Newton for F and work out F(b) − F(a) with our own calculator (`entity.integral.DefiniteIntegral`). Newton's own `area` endpoint gives wrong numbers (it says ∫₀¹ x dx = 1), so we don't use it. Before that, the integrand is sampled between the bounds, so something like ∫₋₁¹ 1/x² dx says *Undefined between the bounds* instead of a wrong −2.
-- Newton always integrates in x, so for `dt` the gateway swaps t and x on the way in and back on the way out. Newton's `log` is the natural log, so `\log` (base 10 here) is sent as `log(x)/log(10)`.
-
-### Graphing (no web API)
-
-Graphs and phase portraits are computed and drawn in plain Java (Java2D), so they work offline. Earlier versions sent the sampled points to the QuickChart web API and showed the PNG it returned; that was replaced so the graph could be a live card (hover values, pan, zoom, move) instead of a still picture.
-
-### Libraries
-
-These are Java libraries (Maven dependencies), not web APIs. All of them are working in the app.
-
-| Library | Documentation | Used for |
-|---|---|---|
-| Deep Java Library (DJL) + PyTorch engine 0.39.0 | https://docs.djl.ai/ | Runs our handwriting model (`model_ops.pt`, TorchScript) on CPU, CUDA or Apple MPS |
-| Apache PDFBox 2.0.30 | https://pdfbox.apache.org/ | Writes the exported PDF |
-| JLaTeXMath 1.0.7 | https://github.com/opencollab/jlatexmath | Typesets LaTeX in popup cards, History items and PDF pages |
-
----
-
-## Design Diagrams
-
-### UML Class Diagram
-
-Main entities and how they relate:
-
-```mermaid
-classDiagram
-    class Stroke {
-        -List~InkPoint~ points
-        +addPoint(InkPoint)
-        +getPoints() List~InkPoint~
-        +isEmpty() boolean
-    }
-    class InkPoint {
-        -int x
-        -int y
-        -long timeMillis
-    }
-    class Node {
-        <<abstract>>
-        +evaluate(Context) Value
-        +accept(NodeVisitor) R
-        +collectFreeVariables(Set~String~)
-        +isCondition() boolean
-        +containsDerivative() boolean
-    }
-    class Value {
-        <<abstract>>
-        +accept(ValueVisitor) R
-    }
-    class Context {
-        -Map functions
-        -Binding variables
-        -int signMask
-        +withVariable(String, double) Context
-        +withSigns(int) Context
-        +getFunction(String) UserFunction
-        +spendStep()
-    }
-    class UserFunction {
-        -String name
-        -List~String~ parameters
-        -Node body
-        -String bodyText
-    }
-    class MathFunction {
-        -String latex
-        -DoubleUnaryOperator rule
-        +evaluate(double) double
-    }
-    class CurvePlot {
-        -MathFunction function
-        -Viewport viewport
-        +trace(double, double, double) TracePoint
-        +lookingAt(Viewport) Plot
-    }
-    class PhasePlot {
-        -DifferentialEquation equation
-        -Viewport viewport
-        +getEquilibria() List~Equilibrium~
-        +trace(double, double, double, double) PhaseTracePoint
-    }
-    class HistoryEntry {
-        <<record>>
-        id, kind, title, formula, result
-        png, imageWidth, imageHeight, createdAt
-        +contentKey() String
-    }
-    class CanvasState {
-        <<record>>
-        ink, formulas, assets
-        zoom, offsetX, offsetY
-    }
-    class SavedCanvas {
-        <<record>>
-        id, name, modifiedAt, state
-    }
-    class PdfMaterial {
-        -String id, title, formula, result
-        -byte[] imagePng
-        +isGraph() boolean
-        +hasResult() boolean
-    }
-    class PdfDocument {
-        -List~List~Placement~~ pages
-        +addPage() int
-        +add(int, Placement)
-        +copy() PdfDocument
-    }
-
-    Stroke "1" o-- "*" InkPoint
-    Node <|-- NumberNode
-    Node <|-- BinaryNode
-    Node <|-- RelationNode
-    Node <|-- DerivativeNode
-    Value <|-- NumberValue
-    Value <|-- BooleanValue
-    Value <|-- VectorValue
-    Node ..> Context : evaluated in
-    Node ..> Value : produces
-    Context o-- UserFunction
-    UserFunction --> Node : body
-    CurvePlot --> MathFunction : samples
-    PhasePlot --> DifferentialEquation : follows
-    SavedCanvas --> CanvasState
-    PdfDocument o-- PdfMaterial : placed on pages
+```shell
+git clone https://github.com/ZzzymFr/penTex.git
+cd penTex
+mvn -v
+mvn compile exec:java
 ```
 
-### Sequence Diagram: Calculate (Use Cases 1–3)
+In the prepared Linux cloud checkout, run `source .runtime/activate` from the repository root before using Maven. When running without a graphical display, `xvfb-run -a mvn compile exec:java` starts the app under a virtual X server. The same environment includes the optional model-development interpreter at `.runtime/python/bin/python`.
+
+**Try a calculation.** Write `5+3=` with the pen and lift it. Inspect the recognition popup. If it reads `5+3=`, click **Calculate** to place **8** beside the formula. If the prediction is wrong, edit the ink and try again. Lasso or box-select the strokes to reopen the interpretation and its available actions. A completed relation such as `x²=4` can offer actions without a trailing equals sign.
+
+**Try a graph.** Write `y=x²`, select it and choose **Graph**. Hover over the curve to read a point. Drag the plot to pan, scroll to zoom, or use the range controls. Open **PDF** to place a graph snapshot on a page. Use **Preview** before exporting.
+
+The image below is a checked-in handwriting sample labelled `5+3=`. The bundled Java recognizer returned that label in the audit. It illustrates the input the model sees. [Validation labels](src/neutral%20network/val/labels.jsonl)
+
+<img src="src/neutral%20network/val/01.png" alt="Handwritten five plus three followed by an equals sign" width="225">
+
+## User stories, MVP and contributors
+
+The course assignment asks the team to describe its domain, stories, MVP leads, entities and Java API use. The team-specific goals and numbering come from the earlier project README. The table pairs those recorded assignments with the behavior at the audited revision. Shared implementation work is identified below and traced to methods and diffs in the contribution map. [Course brief, pp. 1–4](https://q.utoronto.ca/courses/444184/pages/project-readme-and-minimum-viable-product-mvp) · [Team specification](https://github.com/ZzzymFr/penTex/blob/09d6004/README.md) · [Contribution map](docs/CONTRIBUTIONS.md)
+
+| Student goal | Use case and historical lead | Implementation in this checkout |
+| --- | --- | --- |
+| Enter math in handwriting or from a photograph (US1) | UC1 · Yuanmo (Frank) Zha · MVP | **Partial story.** Canvas ink is grouped, rasterized and decoded locally. A paused stroke or selection can open a formula popup. Photo upload for recognition remains unimplemented. |
+| Calculate and reuse expressions (US2) | UC2 · Haoxiang Zhao · MVP | Evaluates supported arithmetic, vectors, sets and logic. Handles user functions, derivatives, limits, sums/products and one-unknown conditions. Standalone integrals use Newton (UC2a). |
+| Read results beside the original work (US3) | UC3 · Haoxiang Zhao · MVP | Fits the typeset answer to the handwriting and attaches it to the formula. Editing the ink invalidates the previous result. Invalid and unsupported inputs produce different feedback. |
+| Explore a relation visually (US4) | UC4, UC4b · Haoyu Wang · MVP | Live 2D curves and implicit contours, explicit and implicit 3D surfaces, and differential-equation portraits. Cards support exploration. Snapshots can be reused in documents. |
+| Publish legible math notes (US5) | UC5 · Bojun (Eric) Yang · MVP | Collect formulas, results, selected ink, captures and graph images. Place and edit material, format text, preview and export A4 pages. Eligible placements contribute copyable LaTeX to an appendix. |
+| Resume or reuse earlier work (US6) | UC6, UC7 · Bojun (Eric) Yang · post-MVP | History stores reusable entries on disk. Named canvas saves retain ink, answers, placed artwork and viewport. Reopened graph pictures preserve their appearance. |
+
+**How the work was shared.** Frank's commits introduce training and Java inference. Haoxiang connected recognition to the canvas, implemented local evaluation and answer rendering, and contributed implicit 3D graphing. Haoyu's graph and phase work extends into OCR preprocessing and the Newton integral path. Eric's document, History and workspace work includes the board integration that lets material move between them. A snapshot commit reintroduced code already present on other branches. The detailed attribution follows earlier diffs, moved files and surviving lines, and identifies cases where a personal identity or design responsibility cannot be established. [Team contract](TeamContract.md) · [Commit-level evidence](docs/CONTRIBUTIONS.md)
+
+## Architecture
+
+The application uses Swing at the boundary and plain Java domain objects for much of the mathematics. The composition root creates the model adapter, use cases, presenters, session stores and storage gateways. Recognition and calculation run on a worker. The canvas checks the captured formula's revision before applying asynchronous results. Each live plot card gets its own interaction state. [Entry point](src/main/java/app.java) · [Application wiring](src/main/java/app/StackedAppBuilder.java) · [Worker](src/main/java/view/canvas/AnswerWorker.java)
+
+```mermaid
+flowchart LR
+    Ink["DrawingCanvas"] --> Page["AnswerCanvasPage"]
+    Page --> OCR["SharedCanvas / recognizer adapter"]
+    OCR --> NN["Preprocessor and DJL TorchScript model"]
+    Page --> Route["EvaluateController / IntegralRouter"]
+    Route --> Local["EvaluateInteractor and math entities"]
+    Route --> Integral["IntegrateInteractor"]
+    Integral --> Newton["Newton gateway over HTTPS"]
+    Local --> State["Presenter and MathLabViewModel"]
+    Integral --> State
+    State -->|result event via worker| Page
+    Page -->|confirmed result| Studio["PdfStudioLauncher"]
+    Page --> Cards["Graph and phase controllers, interactors and presenters"]
+    Cards -->|new plot snapshot| Studio
+    Studio --> Library["In-memory MathLibrary"]
+    Studio --> History["File-backed History"]
+    Library --> Editor["PDF page editor"]
+    Editor --> PDF["PDFBox preview and export"]
+```
+
+### One calculation, end to end
 
 ```mermaid
 sequenceDiagram
     actor Student
-    participant Page as AnswerCanvasPage (view)
-    participant Rec as FormulaRecognizer
+    participant Page as AnswerCanvasPage
+    participant Worker as AnswerWorker
+    participant OCR as Recognition path
     participant Ctrl as EvaluateController
-    participant Int as EvaluateInteractor
-    participant DAO as FunctionDataAccessInterface
+    participant Eval as EvaluateInteractor
     participant Pres as EvaluatePresenter
     participant VM as MathLabViewModel
-
-    Student->>Page: writes "3x+5=11", pauses
-    Page->>Rec: recognize(formula image)
-    Rec-->>Page: LaTeX
-    Page-->>Student: popup with formula + Calculate
-    Student->>Page: clicks Calculate
-    Page->>Ctrl: execute(latex)
-    Ctrl->>Int: execute(EvaluateInputData)
-    Int->>DAO: getAllFunctions()
-    Int->>Int: tokenize, parse to Node, solve
-    Int->>Pres: prepareSolutionsView("x", [2])
-    Pres->>VM: set state, firePropertyChanged
-    VM-->>Page: property change
-    Page-->>Student: "x = 2" written below the formula
+    Student->>Page: Write 5+3= and pause
+    Page->>Worker: Read the captured ink
+    Worker->>OCR: Recognize the formula image
+    OCR-->>Worker: Predicted LaTeX
+    Worker-->>Page: Deliver prediction on the Swing event thread
+    Page-->>Student: Offer Calculate
+    Student->>Page: Choose Calculate
+    Page->>Worker: Calculate confirmed LaTeX
+    Worker->>Ctrl: execute(latex)
+    Ctrl->>Eval: IntegralRouter dispatches ordinary input
+    Eval->>Pres: Present the value 8
+    Pres->>VM: Update presentation state
+    VM-->>Worker: RESULT event carries the updated MathLabState
+    Worker-->>Page: Deliver outcome
+    Page-->>Student: Place answer next to ink
 ```
 
----
+### Source map
 
-## How to Run
+| Location | Responsibility and useful entry points |
+| --- | --- |
+| [app.java](src/main/java/app.java), [app/](src/main/java/app/) | Load the shipped model, open a timestamped log, construct the board on Swing's event thread and release the model when the window closes. |
+| [view/](src/main/java/view/), [rendering/](src/main/java/rendering/) | Capture and group strokes, paint answers, host live cards, and coordinate History and the PDF editor. Swing listeners route actions to controllers. |
+| [entity/](src/main/java/entity/) | Lexer, parser, expression nodes, values and evaluation contexts. Separate packages implement calculus, symbolic operations, integral parsing, graph geometry and phase-plane sampling. |
+| [use_case/](src/main/java/use_case/), [interface_adapter/](src/main/java/interface_adapter/) | Input boundaries and interactors select operations. Presenters convert typed output into view state. Graph and phase exploration reuse a stored plot through session interfaces. |
+| [data_access/](src/main/java/data_access/), [model/](src/main/java/model/) | In-memory function and plot stores, OCR image preparation, DJL inference and the HTTP adapter for Newton. The exported model, crop parameters and tokenizer ship in the checkout. |
+| [pdf_editor/](src/main/java/pdf_editor/), [history/](src/main/java/history/), [workspace/](src/main/java/workspace/) | Separate domains and gateways for page composition, archival entries and named canvas files. The PDF collector connects completed operations to the library and History. |
+| [Java tests](src/test/java/), [Python pipeline](src/neutral%20network/) | JUnit tests and standalone model comparison programs. Python tools prepare datasets, train the model, evaluate predictions and export TorchScript operators for Java. |
 
-**Requirements:**
-- JDK 17 or newer (`mvn -v` must show Java 17+; if not, set `JAVA_HOME` to a newer JDK)
-- Maven 3.9+
-- An internet connection on the first run, when DJL downloads the PyTorch native library to `~/.djl.ai`
+**Domain entities.** A `Stroke` owns an ordered list of `InkPoint` samples with x, y and time. `addPoint` records a sample and `getPoints` exposes a read-only list. A `Context` carries the function dictionary, variable bindings, sign choice and a shared evaluation budget. `withVariable` creates a bound context and `spendStep` limits work. A `PdfDocument` owns ordered placements and styled body text per page. Its `Placement` stores position, dimensions, material or note, and layout information. `DocumentEditor` validates edits and checkpoints document state for undo. [Stroke](src/main/java/entity/Stroke.java) · [Context](src/main/java/entity/Context.java) · [PdfDocument](src/main/java/pdf_editor/domain/PdfDocument.java) · [DocumentEditor](src/main/java/pdf_editor/use_case/DocumentEditor.java)
 
-**Run the app** from the repository root (the model path is relative to it):
+### Integrations and configuration
 
-```bash
-mvn compile exec:java
-```
+| Component | How penTex uses it | Operational detail |
+| --- | --- | --- |
+| [DJL](https://docs.djl.ai/) and PyTorch engine 0.39.0 | Runs the bundled CNN and transformer operators. Java prepares an RGB image and decodes LaTeX with beam width 3. | Device selection probes CUDA, then MPS on macOS, with CPU fallback. Linux CPU inference was exercised. The application requires successful model initialization to open the board. |
+| [Newton API](https://github.com/aunyks/newton-api) | A Java HTTP client requests an antiderivative for a standalone integral. The request contains the encoded integrand. For finite bounds the application evaluates the returned primitive at both ends locally. | Keyless HTTPS to `newton.vercel.app`. Request construction, parsed responses and failure handling have automated coverage. The historical team README gives a sample Newton response. In this audit the live Java gateway reported OFFLINE when the cloud proxy denied its tunnel with HTTP 403. |
+| [JLaTeXMath 1.0.7](https://github.com/opencollab/jlatexmath) | Typesets math for popups, answers, reusable materials and PDF composition. | Rendering runs locally. |
+| [Apache PDFBox 2.0.30](https://pdfbox.apache.org/) | Writes rendered pages and the LaTeX appendix. Preview renders the built PDF so its page sequence follows export. | Users choose the export destination. No TeX executable is required. |
 
-**Run the tests:**
+### What persists
 
-```bash
+| Data | Location and lifetime |
+| --- | --- |
+| History entries | Files under `.mathlab/history` in Java's user home. Content keys prevent duplicate records. Erasing source ink leaves archived entries available. |
+| Named canvases | `.mlcanvas` files under `.mathlab/canvases` in Java's user home. The reader supports older formats. The board attempts to restore the most recent save at startup. |
+| Functions and plots | Function definitions used for evaluation and live graph/phase sessions reside in memory. History can retain the formula or snapshot. A restored canvas graph is an image. |
+| PDF workspace | The library and editable page arrangement live in memory. Export writes a finished PDF to the selected path. |
+| Diagnostic logs | Timestamped `.log` files in `logs/` under the directory from which penTex starts. |
+
+## Tests and verification
+
+From the repository root, run the Java suite with a JDK and Maven.
+
+```shell
 mvn test
 ```
 
-All 1509 tests passed on 2026-11-19.
+Surefire runs JUnit Jupiter tests of parser and evaluator behavior, graph/phase geometry, presentation and canvas interactions, persistence round trips, PDF output and gateway behavior. Recognition adapter tests can inject a model reader, and Newton gateway tests supply controlled HTTP responses. The Python suite uses standard-library `unittest`. Use a separate Python environment for model work. The root requirements file targets CUDA 12.8 on Windows/Linux (`python -m pip install -r requirement.txt`). For macOS, install `python -m pip install -r "src/neutral network/requirement-mac.txt"`, then add the data and test packages with `python -m pip install scipy lightgbm huggingface_hub pyarrow`. For the prepared CPU cloud environment, use its bundled interpreter. Run the following from the repository root with the selected Python environment active. [Root Python requirements](requirement.txt) · [macOS packages](src/neutral%20network/requirement-mac.txt) · [Dataset tools](src/neutral%20network/DATASETS.md)
 
-**Using it:**
-- Write a formula ending in "=" and pause. Click **Calculate** or **Graph** in the popup.
-- Lasso a differential equation such as `y'=y` or `y''=-y` and click **Phase Portrait**.
-- On a graph card: hover to read values, click to pin, drag to pan (or spin a 3D one), scroll to zoom, drag the title bar to move it.
-- Use the toolbar at the bottom for Pen, Eraser, Lasso, colours, Undo and Clear. Drag its handle to move it to a corner.
-- **History** (top left) and **PDF** (top right) open side panels.
-- Shortcuts: ⌘Z / Ctrl+Z undo, ⌘S / Ctrl+S save, ⌘⇧S / Ctrl+Shift+S save as, Esc leaves full-screen PDF.
+```shell
+cd "src/neutral network"
+python -m unittest discover -s tests -v
+```
 
-**Local data:** history is saved in `~/.mathlab/history` and saved canvases in `~/.mathlab/canvases`. Delete these folders to start fresh.
+| Check at revision `bb8806d` | Observed result |
+| --- | --- |
+| Java suite on Linux with a virtual display | **1,676 passed**, zero failures, errors or skips. |
+| Desktop smoke | Opened the Math Lab window through Maven. Real mouse clicks opened History and PDF in a separate UI check. |
+| Shipped Java OCR on the checked-in validation manifest | Returned nonempty LaTeX for all 29 images. **16/29 exactly matched** the stored string (55.2%). One error changed `8x+4=20` to `\delta x+4=20`. Another mismatch differed only in exponent braces. This measures literal string agreement on this collection. |
+| Python suite on CPU | **95 passed, one failed**, zero skipped. `test_fixtures_still_match_python` requires exact equality for a crop feature. The difference was about 2.22 × 10⁻¹⁶. All 30 checked scale decisions matched. |
+| Java/Python parity | The shipped operators differed from references generated from the bundled raw checkpoint. The source hash in the export metadata also differs. Regenerating the export and references from the same migrated state passed 51 model comparisons and 72 decoder comparisons. |
 
----
+## Limitations and development opportunities
 
-## Notes
+- **Recognition.** Read the predicted formula before using it. Canvas input is available today. The team's photo-input story would need a desktop import action and acceptance tests for photographed expressions.
+- **Mathematics.** The grammar, evaluation budget and numerical sampling bound the answers and plots the app can produce. For example, finite sampling may miss a singularity between sample points. Online integration also depends on the Newton service. [Math and integration details](docs/CODEBASE_AUDIT.md)
+- **Resuming work.** Canvas saves preserve visual results. Persisting a live plot session or an editable PDF project would require additional serialized state and compatibility tests.
+- **Model reproducibility.** Pairing each raw checkpoint with its exported operators, source hash and reference fixtures would make cross-language regression checks reproducible from one checkout.
+- **Platform verification.** Windows and macOS are project targets. Native model loading, font metrics, HiDPI input and OS file dialogs on those platforms remain unverified in this Linux audit. [Project platform requirements](AGENTS.md)
 
-### Clean Architecture layers
+## Credits and license
 
-| Layer | Packages |
-|---|---|
-| Entities | `entity`, `entity.integral`, `entity.graph`, `entity.phase`, `entity.node`, `entity.value`, `entity.symbolic`, `entity.calculus`, `history.domain`, `workspace.domain`, `pdf_editor.domain` |
-| Use cases | `use_case.evaluate`, `use_case.integrate`, `use_case.graph_function`, `use_case.explore_graph`, `use_case.graph_check`, `use_case.phase_portrait`, `use_case.explore_phase`, `use_case.phase_check`, `history.use_case`, `workspace.use_case`, `pdf_editor.use_case` |
-| Interface adapters | `interface_adapter.*`, `history.adapter`, `pdf_editor.adapter` |
-| Frameworks & drivers | `data_access`, `data_access.newton`, `history.data_access`, `workspace.data_access`, `pdf_editor.data_access`, `view.*`, `pdf_editor.view`, `model` (DJL runtime) |
-| Wiring | `app.java`, `app.StackedAppBuilder` |
-
-### Handwriting model
-The recognizer (`model.vital_mini`) is a CNN followed by transformer encoder and decoder layers. It outputs LaTeX tokens from a 234-token vocabulary and decodes with beam search. It was trained in Python with PyTorch. The training code, datasets and notes are in `src/neutral network/` (see `DATASETS.md` and `TRAIN_DECODER.md` there). The exported weights are in `src/main/java/model/checkpoints/`. Python is only needed to retrain the model, not to run the app.
-
-### Known limitations
-- Integrals need an internet connection. Only a lone `∫ f dx` is sent (not `2∫x dx + 1`), bounds must be finite, and Newton times out on some harder integrals (e.g. √(1 − x²)).
-- Uploading a photo (from US1) is not implemented yet. Recognition works on canvas ink only.
+penTex is a CSC207 Software Design team project by Yuanmo Zha, Haoxiang Zhao, Haoyu Wang and Bojun Yang. The project carries the MIT license in the file named `LISCENCE`. The bundled Kalam font has its own Open Font License. Dataset preparation notes describe the separately sourced handwriting corpora used by the training tools. [Project license](LISCENCE) · [Font license](src/main/resources/fonts/OFL.txt) · [Dataset notes](src/neutral%20network/DATASETS.md)
