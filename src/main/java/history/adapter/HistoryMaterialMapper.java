@@ -14,7 +14,9 @@ public final class HistoryMaterialMapper {
     private static final class RestoredMaterial extends PdfMaterial {
         private RestoredMaterial(HistoryEntry entry) {
             super(entry.kind() == HistoryEntry.Kind.GRAPH ? "Saved Graph" : "Saved " + entry.title(),
-                    entry.formula(), entry.result(), entry.png(), entry.imageWidth(), entry.imageHeight());
+                    entry.formula(), entry.result(), entry.png(), entry.imageWidth(), entry.imageHeight(),
+                    entry.graphDefinition() == null ? null
+                            : interface_adapter.graph.GraphDefinitionCodec.decode(entry.graphDefinition()));
         }
     }
 }

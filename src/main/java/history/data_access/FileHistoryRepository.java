@@ -47,6 +47,7 @@ public final class FileHistoryRepository implements HistoryRepository {
             fields.setProperty("createdAt", entry.createdAt().toString());
             fields.setProperty("width", Integer.toString(entry.imageWidth()));
             fields.setProperty("height", Integer.toString(entry.imageHeight()));
+            if (entry.graphDefinition() != null) fields.setProperty("graphDefinition", entry.graphDefinition());
             if (entry.png() != null) fields.setProperty("png", Base64.getEncoder().encodeToString(entry.png()));
             try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
                 fields.store(writer, "Math Lab History v1");
@@ -106,12 +107,16 @@ public final class FileHistoryRepository implements HistoryRepository {
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) { data.load(reader); }
         if (!"1".equals(data.getProperty("version"))) throw new IllegalArgumentException("Unknown version");
         String image = data.getProperty("png");
+        String graphDefinition = data.getProperty("graphDefinition");
+        // Encoding is an adapter concern, not a dependency of the History domain.
+        if (graphDefinition != null)
+            interface_adapter.graph.GraphDefinitionCodec.decode(graphDefinition);
         return new HistoryEntry(required(data, "id"),
                 HistoryEntry.Kind.valueOf(required(data, "kind")),
                 required(data, "title"), required(data, "formula"), required(data, "result"),
                 image == null ? null : Base64.getDecoder().decode(image),
                 Integer.parseInt(required(data, "width")), Integer.parseInt(required(data, "height")),
-                Instant.parse(required(data, "createdAt")));
+                Instant.parse(required(data, "createdAt")), graphDefinition);
     }
     private static String required(Properties data, String key) {
         String value = data.getProperty(key);

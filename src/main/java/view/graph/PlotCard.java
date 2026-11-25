@@ -29,6 +29,19 @@ public abstract class PlotCard extends JComponent {
 
         // something the snapshot should show changed (pan, zoom, spin, pin)
         void viewChanged();
+
+        /** Capture source placement before a header drag; copying must not move its source. */
+        default void dragStarted() { }
+
+        /** Optional cross-workspace drop handoff after a card header drag. */
+        default void dragFinished(Point cursorOnScreen) { }
+
+        /** Cross-workspace handoff is checked while dragging, not only on mouse release. */
+        default void dragMoved(Point cursorOnScreen) { }
+
+        /** A workspace may support smaller media than a floating Canvas card. */
+        default double minimumWidth() { return MIN_WIDTH; }
+        default double minimumHeight() { return MIN_HEIGHT; }
     }
 
     static final double WHEEL_STEP = 1.12;
@@ -181,6 +194,70 @@ public abstract class PlotCard extends JComponent {
     }
 
     private final class Mouse extends MouseAdapter {
+        private java.awt.event.AWTEventListener outsideCardEvents;
+        // A native drag may stop dispatching to a Swing child once that child is
+        // clipped at the Canvas/PDF split. Sample the pointer only during a header
+        // drag so the preview is independent of the component beneath the cursor.
+        private final javax.swing.Timer dragPointer = new javax.swing.Timer(25, event -> followPointer());
+
+        private void followPointer() {
+            if (drag != Drag.MOVE) return;
+            try {
+                java.awt.PointerInfo info = java.awt.MouseInfo.getPointerInfo();
+                if (info != null) updateDrag(info.getLocation());
+            } catch (java.awt.HeadlessException | SecurityException unavailable) {
+                // Local mouse events remain functional when pointer lookup is blocked.
+            }
+        }
+
+        /** Mouse releases can be delivered to the PDF sibling instead of the clipped Canvas. */
+        private void watchCrossComponentRelease() {
+            if (!PlotCard.this.isShowing()) return;
+            if (!dragPointer.isRunning()) dragPointer.start();
+            if (outsideCardEvents != null) return;
+            java.awt.Window owner = SwingUtilities.getWindowAncestor(PlotCard.this);
+            if (owner == null) return;
+            outsideCardEvents = event -> {
+                if (event instanceof MouseEvent mouse && mouse.getSource() instanceof java.awt.Component source
+                        && source != PlotCard.this && SwingUtilities.getWindowAncestor(source) == owner) {
+                    if (mouse.getID() == MouseEvent.MOUSE_DRAGGED
+                            && (mouse.getModifiersEx() & MouseEvent.BUTTON1_DOWN_MASK) != 0) {
+                        updateDrag(mouse.getLocationOnScreen());
+                    } else if (mouse.getID() == MouseEvent.MOUSE_RELEASED
+                            && SwingUtilities.isLeftMouseButton(mouse)) {
+                        finishDrag(mouse.getLocationOnScreen(), null);
+                    }
+                } else if (event instanceof java.awt.event.WindowEvent window
+                        && window.getWindow() == owner
+                        && (window.getID() == java.awt.event.WindowEvent.WINDOW_DEACTIVATED
+                            || window.getID() == java.awt.event.WindowEvent.WINDOW_LOST_FOCUS)) {
+                    cancelDrag();
+                }
+            };
+            try {
+                java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(outsideCardEvents,
+                        java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK | java.awt.AWTEvent.MOUSE_EVENT_MASK
+                                | java.awt.AWTEvent.WINDOW_EVENT_MASK | java.awt.AWTEvent.WINDOW_FOCUS_EVENT_MASK);
+            } catch (SecurityException denied) {
+                outsideCardEvents = null; // local mouseDragged/mouseReleased still work
+            }
+        }
+
+        private void stopWatching() {
+            dragPointer.stop();
+            if (outsideCardEvents != null) {
+                java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(outsideCardEvents);
+                outsideCardEvents = null;
+            }
+        }
+
+        private void cancelDrag() {
+            boolean moving = drag == Drag.MOVE;
+            drag = Drag.NONE;
+            stopWatching();
+            if (moving) host.dragFinished(null); // discard outline, never commit
+        }
+
         @Override
         public void mousePressed(MouseEvent e) {
             if (!SwingUtilities.isLeftMouseButton(e)) {
@@ -201,31 +278,30 @@ public abstract class PlotCard extends JComponent {
                 drag = Drag.RESIZE;
             } else if (p.y < GraphCardRenderer.headerHeight(getWidth())) {
                 drag = Drag.MOVE;
+                host.dragStarted();
+                watchCrossComponentRelease();
             } else {
                 drag = Drag.PLOT;
                 hoverEnded();   // no readout flapping around mid drag
             }
         }
 
-        @Override
-        public void mouseDragged(MouseEvent e) {
-            if (drag == Drag.NONE || lastScreen == null) {
-                return;
-            }
-            Point now = e.getLocationOnScreen();
+        private void updateDrag(Point now) {
+            if (drag == Drag.NONE || lastScreen == null) return;
             double dx = now.x - lastScreen.x;
             double dy = now.y - lastScreen.y;
-            if (!moved && pressScreen.distance(now) < CLICK_SLOP) {
-                return;
-            }
+            if (dx == 0 && dy == 0) return;
+            if (!moved && pressScreen.distance(now) < CLICK_SLOP) return;
             moved = true;
             lastScreen = now;
             switch (drag) {
                 case MOVE:
                     host.moveBy(dx, dy);
+                    host.dragMoved(now);
                     break;
                 case RESIZE:
-                    host.resizeTo(Math.max(MIN_WIDTH, getWidth() + dx), Math.max(MIN_HEIGHT, getHeight() + dy));
+                    host.resizeTo(Math.max(host.minimumWidth(), getWidth() + dx),
+                            Math.max(host.minimumHeight(), getHeight() + dy));
                     break;
                 default:
                     plotDragged(dx, dy);
@@ -234,21 +310,24 @@ public abstract class PlotCard extends JComponent {
         }
 
         @Override
-        public void mouseReleased(MouseEvent e) {
+        public void mouseDragged(MouseEvent e) { updateDrag(e.getLocationOnScreen()); }
+
+        private void finishDrag(Point releasedAt, Point local) {
             Drag was = drag;
             drag = Drag.NONE;
-            if (was == Drag.NONE) {
-                return;
-            }
+            stopWatching();
+            if (was == Drag.NONE) return;
             if (moved) {
                 host.viewChanged();
-            } else if (was == Drag.PLOT && e.getClickCount() < 2) {
-                plotClicked(e.getPoint());
+                if (was == Drag.MOVE) host.dragFinished(releasedAt);
+            } else if (was == Drag.PLOT) {
+                if (local != null) plotClicked(local);
             }
-            if (was == Drag.PLOT) {
-                hover(e.getPoint());
-            }
+            if (was == Drag.PLOT && local != null) hover(local);
         }
+
+        @Override
+        public void mouseReleased(MouseEvent e) { finishDrag(e.getLocationOnScreen(), e.getPoint()); }
 
         @Override
         public void mouseClicked(MouseEvent e) {

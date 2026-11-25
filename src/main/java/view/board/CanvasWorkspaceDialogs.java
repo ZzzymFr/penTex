@@ -23,6 +23,13 @@ public final class CanvasWorkspaceDialogs {
     private final Component parent;
     private CanvasState lastSavedState;
     private String currentName = "Untitled canvas";
+    private java.util.function.Consumer<CanvasState> graphRestorer = state -> { };
+
+    /** Canvas-specific presentation adapter; the workspace use case never sees Swing cards. */
+    public void setGraphRestorer(java.util.function.Consumer<CanvasState> restorer) {
+        graphRestorer = Objects.requireNonNull(restorer);
+    }
+
 
     public CanvasWorkspaceDialogs(CanvasWorkspaceBoundary workspace, DrawingCanvas canvas, Component parent) {
         this.workspace = Objects.requireNonNull(workspace);
@@ -89,7 +96,9 @@ public final class CanvasWorkspaceDialogs {
     public void newCanvas() {
         if (!confirmDiscardOrSave("starting a new canvas")) return;
         try {
-            canvas.restoreCanvasState(new CanvasState(List.of(), List.of(), List.of(), 1, 0, 0));
+            CanvasState empty = new CanvasState(List.of(), List.of(), List.of(), 1, 0, 0);
+            canvas.restoreCanvasState(empty);
+            graphRestorer.accept(empty);
             workspace.newCanvas();
             lastSavedState = null;
             currentName = "Untitled canvas";
@@ -129,6 +138,7 @@ public final class CanvasWorkspaceDialogs {
             if (!confirmDiscardOrSave("opening another canvas")) return;
             SavedCanvas opened = workspace.open(chosen.id());
             canvas.restoreCanvasState(opened.state());
+            graphRestorer.accept(opened.state());
             currentName = opened.name();
             lastSavedState = canvas.exportCanvasState();
         } catch (IOException | IllegalArgumentException failure) {
@@ -161,6 +171,7 @@ public final class CanvasWorkspaceDialogs {
             if (recent.isPresent()) {
                 SavedCanvas opened = workspace.open(recent.get().id());
                 canvas.restoreCanvasState(opened.state());
+                graphRestorer.accept(opened.state());
                 lastSavedState = canvas.exportCanvasState();
                 currentName = opened.name();
             }

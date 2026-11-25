@@ -141,8 +141,10 @@ public final class DocumentEditor {
     public PdfDocument.Placement place(int page, PdfMaterial material, float x, float y, float width, float height) {
         Objects.requireNonNull(material, "material");
         validatePage(page);
-        float w = validSize(width, 45f, PdfDocument.PAGE_WIDTH);
-        float h = validSize(height, 35f, PdfDocument.PAGE_HEIGHT);
+        // PDF pen ink uses a tightly cropped raster. Enlarging its placement to the
+        // normal material minimum would move a thin line when rendering is centered.
+        float w = validSize(width, minimumPlacementWidth(material), PdfDocument.PAGE_WIDTH);
+        float h = validSize(height, minimumPlacementHeight(material), PdfDocument.PAGE_HEIGHT);
         // Validate and construct before recording undo. A failed placement must not
         // consume a checkpoint or invalidate an existing redo history.
         PdfDocument.Placement p = PdfDocument.Placement.material(material,
@@ -151,6 +153,21 @@ public final class DocumentEditor {
         document.add(page, p);
         return p;
     }
+    /** A live GraphCard's picture is derived output, not a separate user edit/Undo step.
+     * The placement ID, layout, stacking and source graph definition are preserved.
+     */
+    public boolean updateGraphSnapshot(String placementId, byte[] png, int width, int height) {
+        Objects.requireNonNull(placementId, "placementId");
+        for (int page = 0; page < document.pageCount(); page++) {
+            PdfDocument.Placement item = document.find(page, placementId);
+            if (item != null && !item.isNote() && item.material().isInteractiveGraph()) {
+                document.replace(page, item.withMaterial(item.material().withGraphSnapshot(png, width, height)));
+                return true;
+            }
+        }
+        return false;
+    }
+
     public PdfDocument.Placement addNote(int page, String text, float x, float y) {
         validatePage(page);
         PdfDocument.Placement p = PdfDocument.Placement.note(text,
@@ -339,8 +356,12 @@ public final class DocumentEditor {
     public void beginTransform(int page, String id) { findRequired(page, id); checkpoint(); }
     public PdfDocument.Placement transform(int page, String id, float x, float y, float width, float height) {
         PdfDocument.Placement p = findRequired(page, id);
-        float w = validSize(width, 45, PdfDocument.PAGE_WIDTH);
-        float h = validSize(height, 35, PdfDocument.PAGE_HEIGHT);
+        // Notes have no PdfMaterial. Preserve their original minimum dimensions,
+        // while allowing tightly cropped PDF ink strokes to keep their true bounds.
+        float minWidth = p.isNote() ? 45f : minimumPlacementWidth(p.material());
+        float minHeight = p.isNote() ? 35f : minimumPlacementHeight(p.material());
+        float w = validSize(width, minWidth, PdfDocument.PAGE_WIDTH);
+        float h = validSize(height, minHeight, PdfDocument.PAGE_HEIGHT);
         PdfDocument.Placement updated = p.withBounds(
                 clamp(x, 0, PdfDocument.PAGE_WIDTH - w),
                 clamp(y, 0, PdfDocument.PAGE_HEIGHT - h), w, h);
@@ -361,6 +382,15 @@ public final class DocumentEditor {
         return p;
     }
     private void validatePage(int page) { document.placements(page); }
+    private static boolean isPdfInkStroke(PdfMaterial material) {
+        return material.isGraph() && "PDF ink stroke".equals(material.title());
+    }
+    private static float minimumPlacementWidth(PdfMaterial material) {
+        return isPdfInkStroke(material) ? 1f : 45f;
+    }
+    private static float minimumPlacementHeight(PdfMaterial material) {
+        return isPdfInkStroke(material) ? 1f : 35f;
+    }
     private static float validSize(float v, float min, float max) {
         if (!Float.isFinite(v)) throw new IllegalArgumentException("Size must be finite");
         return clamp(v, min, max);

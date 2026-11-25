@@ -28,11 +28,10 @@ import interface_adapter.evaluate.QuestionCheckController;
 import interface_adapter.graph.GraphController;
 import interface_adapter.graph.GraphExploreController;
 import interface_adapter.graph.GraphPresenter;
-import interface_adapter.graph.GraphState;
 import interface_adapter.graph.GraphViewModel;
 import use_case.explore_graph.ExploreGraphInteractor;
-import view.graph.GraphSnapshot;
 import view.canvas.GraphSession;
+import view.canvas.GraphDropHandler;
 import view.canvas.PhaseSession;
 import interface_adapter.graph_check.GraphCheckController;
 import interface_adapter.history.HistoryViewModel;
@@ -123,15 +122,6 @@ public class StackedAppBuilder {
         // stay live at once; each new graph also goes to PDF Studio like before
         java.util.function.Supplier<GraphSession> graphSessions = () -> {
             GraphViewModel graphViewModel = new GraphViewModel();
-            graphViewModel.addPropertyChangeListener(event -> {
-                // only brand new graphs, pans / zooms come as VIEW and would spam the library
-                if (GraphViewModel.STATE_PROPERTY.equals(event.getPropertyName())) {
-                    GraphState state = graphViewModel.getState();
-                    if (state.getError() == null && state.hasGraph()) {
-                        pdfStudio.addGraph(state.getLatex(), GraphSnapshot.render(state, 880, 600));
-                    }
-                }
-            });
             InMemoryGraphSessionDataAccessObject graphSession = new InMemoryGraphSessionDataAccessObject();
             GraphPresenter graphPresenter = new GraphPresenter(graphViewModel);
             return new GraphSession(
@@ -140,6 +130,17 @@ public class StackedAppBuilder {
                     new GraphExploreController(new ExploreGraphInteractor(graphSession, graphPresenter)),
                     graphViewModel);
         };
+        // Editing/restoring an existing graph uses its own quiet session; only a new
+        // graph from recognition publishes a fresh Library/History record.
+        java.util.function.Supplier<GraphSession> restoredGraphSessions = () -> {
+            GraphViewModel vm = new GraphViewModel();
+            InMemoryGraphSessionDataAccessObject store = new InMemoryGraphSessionDataAccessObject();
+            GraphPresenter presenter = new GraphPresenter(vm);
+            return new GraphSession(
+                    new GraphController(new GraphFunctionInteractor(new LatexFunctionParser(), store, presenter)),
+                    new GraphExploreController(new ExploreGraphInteractor(store, presenter)), vm);
+        };
+        pdfStudio.setGraphSessions(restoredGraphSessions);
         GraphCheckController graphCheck = new GraphCheckController(new GraphCheckInteractor(new LatexFunctionParser()));
 
         // phase portraits of odes: own use case, a session per portrait, same popup; also go to PDF Studio
@@ -247,7 +248,34 @@ public class StackedAppBuilder {
                 pdfPanel, historyPresenter::delete,
                 () -> dialogs.get().save(), () -> dialogs.get().saveAs(),
                 () -> dialogs.get().open());
+        // A graph enters Library/History once its native card has successfully appeared.
+        // VIEW changes and opening saved canvases must not republish duplicate materials.
+        page.setGraphCreatedListener(pdfStudio::addInteractiveGraph);
+        page.setGraphRestoreSessions(restoredGraphSessions);
+        page.setGraphDropHandler(new GraphDropHandler() {
+            @Override public boolean accepts(java.awt.Point screen) {
+                return board.acceptsInteractiveGraphDrop(screen);
+            }
+            @Override public boolean shouldAttemptDropOnRelease(java.awt.Point screen) {
+                return board.acceptsInteractiveGraphDrop(screen);
+            }
+            @Override public boolean drop(entity.graph.GraphDefinition definition,
+                    java.awt.image.BufferedImage preview, java.awt.Point screen) {
+                return board.dropInteractiveGraph(definition, preview, screen);
+            }
+            @Override public void preview(java.awt.Point screen, double aspectRatio) {
+                board.previewInteractiveGraphDrop(screen, aspectRatio);
+            }
+            @Override public void preview(java.awt.Point screen, double aspectRatio,
+                                          java.awt.image.BufferedImage thumbnail) {
+                board.previewInteractiveGraphDrop(screen, aspectRatio, thumbnail);
+            }
+            @Override public void clearPreview() {
+                board.cancelInteractiveGraphPreview();
+            }
+        });
         dialogs.set(new CanvasWorkspaceDialogs(canvases, drawing, board));
+        dialogs.get().setGraphRestorer(page::restoreSavedCanvasGraphs);
         FloatingToolbar toolbar = new FloatingToolbar(drawing, board, pdfPanel);
         board.addFloatingToolbar(toolbar.component());
         pdfPanel.setFullscreenAction(() -> board.setPdfFullscreen(!board.isPdfFullscreen()));
@@ -255,6 +283,7 @@ public class StackedAppBuilder {
         dialogs.get().restoreLatestAtStartup();
         board.setSaveStateSupplier(dialogs.get()::saveMenuState);
         drawing.addInkChangeListener(board::scheduleSaveStateRefresh);
+        drawing.addGraphStateListener(board::scheduleSaveStateRefresh);
         drawing.addFormulaChangeListener(id -> board.scheduleSaveStateRefresh());
         drawing.addViewListener(board::scheduleSaveStateRefresh);
 

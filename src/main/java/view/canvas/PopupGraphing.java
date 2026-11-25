@@ -20,6 +20,24 @@ import java.util.function.Supplier;
 final class PopupGraphing extends PopupCardTool<GraphSession> {
 
 
+    private GraphDropHandler pdfDrop = (definition, image, point) -> false;
+    private java.util.function.BiConsumer<entity.graph.GraphDefinition, BufferedImage> graphCreated =
+            (definition, image) -> { };
+    void setGraphCreatedListener(java.util.function.BiConsumer<entity.graph.GraphDefinition,
+            BufferedImage> listener) { graphCreated = java.util.Objects.requireNonNull(listener); }
+    void setPdfDropHandler(GraphDropHandler handler) {
+        pdfDrop = java.util.Objects.requireNonNull(handler);
+    }
+    void restore(entity.graph.GraphDefinition definition, java.awt.Point canvasPosition) {
+        super.restore(definition.functions(), definition.xPair(), definition.yPair(),
+                definition.zPair(), canvasPosition, definition.camera());
+    }
+    void restoreSaved(entity.graph.GraphDefinition definition, java.awt.geom.Rectangle2D bounds,
+                      String encodedDefinition) {
+        super.restoreSaved(definition.functions(), definition.xPair(), definition.yPair(),
+                definition.zPair(), bounds, encodedDefinition, definition.camera());
+    }
+
     // one shared session: a single live card, a new graph replaces it
     PopupGraphing(SharedCanvas canvas, GraphController controller, GraphExploreController explore,
                   GraphViewModel viewModel, Notices notices, JComponent area,
@@ -51,7 +69,7 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
         return new GraphLive(kit);
     }
 
-    private final class GraphLive extends Live {
+    private final class GraphLive extends Live implements view.CanvasGraphSource {
         private final GraphViewModel viewModel;
 
         GraphLive(GraphSession kit) {
@@ -64,6 +82,14 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
                     viewChanged();
                 }
             });
+        }
+
+        @Override
+        public String graphDefinition() {
+            if (!viewModel.getState().hasGraph()) return "";
+            return interface_adapter.graph.GraphDefinitionCodec.encode(
+                    interface_adapter.graph.GraphDefinitionMapper.from(viewModel.getState())
+                            .withCamera(((GraphCard) card).cameraState()));
         }
 
         @Override
@@ -109,8 +135,80 @@ final class PopupGraphing extends PopupCardTool<GraphSession> {
         }
 
         @Override
+        void restoreCamera(entity.graph.GraphDefinition.Camera state) {
+            ((GraphCard) card).restoreCamera(state);
+        }
+        private boolean transferPending;
+        private BufferedImage dragThumbnail;
+        private java.awt.Point activeDragPointer;
+        private boolean draggingGraph;
+
+        @Override
+        void startedDragging() {
+            captureGraphDragOrigin();
+            draggingGraph = true;
+            activeDragPointer = null;
+            // Render the current (possibly rotated) view once per gesture, not for
+            // every mouse movement. 3D snapshots finish asynchronously on the EDT.
+            card.snapshotLater(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT, image -> {
+                if (image == null) return;
+                dragThumbnail = image;
+                if (draggingGraph && activeDragPointer != null && pdfDrop.accepts(activeDragPointer)) {
+                    pdfDrop.preview(activeDragPointer, (double) image.getWidth() / image.getHeight(), image);
+                }
+            });
+        }
+
+        @Override
+        void draggingAt(java.awt.Point cursorOnScreen) {
+            // Crossing only previews; release commits a copy and leaves Canvas intact.
+            activeDragPointer = cursorOnScreen == null ? null : new java.awt.Point(cursorOnScreen);
+            if (cursorOnScreen != null && pdfDrop.accepts(cursorOnScreen)) {
+                BufferedImage thumbnail = dragThumbnail;
+                double ratio = thumbnail == null ? (double) SNAPSHOT_WIDTH / SNAPSHOT_HEIGHT
+                        : (double) thumbnail.getWidth() / Math.max(1, thumbnail.getHeight());
+                pdfDrop.preview(cursorOnScreen, ratio, thumbnail);
+            } else {
+                pdfDrop.clearPreview();
+            }
+        }
+
+        @Override
+        void finishedDragging(java.awt.Point cursorOnScreen) {
+            draggingGraph = false;
+            activeDragPointer = null;
+            pdfDrop.clearPreview();
+            boolean toPdf = cursorOnScreen != null && !transferPending && onCanvas()
+                    && pdfDrop.shouldAttemptDropOnRelease(cursorOnScreen);
+            // A successful copy leaves the source graph at its original Canvas location.
+            if (toPdf) restoreGraphDragOrigin();
+            forgetGraphDragOrigin();
+            if (!toPdf) return;
+            transferPending = true;
+            var definition = interface_adapter.graph.GraphDefinitionMapper.from(viewModel.getState())
+                    .withCamera(((GraphCard) card).cameraState());
+            java.awt.Point destination = new java.awt.Point(cursorOnScreen);
+            // Commit a COPY only after release: the original Canvas graph stays live.
+            // The destination creates its own independent interactive graph session.
+            card.snapshotLater(SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT, image -> {
+                try {
+                    if (image != null && onCanvas()) pdfDrop.drop(definition, image, destination);
+                } finally {
+                    transferPending = false;
+                }
+            });
+        }
+
+        @Override
+        void publishedNew(BufferedImage image) {
+            graphCreated.accept(interface_adapter.graph.GraphDefinitionMapper.from(viewModel.getState())
+                    .withCamera(((GraphCard) card).cameraState()), image);
+        }
+
+        @Override
         BufferedImage firstPicture() {
-            return GraphSnapshot.render(viewModel.getState(), SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+            dragThumbnail = GraphSnapshot.render(viewModel.getState(), SNAPSHOT_WIDTH, SNAPSHOT_HEIGHT);
+            return dragThumbnail;
         }
 
         private boolean surface() {

@@ -24,6 +24,10 @@ public final class HistoryLibraryImporter {
         try {
             BufferedImage graph = ImageIO.read(new ByteArrayInputStream(record.imagePng()));
             if (graph == null) throw new IOException("Unsupported graph PNG");
+            if (record.entry().graphDefinition() != null) {
+                return library.addInteractiveGraph(
+                        interface_adapter.graph.GraphDefinitionCodec.decode(record.entry().graphDefinition()), graph);
+            }
             return library.addGraph(record.getLatex(), graph);
         } catch (IOException invalid) {
             throw new IllegalArgumentException("History graph has invalid PNG content", invalid);

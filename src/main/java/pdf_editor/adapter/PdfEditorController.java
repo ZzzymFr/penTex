@@ -125,6 +125,10 @@ public final class PdfEditorController {
         PdfDocument.Placement placed = editor.place(page, material, x, y, width, height);
         select(placed.id()); return placed;
     }
+    /** Update the high-resolution visual of a live graph without changing its editable definition. */
+    public boolean updateGraphSnapshot(String placementId, byte[] png, int width, int height) {
+        return editor.updateGraphSnapshot(placementId, png, width, height);
+    }
     public PdfDocument.Placement addNote() { return addNoteAt(75, 95); }
     public PdfDocument.Placement addNoteAt(float x, float y) {
         PdfDocument.Placement placed = editor.addNote(page, "", x, y);

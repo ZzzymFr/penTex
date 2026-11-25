@@ -52,6 +52,16 @@ public final class GraphCard extends PlotCard {
         return GraphSnapshot.render(viewModel.getState(), width, height, camera, pinned);
     }
 
+    /** Portable view state; used to preserve the angle across Canvas/PDF handoffs. */
+    public entity.graph.GraphDefinition.Camera cameraState() {
+        return new entity.graph.GraphDefinition.Camera(camera.yaw(), camera.pitch());
+    }
+    public void restoreCamera(entity.graph.GraphDefinition.Camera view) {
+        if (view == null) return;
+        camera.restore(view.yaw(), view.pitch());
+        repaint();
+    }
+
     GraphTrace pinned() {
         return pinned;
     }

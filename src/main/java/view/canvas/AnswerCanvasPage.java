@@ -126,6 +126,9 @@ public class AnswerCanvasPage extends CanvasPage {
             public void componentResized(ComponentEvent e) {
                 placePopup();
                 faint.place();
+                // Restored graphs may finish computing before the Canvas gets its real size.
+                if (graphing != null) graphing.placeRanges();
+                if (phase != null) phase.placeRanges();
             }
         });
 
@@ -197,6 +200,46 @@ public class AnswerCanvasPage extends CanvasPage {
                 this::publishFormulaOnly);
         phase.setLayers(cardLayers());
         differential = isDifferentialEquation;
+    }
+
+    /** Only successful, newly created native Graph cards publish to History and Library. */
+    public void setGraphCreatedListener(java.util.function.BiConsumer<entity.graph.GraphDefinition,
+            java.awt.image.BufferedImage> publisher) {
+        if (graphing != null) graphing.setGraphCreatedListener(publisher);
+    }
+
+    /** History restoration uses sessions without the new-graph publication listener. */
+    public void setGraphRestoreSessions(java.util.function.Supplier<GraphSession> factory) {
+        if (graphing != null) graphing.setRestoreKits(factory);
+    }
+    /** History restoration uses the same interactive graph engine as freshly recognized ink. */
+    public boolean restoreHistoryGraph(entity.graph.GraphDefinition definition, java.awt.Point canvasTopLeft) {
+        if (graphing == null) return false;
+        graphing.restore(java.util.Objects.requireNonNull(definition), canvasTopLeft);
+        return true;
+    }
+    /** Clear the previous Canvas's live UI and rebuild its saved graph cards without republishing History. */
+    public void restoreSavedCanvasGraphs(workspace.domain.CanvasState state) {
+        if (graphing != null) graphing.clearLives();
+        if (phase != null) phase.clearLives();
+        if (graphing == null) return;
+        for (workspace.domain.CanvasState.Asset asset : state.assets()) {
+            if (!asset.graph() || asset.graphDefinition().isEmpty()) continue;
+            try {
+                entity.graph.GraphDefinition definition =
+                        interface_adapter.graph.GraphDefinitionCodec.decode(asset.graphDefinition());
+                graphing.restoreSaved(definition, new java.awt.geom.Rectangle2D.Double(
+                        asset.x(), asset.y(), asset.width(), asset.height()), asset.graphDefinition());
+            } catch (IllegalArgumentException invalid) {
+                // Retain the archived PNG placeholder for a damaged or unsupported definition.
+                System.err.println("Cannot restore native graph: " + invalid.getMessage());
+            }
+        }
+    }
+
+    /** Cross-divider handoff is injected by the board, not implemented in the graph use case. */
+    public void setGraphDropHandler(GraphDropHandler handler) {
+        if (graphing != null) graphing.setPdfDropHandler(handler);
     }
 
     // the area the board floats things over (same coords as the canvas)

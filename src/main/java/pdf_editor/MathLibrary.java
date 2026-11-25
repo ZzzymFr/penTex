@@ -1,6 +1,7 @@
 package pdf_editor;
 
 import pdf_editor.domain.PdfMaterial;
+import entity.graph.GraphDefinition;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -18,6 +19,9 @@ public final class MathLibrary {
         private Material(String title, String formula, String result,
                          byte[] image, int width, int height) {
             super(title, formula, result, image, width, height);
+        }
+        private Material(String title, GraphDefinition definition, byte[] image, int width, int height) {
+            super(title, definition.functions().get(0), "", image, width, height, definition);
         }
         private Material(String id, String title, String formula, String result) {
             super(id, title, formula, result, null, 0, 0);
@@ -163,6 +167,13 @@ public final class MathLibrary {
         Material graph = publish(new Material("Graph " + (items.size() + 1), latex, "",
                 toPng(image), image.getWidth(), image.getHeight()));
         return graph;
+    }
+    /** Store a static thumbnail alongside the portable definition of an interactive function plot. */
+    public Material addInteractiveGraph(GraphDefinition definition, BufferedImage thumbnail) {
+        Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(thumbnail, "thumbnail");
+        return publish(new Material("Graph " + (items.size() + 1), definition,
+                toPng(thumbnail), thumbnail.getWidth(), thumbnail.getHeight()));
     }
     public Material addInk(String title, BufferedImage image) {
         return publish(region(title, image));

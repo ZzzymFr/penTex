@@ -57,6 +57,7 @@ public final class PdfStudioLauncher implements Us4InputBoundary {
     /** The document model is shared across overlay/split mode changes and stays editable. */
     public PdfPanel createPanel() {
         PdfPanel panel = new PdfPanel(controller);
+        if (graphSessions != null) panel.setGraphSessions(graphSessions);
         if (formulaRevision != null) panel.editor().setFormulaEditing(formulaRevision);
         panel.setCanvasCapture(() -> snapshotGateway.capture());
         return panel;
@@ -99,6 +100,14 @@ public final class PdfStudioLauncher implements Us4InputBoundary {
     }
     public void addFormulaResult(String latex, String result) { addCalculation(latex, result); }
     @Override public void addGraph(String latex, BufferedImage image) { collector.acceptGraph(latex, image); }
+    public void addInteractiveGraph(entity.graph.GraphDefinition definition, BufferedImage thumbnail) {
+        collector.acceptInteractiveGraph(definition, thumbnail);
+    }
+    private java.util.function.Supplier<view.canvas.GraphSession> graphSessions;
+    /** Dedicated graph sessions for the PDF view: restoration must not republish History records. */
+    public void setGraphSessions(java.util.function.Supplier<view.canvas.GraphSession> factory) {
+        graphSessions = java.util.Objects.requireNonNull(factory);
+    }
     public void addGraphPng(String latex, Path png) throws IOException {
         BufferedImage image = ImageIO.read(png.toFile());
         if (image == null) throw new IOException("Not a readable PNG image: " + png);
