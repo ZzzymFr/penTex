@@ -37,6 +37,12 @@ class GraphSourcePositionAfterPdfCopyTest {
                 @Override double[] window() {return new double[]{-5,5,-5,5};}
                 @Override boolean followsY() {return false;}
                 @Override BufferedImage firstPicture() {return new BufferedImage(200,140,2);}
+                // This test uses a fake graph with no coordinate lookup results.
+                @Override List<String> lookupNames() {return List.of("x", "y");}
+                @Override String lookupHint() {return "";}
+                @Override void lookup(List<String> typed) { }
+                @Override void clearLookup() { }
+                @Override interface_adapter.graph.GraphLookup lookupResult() {return null;}
             };
             return source;
         }

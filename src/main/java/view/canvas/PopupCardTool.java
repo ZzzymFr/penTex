@@ -1,4 +1,3 @@
-```
 package view.canvas;
 
 import interface_adapter.graph.GraphLookup;
@@ -161,9 +160,9 @@ abstract class PopupCardTool<K> {
         if (functions == null || functions.isEmpty()) throw new IllegalArgumentException("No graph functions");
         Live live = newLive(restoreKits.get());
         lives.add(live);
-        layers.underlay(live.card);
-        layers.overlay(live.ranges);
-        layers.overlay(live.ranges.panel());
+        // Use the same complete overlay wiring as newly generated graphs.
+        // A restored graph must also expose its live coordinate lookup controls.
+        overlays(live);
         latest = live;
         live.restoring = true;
         live.newGraph = false;
@@ -182,9 +181,9 @@ abstract class PopupCardTool<K> {
                       entity.graph.GraphDefinition.Camera camera) {
         Live live = newLive(restoreKits.get());
         lives.add(live);
-        layers.underlay(live.card);
-        layers.overlay(live.ranges);
-        layers.overlay(live.ranges.panel());
+        // Use the same complete overlay wiring as newly generated graphs.
+        // A restored graph must also expose its live coordinate lookup controls.
+        overlays(live);
         latest = live;
         live.restoring = true;
         live.newGraph = false;
@@ -200,8 +199,10 @@ abstract class PopupCardTool<K> {
             live.discarded = true;
             live.snapshotLater.stop();
             live.ranges.hideAll();
+            live.finder.hideAll();
             live.drawing.run();
-            for (JComponent component : new JComponent[]{live.card, live.ranges, live.ranges.panel()}) {
+            for (JComponent component : new JComponent[]{live.card, live.ranges, live.finder,
+                    live.ranges.panel(), live.finder.panel()}) {
                 java.awt.Container container = component.getParent();
                 if (container != null) { container.remove(component); container.repaint(); }
             }
@@ -653,5 +654,3 @@ abstract class PopupCardTool<K> {
         }
     }
 }
-
-```

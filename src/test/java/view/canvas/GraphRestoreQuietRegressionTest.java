@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import view.DrawingCanvas;
 
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
@@ -40,6 +41,12 @@ class GraphRestoreQuietRegressionTest {
                 @Override double[] window() {return new double[]{-5,5,-5,5};}
                 @Override boolean followsY() {return false;}
                 @Override BufferedImage firstPicture() {return new BufferedImage(80,60,2);}
+                // This test uses a fake graph with no coordinate lookup results.
+                @Override List<String> lookupNames() {return List.of("x", "y");}
+                @Override String lookupHint() {return "";}
+                @Override void lookup(List<String> typed) { }
+                @Override void clearLookup() { }
+                @Override interface_adapter.graph.GraphLookup lookupResult() {return null;}
                 @Override void publishedNew(BufferedImage image) {published.incrementAndGet();}
             };
         }
@@ -70,5 +77,53 @@ class GraphRestoreQuietRegressionTest {
         assertEquals(1, tool.published.get());
         assertEquals(1, toast.successes.get());
         assertEquals(1, toast.progress.get());
+    }
+
+    @Test void restoredGraphKeepsLookupControlsAndClearRemovesThem() throws Exception {
+        Toasts toast = new Toasts();
+        CountDownLatch shown = new CountDownLatch(1);
+        DrawingCanvas drawing = new DrawingCanvas();
+        drawing.setSize(800, 600);
+        JPanel area = new JPanel(null);
+        area.setSize(800, 600);
+        drawing.setBounds(0, 0, 800, 600);
+        area.add(drawing);
+        Tool tool = new Tool(new SharedCanvas(drawing), toast, area);
+        tool.setOnShown(shown::countDown);
+        SwingUtilities.invokeAndWait(() -> tool.restore(List.of("y=x"),
+                new double[]{-5, 5}, new double[]{-5, 5}, null, new Point(110, 90), null));
+        assertTrue(shown.await(8, TimeUnit.SECONDS));
+        GraphLookupChip lookup = tool.lookupChip();
+        assertNotNull(lookup);
+        assertSame(area, lookup.getParent(), "restored graph must attach the lookup tag");
+        assertSame(area, lookup.panel().getParent(), "restored graph must attach the lookup panel");
+        SwingUtilities.invokeAndWait(tool::clearLives);
+        assertNull(lookup.getParent(), "clearing a workspace must detach lookup tag");
+        assertNull(lookup.panel().getParent(), "clearing a workspace must detach lookup panel");
+        assertEquals(0, tool.liveCount());
+    }
+
+    @Test void reopenedSavedGraphAlsoAttachesLookupControls() throws Exception {
+        Toasts toast = new Toasts();
+        CountDownLatch shown = new CountDownLatch(1);
+        DrawingCanvas drawing = new DrawingCanvas();
+        drawing.setSize(800, 600);
+        JPanel area = new JPanel(null);
+        area.setSize(800, 600);
+        drawing.setBounds(0, 0, 800, 600);
+        area.add(drawing);
+        Tool tool = new Tool(new SharedCanvas(drawing), toast, area);
+        tool.setOnShown(shown::countDown);
+        SwingUtilities.invokeAndWait(() -> tool.restoreSaved(List.of("y=x"),
+                new double[]{-5, 5}, new double[]{-5, 5}, null,
+                new java.awt.geom.Rectangle2D.Double(110, 90, 200, 140), "saved-definition", null));
+        assertTrue(shown.await(8, TimeUnit.SECONDS));
+        GraphLookupChip lookup = tool.lookupChip();
+        assertNotNull(lookup);
+        assertSame(area, lookup.getParent(), "saved graph lookup tag should attach");
+        assertSame(area, lookup.panel().getParent(), "saved graph lookup panel should attach");
+        SwingUtilities.invokeAndWait(tool::clearLives);
+        assertNull(lookup.getParent());
+        assertNull(lookup.panel().getParent());
     }
 }

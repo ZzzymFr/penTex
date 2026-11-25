@@ -159,6 +159,24 @@ class GraphLookupChipTest {
         return vm.getState();
     }
 
+    // Model publication and Swing repaint are separate asynchronous steps. Wait for
+    // the actual displayed result, not just the ViewModel state, with a firm deadline.
+    private static String[] awaitDisplayedLookup(GraphLookupChip live, GraphLookupChip.Panel panel,
+                                                  String answer, String summary) throws Exception {
+        String[] displayed = new String[2];
+        for (int i = 0; i < 100; i++) {
+            SwingUtilities.invokeAndWait(() -> {
+                displayed[0] = panel.row("y").box.getText();
+                displayed[1] = live.tagText();
+            });
+            if (answer.equals(displayed[0]) && summary.equals(displayed[1])) {
+                return displayed;
+            }
+            Thread.sleep(30);
+        }
+        return displayed; // The unchanged expected-value assertions below still fail on a real bug.
+    }
+
     @Test
     void liveGraphAnswersThroughItsOwnUseCase() throws Exception {
         SharedCanvas shared = new SharedCanvas(new DrawingCanvas());
@@ -187,8 +205,9 @@ class GraphLookupChipTest {
         });
         GraphState s = waitUntil(viewModel, st -> st.getLookup() != null);
         assertNotNull(s.getLookup());
-        assertEquals("9", p.row("y").box.getText());
-        assertEquals("x = 3 → y = 9", live.tagText());
+        String[] displayed = awaitDisplayedLookup(live, p, "9", "x = 3 → y = 9");
+        assertEquals("9", displayed[0]);
+        assertEquals("x = 3 → y = 9", displayed[1]);
 
         // a new range redraws the graph: the find is asked again on the new drawing
         SwingUtilities.invokeAndWait(() -> tool.rangeChip().resetToDefault());
