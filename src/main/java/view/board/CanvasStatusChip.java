@@ -163,19 +163,20 @@ final class CanvasStatusChip extends JComponent {
     }
 
     // what's behind, blurred, so it reads as the same glass as the bar next to it
-    private BufferedImage glassBackdrop(int w, int h) {
+    private GlassBackdropCache.Sample glassBackdrop(int w, int h) {
         if (backdrop == null || backdropVersion == null) return null;
-        return opticalBackdrop.image(w, h, false, new java.awt.Point(getX(), getY()),
-                backdropVersion.getAsLong(), fadeTimer.isRunning(), () -> {
+        return opticalBackdrop.region(w, h, false, new java.awt.Point(getX(), getY()),
+                backdropVersion.getAsLong(), fadeTimer.isRunning(), bounds -> {
                     double scale = GlassBackdropCache.SCALE;
-                    BufferedImage snapshot = new BufferedImage(Math.max(1,(int)Math.ceil(w*scale)),
-                            Math.max(1,(int)Math.ceil(h*scale)), BufferedImage.TYPE_INT_ARGB);
+                    BufferedImage snapshot = new BufferedImage(Math.max(1,(int)Math.ceil(bounds.width*scale)),
+                            Math.max(1,(int)Math.ceil(bounds.height*scale)), BufferedImage.TYPE_INT_ARGB);
                     Graphics2D source = snapshot.createGraphics();
                     try {
                         source.scale(scale, scale);
                         source.setColor(BoardTheme.CANVAS);
-                        source.fillRect(0, 0, w, h);
-                        source.translate(-getX(), -getY());
+                        source.fillRect(0, 0, bounds.width, bounds.height);
+                        source.translate(-bounds.x, -bounds.y);
+                        source.clip(bounds);
                         backdrop.accept(source);
                     } finally { source.dispose(); }
                     return snapshot;
@@ -209,8 +210,8 @@ final class CanvasStatusChip extends JComponent {
         }
         java.awt.Shape prior = g.getClip();
         g.clip(body);
-        BufferedImage scene = glassBackdrop(w, h);
-        if (scene != null) g.drawImage(scene, 0, 0, w, h, null);
+        GlassBackdropCache.Sample scene = glassBackdrop(w, h);
+        if (scene != null) scene.paint(g);
         int veil = pressed ? 150 : hovered ? 196 : 172;
         g.setColor(new Color(255, 255, 255, veil));
         g.fill(body);

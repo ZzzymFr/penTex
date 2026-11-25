@@ -17,6 +17,7 @@ import java.awt.LinearGradientPaint;
 import java.awt.Paint;
 import java.awt.Point;
 import java.awt.RadialGradientPaint;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -59,9 +60,9 @@ public class GlassBar extends JComponent {
     private static final int SPLIT_CHEVRON_W = 24;
     private static final int SPLIT_LABEL_PADDING = 12;
 
-    private static final float HOVER_MAG = 1.08f;
-    private static final float HOVER_GROW_X = 10f;
-    private static final float HOVER_GROW_Y = 3f;
+    private static final float HOVER_MAG = 1.28f;
+    private static final float HOVER_GROW_X = 24f;
+    private static final float HOVER_GROW_Y = 8f;
     private static final int FRAME_MS = Motion.FRAME_MS;
 
     public enum Kind { SEGMENT, ACTION, SWATCH, SEPARATOR, GRIP }
@@ -184,6 +185,7 @@ public class GlassBar extends JComponent {
     private final Timer timer = new Timer(FRAME_MS, e -> step());
     private final Motion.Clock clock = new Motion.Clock();
     private final GlassBackdropCache opticalBackdrop = new GlassBackdropCache(this::repaint);
+    private final GlassLensRaster lensRaster = new GlassLensRaster();
     private Item pendingHover;
     private float hoverWait;
     private static final float HOVER_DWELL = .12f;
@@ -779,7 +781,7 @@ public class GlassBar extends JComponent {
     }
 
     @Override public void removeNotify() {
-        timer.stop(); clock.reset(); opticalBackdrop.clear();
+        timer.stop(); clock.reset(); opticalBackdrop.clear(); lensRaster.clear();
         hoverItem = pendingHover = null; hoverWait = 0; lensAlpha = 0;
         super.removeNotify();
     }
@@ -799,16 +801,41 @@ public class GlassBar extends JComponent {
         if (vertical) g2.transform(FLIP);
         hints(g2);
         if (appear < 1f) g2.setComposite(AlphaComposite.SrcOver.derive(appear));
-        RoundRectangle2D.Float cap = capsule(press.x * 1.5f);
-        Point o = origin();
-        boolean active = timer.isRunning();
-        BufferedImage texture = opticalBackdrop.image(lw(), lh(), vertical, o, version.getAsLong(),
-                active, () -> backdropImage(GlassBackdropCache.SCALE,
-                        Math.max(1, (int) Math.ceil(lw() * GlassBackdropCache.SCALE)),
-                        Math.max(1, (int) Math.ceil(lh() * GlassBackdropCache.SCALE)), 0, 0));
+        RoundRectangle2D.Float cap = capsule(press.x * 3f);
+        GlassBackdropCache.Sample sample = opticalBackdrop.region(lw(), lh(), vertical, origin(),
+                version.getAsLong(), timer.isRunning(), this::captureBackdrop);
+        paintFace(g2, sample, cap);
+        float scale = cap.width / capW;
+        paintForeground(g2, cap, scale);
+        if (lensAlpha > .01f) {
+            RoundRectangle2D.Float lens = lensShape();
+            // Restore the original magnifying, dispersive droplet. Only its small
+            // local optical region is rasterized; the rest of the bar stays vector.
+            Graphics2D optical = (Graphics2D) g2.create();
+            float base = optical.getComposite() instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
+            optical.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha));
+            double deviceScale = Math.hypot(optical.getTransform().getScaleX(), optical.getTransform().getShearY());
+            lensRaster.paint(optical, lens, sample, sceneVersion(), deviceScale, HOVER_MAG,
+                    scene -> {
+                        sample.paint(scene);
+                        paintFace(scene, sample, cap);
+                        paintForeground(scene, cap, scale);
+                    });
+            optical.setPaint(new GradientPaint(0, lens.y, new Color(255,255,255,40),
+                    0, lens.y + lens.height * .5f, new Color(255,255,255,0)));
+            optical.fill(lens);
+            optical.setStroke(new BasicStroke(1.6f));
+            optical.setPaint(rimPaint(lens, 255, 170));
+            optical.draw(inset(lens, 1.3f));
+            optical.dispose();
+        }
+        g2.dispose();
+    }
+
+    private void paintFace(Graphics2D g2, GlassBackdropCache.Sample sample, RoundRectangle2D.Float cap) {
         Graphics2D face = (Graphics2D) g2.create();
         face.clip(cap);
-        face.drawImage(texture, 0, 0, lw(), lh(), null);
+        sample.paint(face);
         face.setColor(BoardTheme.TINT);
         face.fill(cap);
         face.setPaint(new GradientPaint(0, cap.y, new Color(255, 255, 255, BoardTheme.GLOSS),
@@ -828,30 +855,16 @@ public class GlassBar extends JComponent {
         g2.setStroke(new BasicStroke(1.4f));
         g2.setPaint(rimPaint(cap, BoardTheme.RIM_TOP, BoardTheme.RIM_BOTTOM));
         g2.draw(inset(cap, 1.2f));
-        if (lensAlpha > .01f) paintLightLens(g2, texture, lensShape());
-        // Draw text/icons exactly once, at native device resolution; no per-frame halo raster.
-        paintForeground(g2, cap, scale);
-        g2.dispose();
     }
 
-    private void paintLightLens(Graphics2D graphics, BufferedImage texture, RoundRectangle2D.Float lens) {
-        Graphics2D g = (Graphics2D) graphics.create();
-        float base = g.getComposite() instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
-        g.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha * .72f));
-        g.clip(lens);
-        double cx = lens.getCenterX(), cy = lens.getCenterY();
-        g.translate(cx, cy); g.scale(HOVER_MAG, HOVER_MAG); g.translate(-cx, -cy);
-        g.drawImage(texture, 0, 0, lw(), lh(), null);
-        g.dispose();
-        g = (Graphics2D) graphics.create();
-        g.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha));
-        g.setPaint(new GradientPaint(0, lens.y, new Color(255,255,255,150),
-                0, lens.y + lens.height, new Color(255,255,255,35)));
-        g.fill(lens);
-        g.setStroke(new BasicStroke(1.4f));
-        g.setPaint(rimPaint(lens, 240, 165));
-        g.draw(inset(lens, 1.2f));
-        g.dispose();
+    /** Only actual local scene changes invalidate the lens raster; alpha does not. */
+    private long sceneVersion() {
+        long h = Objects.hash(capW, press.x, glow, glowAt.x, glowAt.y, squeeze, vertical, compact);
+        for (Platter p : platters.values()) h = h * 31 + Objects.hash(p.x.x, p.w.x);
+        for (Item it : items) h = h * 31 + Objects.hash(it.x, it.w, it.reveal.x, it.label,
+                it.icon, it.color, it.custom, it.enabled.getAsBoolean(), selected.get(it.group) == it,
+                hoverItem == it);
+        return h;
     }
 
     // where this bar sits in the backdrop's coords
@@ -864,44 +877,25 @@ public class GlassBar extends JComponent {
         g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
     }
 
-    // backdrop in the flat layout's coords (flipped when standing up)
-    private BufferedImage backdropImage(double s, int pw, int ph, int ox, int oy) {
-        if (!vertical) {
-            return backdropReal(s, pw, ph, ox, oy);
-        }
-        return flip(backdropReal(s, ph, pw, oy, ox));
-    }
-
-    private static BufferedImage flip(BufferedImage src) {
-        int w = src.getWidth();
-        int h = src.getHeight();
-        int[] in = src.getRGB(0, 0, w, h, null, 0, w);
-        int[] out = new int[w * h];
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                out[x * h + y] = in[y * w + x];
-            }
-        }
-        BufferedImage res = new BufferedImage(h, w, BufferedImage.TYPE_INT_ARGB);
-        res.setRGB(0, 0, h, w, out, 0, h);
-        return res;
-    }
-
-    // what's under the bar, at scale s, window starting at device px (ox, oy)
-    private BufferedImage backdropReal(double s, int pw, int ph, int ox, int oy) {
-        BufferedImage src = new BufferedImage(Math.max(1, pw), Math.max(1, ph), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D bg = src.createGraphics();
-        bg.translate(-ox, -oy);
-        bg.scale(s, s);
+    // Capture a fixed reference-space rectangle, not the currently animated size.
+    private BufferedImage captureBackdrop(Rectangle bounds) {
+        double scale = GlassBackdropCache.SCALE;
+        BufferedImage raw = new BufferedImage(Math.max(1, (int)Math.ceil(bounds.width * scale)),
+                Math.max(1, (int)Math.ceil(bounds.height * scale)), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D bg = raw.createGraphics();
+        bg.scale(scale, scale);
         bg.setColor(BoardTheme.CANVAS);
-        bg.fillRect(0, 0, getWidth(), getHeight());
-        Point o = origin();
-        bg.translate(-o.x, -o.y);
-        bg.clipRect(o.x + (int) Math.floor(ox / s), o.y + (int) Math.floor(oy / s),
-                (int) Math.ceil(pw / s) + 1, (int) Math.ceil(ph / s) + 1);
+        bg.fillRect(0, 0, bounds.width, bounds.height);
+        bg.translate(-bounds.x, -bounds.y);
+        bg.clip(bounds);
         backdrop.accept(bg);
         bg.dispose();
-        return src;
+        if (!vertical) return raw;
+        BufferedImage flipped = new BufferedImage(raw.getHeight(), raw.getWidth(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D fg = flipped.createGraphics();
+        fg.drawImage(raw, FLIP, null);
+        fg.dispose();
+        return flipped;
     }
 
     private static Paint rimPaint(RoundRectangle2D.Float r, int top, int bottom) {
@@ -1016,7 +1010,7 @@ public class GlassBar extends JComponent {
 
     private RoundRectangle2D.Float lensShape() {
         float lh = capH + 2 * HOVER_GROW_Y + press.x * 4f;
-        float lw = Math.max(lh, lensW.x + Math.min(Math.abs(lensX.v) * .018f, 3f) + press.x * 4f);
+        float lw = Math.max(lh, lensW.x + Math.min(Math.abs(lensX.v) * 1.2f, 28f) + press.x * 4f);
         float lcx = MARGIN + PAD + lensX.x;
         float lcy = MARGIN + capH / 2f;
         return new RoundRectangle2D.Float(lcx - lw / 2, lcy - lh / 2, lw, lh, lh, lh);

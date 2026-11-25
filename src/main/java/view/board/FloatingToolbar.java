@@ -98,11 +98,7 @@ public final class FloatingToolbar {
         });
         if (area instanceof BoardWindow board) {
             board.addPropertyChangeListener("canvasDockBounds", e -> relayout());
-            // History / PDF opening narrows the canvas: follow it
-            board.canvasPage().addComponentListener(new ComponentAdapter() {
-                @Override public void componentResized(ComponentEvent e) { relayout(); }
-                @Override public void componentMoved(ComponentEvent e) { relayout(); }
-            });
+            // The Board reports the actual clipped viewport, not the overscanned page.
         }
     }
 
@@ -214,7 +210,7 @@ public final class FloatingToolbar {
     }
 
     private void fit(ToolbarSpot s) {
-        java.awt.Rectangle f = dockFrame();
+        java.awt.Rectangle f = area instanceof BoardWindow board ? board.toolbarFitBounds() : dockFrame();
         bar.setVertical(s.isVertical());
         bar.fitTo(s.room(f.width, f.height));
         bar.setSize(bar.getPreferredSize());
