@@ -17,6 +17,8 @@ public final class Motion {
     public static final Feel THROW = new Feel(0.94f, 0.32f);
     /** Things arriving / leaving (notices, popups). */
     public static final Feel ENTER = new Feel(1f, 0.22f);
+    /** Side panels / big surfaces: no bounce, keeps its speed if reversed mid-way. */
+    public static final Feel PANEL = new Feel(1f, 0.2f);
 
     public static final int FRAME_MS = 16;
 

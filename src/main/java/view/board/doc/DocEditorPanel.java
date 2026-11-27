@@ -58,6 +58,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     private final PdfPageCanvas paper;
     private final JScrollPane pageScroll;
     private final JPanel ribbonHolder = new JPanel(new BorderLayout());
+    private final RibbonStage ribbonStage = new RibbonStage();
     private final JLabel pageCount = new JLabel();
     private final JLabel zoomValue = new JLabel("100%");
     private final JLabel title = new JLabel("Untitled document");
@@ -879,12 +880,18 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
             button.addActionListener(e -> select());
         }
         private void select() {
+            int from = -1;
+            for (int i = 0; i < tabs.size(); i++) if (tabs.get(i).button.isSelected()) from = i;
             for (Tab tab : tabs) tab.button.setSelected(tab == this);
             if (segmentTrack != null) segmentTrack.choose(button);
-            ribbonHolder.removeAll();
-            Capsule capsule = new Capsule(new BorderLayout());
-            capsule.add(ribbon, BorderLayout.CENTER);
-            ribbonHolder.add(capsule, BorderLayout.CENTER);
+            // one capsule that stays; only the row inside it changes, sliding toward the picked tab
+            if (ribbonStage.getParent() == null) {
+                Capsule capsule = new Capsule(new BorderLayout());
+                capsule.add(ribbonStage, BorderLayout.CENTER);
+                ribbonHolder.add(capsule, BorderLayout.CENTER);
+            }
+            int to = tabs.indexOf(this);
+            ribbonStage.show(ribbon, from < 0 ? 0 : to - from);
             ribbonHolder.revalidate();ribbonHolder.repaint();
         }
     }

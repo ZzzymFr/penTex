@@ -267,17 +267,70 @@ public final class GlassDialogs {
         };
         private final KeyEventDispatcher keys;
         private final PropertyChangeListener focusListener;
-        // Only the card fades; the scrim is painted once at its final opacity.
+        // Card and scrim fade in together, and back out on close. While fading, the window under
+        // it is one frozen picture, so a frame never repaints the live canvas behind.
         private float appear = 1f;
+        private float fadeFrom;
         private long openedAt;
         private static final long FADE_NANOS = 140_000_000L;
-        private final javax.swing.Timer appearTimer = new javax.swing.Timer(view.board.Motion.FRAME_MS, e -> stepFade());
+        private static final long LEAVE_NANOS = 120_000_000L;
+        private final javax.swing.Timer appearTimer = new view.board.FrameTimer(e -> stepFade());
+        private BufferedImage under;
+        private boolean leaving;
+        private boolean capturing;
 
         private void stepFade() {
-            float t = Math.min(1f, (System.nanoTime() - openedAt) / (float) FADE_NANOS);
-            appear = 1f - (1f-t)*(1f-t);
-            if (t >= 1f) appearTimer.stop();
-            repaint(card.getBounds());
+            float t = Math.min(1f, (System.nanoTime() - openedAt) / (float) (leaving ? LEAVE_NANOS : FADE_NANOS));
+            float eased = 1f - (1f - t) * (1f - t);
+            appear = leaving ? fadeFrom * (1f - eased) : fadeFrom + (1f - fadeFrom) * eased;
+            if (t >= 1f) {
+                appearTimer.stop();
+                under = null;  // back to the live window
+                if (leaving) {
+                    removeNow();
+                    return;
+                }
+            }
+            repaint();
+        }
+
+        // the window as it looks under us, at screen pixel scale
+        private BufferedImage captureUnder() {
+            int w = layers.getWidth();
+            int h = layers.getHeight();
+            if (w <= 0 || h <= 0 || !layers.isShowing()) return null;
+            java.awt.GraphicsConfiguration gc = layers.getGraphicsConfiguration();
+            double scale = gc == null ? 1 : Math.max(1, gc.getDefaultTransform().getScaleX());
+            int iw = (int) Math.ceil(w * scale);
+            int ih = (int) Math.ceil(h * scale);
+            BufferedImage img = gc == null ? new BufferedImage(iw, ih, BufferedImage.TYPE_INT_RGB)
+                    : gc.createCompatibleImage(iw, ih, java.awt.Transparency.OPAQUE);
+            Graphics2D g = img.createGraphics();
+            capturing = true;
+            try {
+                g.scale(iw / (double) w, ih / (double) h);
+                g.setColor(root.getContentPane().getBackground());
+                g.fillRect(0, 0, w, h);
+                layers.paint(g);
+            } finally {
+                capturing = false;
+                g.dispose();
+            }
+            return img;
+        }
+
+        // opaque only while it paints the frozen window itself
+        @Override public boolean isOpaque() {
+            return under != null && !capturing;
+        }
+
+        @Override public void paint(Graphics graphics) {
+            if (!capturing) super.paint(graphics);
+        }
+
+        // on its way out clicks go to whatever is under it
+        @Override public boolean contains(int x, int y) {
+            return !leaving && super.contains(x, y);
         }
 
         private ModalOverlay(Window owner, JRootPane root, String title, String message,
@@ -373,11 +426,14 @@ public final class GlassDialogs {
         private int showAndWait() {
             if (finished.get()) return selected.get();
             try {
+                BufferedImage frozen = view.board.Motion.reduced() ? null : captureUnder();
                 layers.add(this, JLayeredPane.MODAL_LAYER, 0);
-                appear = view.board.Motion.reduced() ? 1f : .12f;
+                appear = frozen == null ? 1f : 0f;
+                fadeFrom = appear;
                 openedAt = System.nanoTime();
                 updateBounds();
                 doLayout();
+                under = frozen;
                 if (appear < 1f) appearTimer.start();
                 layers.addComponentListener(resizeListener);
                 owner.addWindowListener(closeListener);
@@ -399,6 +455,7 @@ public final class GlassDialogs {
         }
 
         private void updateBounds() {
+            under = null;  // resized mid-fade: the picture no longer fits, go live
             setBounds(0, 0, layers.getWidth(), layers.getHeight());
             revalidate();
             repaint();
@@ -416,9 +473,19 @@ public final class GlassDialogs {
 
         @Override protected void paintComponent(Graphics graphics) {
             Graphics2D g2 = (Graphics2D) graphics.create();
-            g2.setColor(SCRIM);
+            if (under != null) g2.drawImage(under, 0, 0, getWidth(), getHeight(), null);
+            g2.setColor(Glass.withAlpha(SCRIM, Math.round(SCRIM.getAlpha() * Math.max(0f, Math.min(1f, appear)))));
             g2.fillRect(0, 0, getWidth(), getHeight());
             g2.dispose();
+        }
+
+        private void removeNow() {
+            appearTimer.stop();
+            under = null;
+            if (getParent() != layers) return;
+            layers.remove(this);
+            layers.revalidate();
+            layers.repaint();
         }
 
         private float level() {
@@ -438,9 +505,14 @@ public final class GlassDialogs {
             g2.dispose();
         }
 
+        // a card still fading out above doesn't count
         private boolean onTop() {
-            return getParent() == layers && layers.getLayer(this) == JLayeredPane.MODAL_LAYER.intValue()
-                    && layers.getPosition(this) == 0;
+            if (getParent() != layers || layers.getLayer(this) != JLayeredPane.MODAL_LAYER.intValue()) return false;
+            for (Component c : layers.getComponentsInLayer(JLayeredPane.MODAL_LAYER)) {
+                if (c == this) return true;
+                if (!(c instanceof ModalOverlay other && other.leaving)) return false;
+            }
+            return false;
         }
 
         private void focusDialog() {
@@ -481,9 +553,18 @@ public final class GlassDialogs {
             layers.removeComponentListener(resizeListener);
             owner.removeWindowListener(closeListener);
             if (getParent() == layers) {
-                layers.remove(this);
-                layers.revalidate();
-                layers.repaint();
+                BufferedImage frozen = view.board.Motion.reduced() || !owner.isShowing() ? null : captureUnder();
+                if (frozen == null) {
+                    removeNow();
+                } else {
+                    // answer is already in; this is just the picture fading off
+                    under = frozen;
+                    leaving = true;
+                    fadeFrom = appear;
+                    openedAt = System.nanoTime();
+                    appearTimer.start();
+                    repaint();
+                }
             }
             root.setDefaultButton(previousDefault);
             if (previousFocus != null && previousFocus.isShowing()

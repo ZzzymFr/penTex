@@ -55,7 +55,7 @@ final class ToolOptionsPopup extends JPopupMenu {
     private static final class Overlay extends JPanel {
         private final Spring appear = new Spring(0.004f, true);
         private final Motion.Clock clock = new Motion.Clock();
-        private final javax.swing.Timer timer = new javax.swing.Timer(Motion.FRAME_MS, e -> step());
+        private final javax.swing.Timer timer = new FrameTimer(e -> step());
         private float target;
         private Point origin = new Point();   // the tool, in this panel's coords
         private Runnable gone = () -> { };
