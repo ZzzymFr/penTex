@@ -12,7 +12,14 @@ public final class NoteRenderer {
     private NoteRenderer() { }
     public static BufferedImage render(PdfDocument.Placement note, int width, int height) {
         int w = Math.max(8, width), h = Math.max(8, height);
-        return PdfScreenRasterCache.render(note, w, h, () -> renderUncached(note, w, h));
+        // A move creates a new immutable placement, but does not change its typography.
+        // Position, z-order and ID are not part of the rendered image.
+        NoteRaster key = new NoteRaster(note.noteText(), note.noteSpans(), note.noteStyle(), note.noteSize(),
+                Math.max(8, Math.round(note.width())), Math.max(8, Math.round(note.height())));
+        return PdfScreenRasterCache.render(key, w, h, () -> renderUncached(note, w, h));
+    }
+    private record NoteRaster(String text, java.util.List<PdfDocument.NoteSpan> spans, int style,
+                              int size, int logicalWidth, int logicalHeight) {
     }
     private static BufferedImage renderUncached(PdfDocument.Placement note, int width, int height) {
         width = Math.max(8, width); height = Math.max(8, height);

@@ -171,7 +171,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         historyClose.finish();
         pdfBar = bar(15f);
         // Default to real split view, with no second overlay mode in the UI.
-        pdfBar.action("PDF", Icons::document, () -> {pdfOverlay = false; setPdfOpen(true, true);}, () -> true);
+        pdfBar.action("PDF", Icons::document, () -> {pdfOverlay = false; setPdfOpen(!pdfOpen, true);}, () -> true);
         pdfBar.finish();
         pdfClose = bar(15f);
         pdfClose.action(null, Icons::close, () -> setPdfOpen(false, true), () -> true);
@@ -295,7 +295,10 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private void setPdfOpen(boolean open, boolean animate) {
         if (!animate) snapPanels = true;
         if (open != pdfOpen) { pdfFitGeneration++; }
-        if (!open) { pdfFullscreen = false; pdfJustOpened = false; ghost.clearOutline(); }
+        if (!open) {
+            focusMorph.cancel();
+            pdfFullscreen = false; pdfJustOpened = false; ghost.clearOutline();
+        }
         boolean firstOpen = open && !pdfOpen;
         pdfOpen = open;
         if (firstOpen) pdfJustOpened = true;
@@ -334,8 +337,9 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         focusMorph.setBounds(0, 0, getWidth(), getHeight());
         focusMorph.begin(before, from);
         validate();  // final layout now; its deferred PDF fit is queued before us
+        long generation = pdfFitGeneration;
         SwingUtilities.invokeLater(() -> {
-            if (!focusMorph.isVisible()) return;
+            if (generation != pdfFitGeneration || !focusMorph.isVisible()) return;
             validate();
             focusMorph.setCapturing(true);
             java.awt.image.BufferedImage after;
@@ -352,12 +356,13 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         return pdf.getBounds().intersection(new Rectangle(0, 0, getWidth(), getHeight()));
     }
 
-    // the board as drawn, at the screen's pixel scale so retina / 125% stay sharp
+    // A bounded picture for the short focus transition only. The live PDF stays native DPI.
     private java.awt.image.BufferedImage snapshot() {
         int w = getWidth();
         int h = getHeight();
         java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
-        double scale = gc == null ? 1 : Math.max(1, gc.getDefaultTransform().getScaleX());
+        double nativeScale = gc == null ? 1 : Math.max(1, gc.getDefaultTransform().getScaleX());
+        double scale = FocusMorph.snapshotScale(w, h, nativeScale);
         int iw = (int) Math.ceil(w * scale);
         int ih = (int) Math.ceil(h * scale);
         java.awt.image.BufferedImage img = gc == null

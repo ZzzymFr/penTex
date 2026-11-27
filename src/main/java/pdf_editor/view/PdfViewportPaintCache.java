@@ -8,7 +8,6 @@ import java.awt.Rectangle;
 import java.awt.Transparency;
 import java.awt.geom.AffineTransform;
 import java.awt.image.VolatileImage;
-import java.util.Objects;
 import java.util.function.Consumer;
 
 /** EDT-owned backing surface for the visible, stable page only. No document or export data. */
@@ -64,9 +63,9 @@ final class PdfViewportPaintCache {
             if (image == null) return fallback(target, visible, nextState, painter);
             configuration = config; scaleX = sx; scaleY = sy;
         }
-        if (!visible.equals(area) || !Objects.equals(state, nextState)) valid = false;
+        if (!visible.equals(area)) valid = false;
+        Rectangle damage = valid ? PdfPageDamage.between(state, nextState, visible) : new Rectangle(visible);
         area = new Rectangle(visible);
-        state = nextState;
         int status = image.validate(config);
         if (status == VolatileImage.IMAGE_INCOMPATIBLE
                 || (status == VolatileImage.IMAGE_RESTORED && valid)) {
@@ -74,8 +73,12 @@ final class PdfViewportPaintCache {
             // render loop whenever the operating system switches paint buffers.
             return fallback(target, visible, nextState, painter);
         }
-        if (status == VolatileImage.IMAGE_RESTORED) valid = false;
-        if (!valid) {
+        if (status == VolatileImage.IMAGE_RESTORED) {
+            valid = false;
+            damage = new Rectangle(visible);
+        }
+        if (!damage.isEmpty()) {
+            valid = false;
             Graphics2D g = image.createGraphics();
             boolean matching;
             try {
@@ -83,13 +86,14 @@ final class PdfViewportPaintCache {
                 if (matching) {
                     g.setRenderingHints(target.getRenderingHints());
                     g.translate(-visible.x, -visible.y);
-                    g.setClip(visible);
+                    g.setClip(damage);
                     painter.accept(g);
                 }
             } finally { g.dispose(); }
             if (!matching) return fallback(target, visible, nextState, painter);
             valid = true;
         }
+        state = nextState;
         if (image.contentsLost()) return fallback(target, visible, nextState, painter);
         target.drawImage(image, visible.x, visible.y, null);
         return !image.contentsLost() || fallback(target, visible, nextState, painter);

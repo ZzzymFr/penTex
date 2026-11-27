@@ -11,16 +11,19 @@ import java.awt.image.BufferedImage;
 
 /**
  * Picture-only bridge into / out of PDF focus mode: the PDF grows out of its split spot and shrinks
- * back into it. The live layout is already final underneath, this just covers it for ~0.3s.
+ * back into it. The live layout is already final underneath, this just covers it for a short transition.
  */
 final class FocusMorph extends JComponent {
-    private static final Motion.Feel FEEL = new Motion.Feel(1f, 0.28f);
-
-    private final Spring progress = new Spring(0.002f, true);
-    private final Motion.Clock clock = new Motion.Clock();
+    private static final long DURATION_NANOS = 240_000_000L;
+    private static final long REDUCED_DURATION_NANOS = 120_000_000L;
+    private static final long MAX_TRANSITION_PIXELS = 1_200_000L;
+    private long started;
+    private long duration;
+    private float progress;
     private final Timer timer = new FrameTimer(e -> step());
     private BufferedImage before;
     private BufferedImage after;
+    private BufferedImage frame;
     private Rectangle from = new Rectangle();
     private Rectangle to = new Rectangle();
     private boolean capturing;
@@ -51,11 +54,11 @@ final class FocusMorph extends JComponent {
     /** Freezes on the old look until land() has the new one. */
     void begin(BufferedImage before, Rectangle from) {
         timer.stop();
-        clock.reset();
+        started = 0;
         this.before = before;
         this.after = null;
         this.from = new Rectangle(from);
-        progress.snap(0f);
+        progress = 0f;
         setVisible(true);
         repaint();
     }
@@ -64,16 +67,19 @@ final class FocusMorph extends JComponent {
         if (before == null) return;
         this.after = after;
         this.to = new Rectangle(to);
-        clock.reset();
+        duration = Motion.reduced() ? REDUCED_DURATION_NANOS : DURATION_NANOS;
+        started = System.nanoTime();
         timer.start();
         repaint();
     }
 
     void cancel() {
         timer.stop();
-        clock.reset();
+        started = 0;
         before = null;
         after = null;
+        if (frame != null) frame.flush();
+        frame = null;
         setVisible(false);
         java.awt.Container parent = getParent();
         if (parent != null) {
@@ -83,49 +89,82 @@ final class FocusMorph extends JComponent {
     }
 
     private void step() {
-        boolean done = progress.step(1f, FEEL, clock.tick());
-        repaint();
-        if (done) cancel();
+        if (after == null) { timer.stop(); return; }
+        long elapsed = System.nanoTime() - started;
+        progress = progressAt(elapsed, duration);
+        if (progress >= 1f) cancel();
+        else repaint();
+    }
+
+    /** Critically damped, normalized to a fixed wall-clock duration. A slow frame
+     * skips ahead rather than making the entire focus transition play in slow motion. */
+    static float progressAt(long elapsed, long duration) {
+        if (elapsed <= 0) return 0f;
+        if (elapsed >= duration) return 1f;
+        double t = 9.0 * elapsed / duration;
+        double end = 1 - 10 * Math.exp(-9.0);
+        return (float) ((1 - (1 + t) * Math.exp(-t)) / end);
     }
 
     private float amount() {
-        return Math.max(0f, Math.min(1f, progress.x));
+        return progress;
+    }
+
+    /** Cap only the temporary focus pictures, not the page, graphs or PDF export. */
+    static double snapshotScale(int width, int height, double nativeScale) {
+        if (width <= 0 || height <= 0) return 1;
+        return Math.min(nativeScale, Math.sqrt(MAX_TRANSITION_PIXELS / ((double) width * height)));
     }
 
     @Override protected void paintComponent(Graphics g) {
         if (capturing || before == null) return;
         Graphics2D g2 = (Graphics2D) g.create();
         try {
-            int w = getWidth();
-            int h = getHeight();
-            if (after == null) {
+            int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            if (after == null || progress == 0f) {
                 g2.drawImage(before, 0, 0, w, h, null);
                 return;
             }
-            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            float p = amount();
-            // the scene around it cross-fades
-            g2.drawImage(after, 0, 0, w, h, null);
-            g2.setComposite(AlphaComposite.SrcOver.derive(1f - p));
-            g2.drawImage(before, 0, 0, w, h, null);
-            // the PDF travels; reduce motion: no travel, fade only
-            Rectangle r = Motion.reduced() ? to : lerp(from, to, p);
-            g2.setComposite(AlphaComposite.SrcOver);
-            part(g2, after, to, r, w);
-            g2.setComposite(AlphaComposite.SrcOver.derive(1f - p));
-            part(g2, before, from, r, w);
-        } finally {
-            g2.dispose();
-        }
+            // Composite at the bounded snapshot resolution and scale only once to the
+            // device. Four full-retina alpha blends used to monopolize the EDT.
+            if (frame == null || frame.getWidth() != after.getWidth() || frame.getHeight() != after.getHeight()) {
+                if (frame != null) frame.flush();
+                frame = new BufferedImage(after.getWidth(), after.getHeight(), BufferedImage.TYPE_INT_RGB);
+            }
+            Graphics2D scene = frame.createGraphics();
+            try {
+                scene.scale(frame.getWidth() / (double) w, frame.getHeight() / (double) h);
+                scene.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                paintScene(scene, w, h);
+            } finally { scene.dispose(); }
+            g2.drawImage(frame, 0, 0, w, h, null);
+        } finally { g2.dispose(); }
     }
 
-    // src is in board coords; the image may be 2x on retina / 1.25x etc on windows
-    private static void part(Graphics2D g, BufferedImage img, Rectangle src, Rectangle dst, int boardWidth) {
-        if (src.isEmpty() || dst.isEmpty() || boardWidth <= 0) return;
-        double s = img.getWidth() / (double) boardWidth;
+    private void paintScene(Graphics2D g, int w, int h) {
+        float p = amount();
+        // Same split/fullscreen cross-fade and moving PDF rectangle as the supplied design.
+        g.drawImage(after, 0, 0, w, h, null);
+        g.setComposite(AlphaComposite.SrcOver.derive(1f - p));
+        g.drawImage(before, 0, 0, w, h, null);
+        Rectangle r = Motion.reduced() ? to : lerp(from, to, p);
+        g.setComposite(AlphaComposite.SrcOver);
+        part(g, after, to, r, w, h);
+        g.setComposite(AlphaComposite.SrcOver.derive(1f - p));
+        part(g, before, from, r, w, h);
+    }
+
+    // src is in board coordinates; the bounded snapshot may have a fractional scale.
+    private static void part(Graphics2D g, BufferedImage img, Rectangle src, Rectangle dst,
+                             int boardWidth, int boardHeight) {
+        if (src.isEmpty() || dst.isEmpty() || boardWidth <= 0 || boardHeight <= 0) return;
+        double sx = img.getWidth() / (double) boardWidth;
+        double sy = img.getHeight() / (double) boardHeight;
         g.drawImage(img, dst.x, dst.y, dst.x + dst.width, dst.y + dst.height,
-                (int) Math.floor(src.x * s), (int) Math.floor(src.y * s),
-                (int) Math.ceil((src.x + src.width) * s), (int) Math.ceil((src.y + src.height) * s), null);
+                (int) Math.floor(src.x * sx), (int) Math.floor(src.y * sy),
+                (int) Math.ceil((src.x + src.width) * sx), (int) Math.ceil((src.y + src.height) * sy), null);
     }
 
     private static Rectangle lerp(Rectangle a, Rectangle b, float t) {
