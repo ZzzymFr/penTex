@@ -6,7 +6,6 @@ import javax.swing.Timer;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
-import java.awt.Composite;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -18,6 +17,7 @@ import java.awt.LinearGradientPaint;
 import java.awt.Paint;
 import java.awt.Point;
 import java.awt.RadialGradientPaint;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -30,11 +30,8 @@ import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
-import java.awt.image.ConvolveOp;
-import java.awt.image.Kernel;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -63,18 +60,10 @@ public class GlassBar extends JComponent {
     private static final int SPLIT_CHEVRON_W = 24;
     private static final int SPLIT_LABEL_PADDING = 12;
 
-    private static final float BLUR_SIGMA = 0.5f;
-    private static final float LENS_BAND = 14f;
-    private static final float LENS_STRENGTH = 10f;
     private static final float HOVER_MAG = 1.28f;
     private static final float HOVER_GROW_X = 24f;
     private static final float HOVER_GROW_Y = 8f;
-    private static final float HOVER_STICK = 0.28f;
-    private static final float HOVER_EDGE_BAND = 11f;
-    private static final float HOVER_EDGE_K = 9f;
-    private static final float HOVER_DISPERSION = 0.45f;
-    private static final int FRAME_MS = 16;
-    private static final float REF_MS = 16f;
+    private static final int FRAME_MS = Motion.FRAME_MS;
 
     public enum Kind { SEGMENT, ACTION, SWATCH, SEPARATOR, GRIP }
 
@@ -92,6 +81,10 @@ public class GlassBar extends JComponent {
         int splitGroup = -1;
         BooleanSupplier onActivate = () -> true;  // false keeps the old selection
         BooleanSupplier enabled = () -> true;
+        // hover-label mode: 0 = icon only, 1 = label shown; grows on a spring instead of popping
+        final Spring reveal = new Spring(0.002f);
+        float compactW;
+        float labelW;
 
         Item(Kind kind, String label, Icons.Glyph icon, int group, float w) {
             this.kind = kind;
@@ -150,13 +143,6 @@ public class GlassBar extends JComponent {
         final Spring w = new Spring();
     }
 
-    private static final class Blurred {
-        long key;
-        BufferedImage img;
-    }
-
-    private record CachedScene(BufferedImage glass, BufferedImage scene, int[] pixels) { }
-
     private final Supplier<Point> origin;
     private final Consumer<Graphics2D> backdrop;
     private final LongSupplier version;
@@ -172,6 +158,7 @@ public class GlassBar extends JComponent {
     private static final AffineTransform FLIP = new AffineTransform(0, 1, 1, 0, 0, 0);  // swaps x and y
     private GripListener gripListener;
     private boolean hoverToolLabels;
+    private float hoverGrowthBudget = Float.MAX_VALUE;
     private Runnable hoverLayoutListener = () -> { };
 
     /** Compact tool icons expand their own label only while hovered. */
@@ -185,8 +172,7 @@ public class GlassBar extends JComponent {
     private Item hoverItem;
     private Item pressItem;
     private boolean dragSwitched;
-    private float mouseX;
-    private final Spring press = new Spring();
+    private final Spring press = new Spring(0.002f);
     private float pressTarget;
     private float glow;
     private final Point2D.Float glowAt = new Point2D.Float();
@@ -197,20 +183,12 @@ public class GlassBar extends JComponent {
     private float lensAlpha;
 
     private final Timer timer = new Timer(FRAME_MS, e -> step());
-    private long lastNanos;
-    private long glassKey;
-    private BufferedImage glassCache;
-    private BufferedImage sceneCache;
-    private int[] scenePixels;
-    // Switching between Pen / Eraser / Lasso reuses both the refractive surface
-    // and its magnified backdrop; no per-hover gaussian / halo regeneration.
-    // Bound the Retina-sized image cache so moving/drawing cannot grow memory forever.
-    private final Map<Long, CachedScene> glassScenes = new LinkedHashMap<>(16, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<Long, CachedScene> eldest) {
-            return size() > 10;
-        }
-    };
-    private final Map<Double, Blurred> blurCaches = new HashMap<>();
+    private final Motion.Clock clock = new Motion.Clock();
+    private final GlassBackdropCache opticalBackdrop = new GlassBackdropCache(this::repaint);
+    private final GlassLensRaster lensRaster = new GlassLensRaster();
+    private Item pendingHover;
+    private float hoverWait;
+    private static final float HOVER_DWELL = .12f;
 
     public GlassBar(Font font, JComponent reference, Consumer<Graphics2D> backdrop, LongSupplier version) {
         this(font, (Supplier<Point>) null, backdrop, version, reference);
@@ -275,12 +253,11 @@ public class GlassBar extends JComponent {
                     return;
                 }
                 glowAt.setLocation(mainOf(e), crossOf(e));
-                mouseX = mainOf(e);
                 // drag along a segmented control switches live
                 if (pressItem != null && pressItem.kind == Kind.SEGMENT) {
                     Item target = segmentNear(pressItem.group, mainOf(e));
                     if (target != null) {
-                        hoverItem = target;
+                        hoverItem = pendingHover = target;
                         if (selected.get(target.group) != target && target.enabled.getAsBoolean()) {
                             activate(target);
                             dragSwitched = true;
@@ -292,27 +269,26 @@ public class GlassBar extends JComponent {
 
             @Override
             public void mouseMoved(MouseEvent e) {
-                mouseX = mainOf(e);
-                Item next = itemAt(mainOf(e));
-                if (hoverToolLabels && next != hoverItem) {
-                    hoverItem = next;
-                    finish();
-                    hoverLayoutListener.run();
-                } else {
-                    hoverItem = next;
+                int along = mainOf(e);
+                Item next = itemAt(along);
+                if (hoverItem != null && hoverItem == pendingHover && next != hoverItem) {
+                    float local = along - MARGIN - PAD;
+                    if (local >= hoverItem.x - 4 && local < hoverItem.x + hoverItem.w + 4) next = hoverItem;
                 }
-                boolean onGrip = hoverItem != null && hoverItem.kind == Kind.GRIP;
+                if (next != pendingHover) {
+                    pendingHover = next;
+                    hoverWait = 0;
+                    timer.start();
+                }
+                boolean onGrip = next != null && next.kind == Kind.GRIP;
                 setCursor(Cursor.getPredefinedCursor(onGrip ? Cursor.MOVE_CURSOR : Cursor.DEFAULT_CURSOR));
-                timer.start();
             }
 
             @Override
             public void mouseExited(MouseEvent e) {
+                pendingHover = null;
                 hoverItem = null;
-                if (hoverToolLabels) {
-                    finish();
-                    hoverLayoutListener.run();
-                }
+                hoverWait = 0;
                 timer.start();
             }
         };
@@ -363,12 +339,34 @@ public class GlassBar extends JComponent {
         items.add(new Item(Kind.GRIP, null, Icons::grip, -1, GRIP_W));
     }
 
+    // label shown only while hovered, and there's room for labels at all
+    private boolean revealsLabel(Item it) {
+        return hoverToolLabels && !compact && !vertical && it.label != null && it.splitGroup < 0
+                && (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION);
+    }
+
+    private float revealTarget(Item it) {
+        return hoverItem == it && it.enabled.getAsBoolean() ? 1f : 0f;
+    }
+
     /** Measures labels and lays the items out left to right. */
     public void finish() {
         FontRenderContext frc = new FontRenderContext(null, true, true);
         float x = 0;
+        float growthScale = hoverGrowthScale(frc);
+        boolean revealing = false;
         for (Item it : items) {
-            if (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION) {
+            if (revealsLabel(it)) {
+                float text = (float) font.getStringBounds(it.label, frc).getWidth();
+                it.compactW = Math.max(minWidth(it), COMPACT_W * squeeze);
+                it.labelW = Math.max(73, 23 + ICON + ICON_GAP + text);
+                if (!isShowing()) {
+                    it.reveal.snap(revealTarget(it));
+                }
+                revealing |= it.reveal.x != revealTarget(it);
+                it.w = it.compactW + (it.labelW - it.compactW) * clamp01(it.reveal.x) * growthScale;
+            } else if (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION) {
+                it.reveal.snap(0f);
                 if ((hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null) {
                     it.w = Math.max(minWidth(it), (it.splitGroup >= 0 && it.label == null ? SPLIT_CHEVRON_W : COMPACT_W) * squeeze);
                 } else {
@@ -391,7 +389,70 @@ public class GlassBar extends JComponent {
             e.getValue().w.x = t.w;
         }
         setSize(getPreferredSize());
+        if (revealing) {
+            timer.start();
+        }
         repaint();
+    }
+
+    private static float clamp01(float v) {
+        return Math.max(0f, Math.min(1f, v));
+    }
+
+    // one frame of labels growing / shrinking: re-lay the items, platters ride along
+    private boolean stepReveal(float dt) {
+        boolean changed = false;
+        boolean settled = true;
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                float old = it.reveal.x;
+                settled &= it.reveal.step(revealTarget(it), Motion.HOVER, dt);
+                changed |= old != it.reveal.x;
+            }
+        }
+        if (!changed) return settled;
+        Map<Integer, float[]> before = new HashMap<>();
+        for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
+            Item t = selected.get(e.getKey());
+            before.put(e.getKey(), new float[]{t.x, t.w});
+        }
+        float x = 0;
+        float growthScale = hoverGrowthScale(new FontRenderContext(null, true, true));
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                it.w = it.compactW + (it.labelW - it.compactW) * clamp01(it.reveal.x) * growthScale;
+            }
+            it.x = x;
+            x += it.w;
+        }
+        float newCap = x + 2 * PAD;
+        for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
+            Item t = selected.get(e.getKey());
+            float[] was = before.get(e.getKey());
+            e.getValue().x.x += t.x - was[0];
+            e.getValue().w.x += t.w - was[1];
+        }
+        if (Math.abs(newCap - capW) > 0.01f) {
+            capW = newCap;
+            setSize(getPreferredSize());
+            hoverLayoutListener.run();
+        }
+        return settled;
+    }
+
+    // The resting capsule is centered; all hover expansion must fit on its right.
+    // During a fast hover transition more than one spring may still be open.
+    private float hoverGrowthScale(FontRenderContext frc) {
+        float growth = 0;
+        for (Item it : items) {
+            if (revealsLabel(it)) {
+                float label = Math.max(73, 23 + ICON + ICON_GAP
+                        + (float) font.getStringBounds(it.label, frc).getWidth());
+                float fraction = isShowing() ? clamp01(it.reveal.x) : revealTarget(it);
+                growth += Math.max(0, label - Math.max(minWidth(it), COMPACT_W * squeeze)) * fraction;
+            }
+        }
+        return growth > hoverGrowthBudget ? hoverGrowthBudget / growth : 1f;
     }
 
     // narrowest an item gets when squeezed
@@ -415,12 +476,28 @@ public class GlassBar extends JComponent {
      */
     public void fitTo(int maxCapW) {
         boolean c = vertical || capsuleWidth(false) > maxCapW;  // standing up is icons only
+        float previousBudget = hoverGrowthBudget;
+        if (hoverToolLabels) {
+            int resting = capsuleWidth(true);
+            hoverGrowthBudget = Math.max(0f, (maxCapW - resting) / 2f);
+            FontRenderContext frc = new FontRenderContext(null, true, true);
+            float maxGrowth = 0;
+            for (Item it : items) {
+                if (it.label != null && it.splitGroup < 0 && (it.kind == Kind.SEGMENT || it.kind == Kind.ACTION)) {
+                    float label = Math.max(73, 23 + ICON + ICON_GAP
+                            + (float) font.getStringBounds(it.label, frc).getWidth());
+                    maxGrowth = Math.max(maxGrowth, label - COMPACT_W);
+                }
+            }
+            c = vertical || maxGrowth > hoverGrowthBudget;
+        }
         float s = 1f;
         if (c) {
             float natural = capsuleWidth(true) - 2 * PAD;
             s = Math.max(0f, Math.min(1f, (maxCapW - 2 * PAD) / natural));
         }
-        if (c != compact || Math.abs(s - squeeze) > 0.002f) {
+        if (c != compact || Math.abs(s - squeeze) > 0.002f
+                || (hoverToolLabels && previousBudget != hoverGrowthBudget)) {
             compact = c;
             squeeze = s;
             finish();
@@ -471,6 +548,30 @@ public class GlassBar extends JComponent {
         return (int) Math.ceil(capW);
     }
 
+    /** Capsule width with every hover label folded away: where the bar rests. */
+    public int restingCapsuleWidth() {
+        float x = 0;
+        for (Item it : items) {
+            x += revealsLabel(it) ? it.compactW : it.w;
+        }
+        return (int) Math.ceil(x + 2 * PAD);
+    }
+
+    /** The visible capsule in this component's coords (standing up when vertical). */
+    public java.awt.Rectangle capsuleBounds() {
+        int len = (int) Math.ceil(capW);
+        int thick = (int) capH;
+        return vertical ? new java.awt.Rectangle(MARGIN, MARGIN, thick, len)
+                : new java.awt.Rectangle(MARGIN, MARGIN, len, thick);
+    }
+
+    /** Centre of an item in this component's coords. */
+    public Point centerOf(Item it) {
+        int along = Math.round(MARGIN + PAD + it.center());
+        int across = MARGIN + (int) capH / 2;
+        return vertical ? new Point(across, along) : new Point(along, across);
+    }
+
     @Override
     public Dimension getPreferredSize() {
         int along = (int) Math.ceil(capW) + 2 * MARGIN;
@@ -483,6 +584,8 @@ public class GlassBar extends JComponent {
         if (this.vertical != vertical) {
             this.vertical = vertical;
             hoverItem = null;
+            pendingHover = null;
+            hoverWait = 0;
             finish();
         }
     }
@@ -560,7 +663,8 @@ public class GlassBar extends JComponent {
     public void setShown(boolean shown) {
         appearTarget = shown ? 1f : 0f;
         if (!shown) {
-            hoverItem = null;
+            hoverItem = pendingHover = null;
+            hoverWait = 0;
         }
         timer.start();
     }
@@ -605,17 +709,24 @@ public class GlassBar extends JComponent {
     }
 
     private void step() {
-        long now = System.nanoTime();
-        float f = lastNanos == 0 ? FRAME_MS / REF_MS
-                : Math.max(0.1f, Math.min(2f, (now - lastNanos) / (REF_MS * 1e6f)));
-        lastNanos = now;
+        float dt = clock.tick();
+        float f = dt * 1000f / FRAME_MS;  // in 16ms frames, for the plain fades below
         boolean settled = true;
+        if (pendingHover != hoverItem && pressItem == null) {
+            hoverWait += dt;
+            if (pendingHover == null || !isShowing() || Motion.reduced() || hoverWait >= HOVER_DWELL) {
+                hoverItem = pendingHover;
+            } else {
+                settled = false;
+            }
+        }
         for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
             Item t = selected.get(e.getKey());
-            settled &= e.getValue().x.step(t.x, 0.16f, 0.70f, f);
-            settled &= e.getValue().w.step(t.w, 0.16f, 0.70f, f);
+            settled &= e.getValue().x.step(t.x, Motion.SELECT, dt);
+            settled &= e.getValue().w.step(t.w, Motion.SELECT, dt);
         }
-        settled &= press.step(pressTarget, 0.30f, 0.62f, f);
+        settled &= press.step(pressTarget, Motion.PRESS, dt);
+        settled &= stepReveal(dt);
         if (pressTarget == 0f) {
             glow *= (float) Math.pow(0.86, f);
             if (glow < 0.01f) {
@@ -635,7 +746,7 @@ public class GlassBar extends JComponent {
                 && appearTarget > 0 ? hoverItem : null;
         float alphaTarget = h != null ? 1f : 0f;
         if (h != null) {
-            float cx = h.center() + ((mouseX - MARGIN - PAD) - h.center()) * HOVER_STICK;
+            float cx = h.center();
             float w = h.w + HOVER_GROW_X;
             if (h.splitGroup >= 0) {
                 float left = h.x, right = h.x + h.w;
@@ -652,8 +763,8 @@ public class GlassBar extends JComponent {
                 lensX.v = 0;
                 lensW.v = 0;
             }
-            settled &= lensX.step(cx, 0.20f, 0.68f, f);
-            settled &= lensW.step(w, 0.20f, 0.68f, f);
+            settled &= lensX.step(cx, Motion.HOVER, dt);
+            settled &= lensW.step(w, Motion.HOVER, dt);
         }
         lensAlpha += (alphaTarget - lensAlpha) * ease(0.25f, f);
         if (Math.abs(alphaTarget - lensAlpha) < 0.01f) {
@@ -664,9 +775,15 @@ public class GlassBar extends JComponent {
 
         if (settled) {
             timer.stop();
-            lastNanos = 0;
+            clock.reset();
         }
         repaint();
+    }
+
+    @Override public void removeNotify() {
+        timer.stop(); clock.reset(); opticalBackdrop.clear(); lensRaster.clear();
+        hoverItem = pendingHover = null; hoverWait = 0; lensAlpha = 0;
+        super.removeNotify();
     }
 
     static float ease(float k, float f) {
@@ -681,100 +798,77 @@ public class GlassBar extends JComponent {
             return;
         }
         Graphics2D g2 = (Graphics2D) g.create();
-        double s = g2.getTransform().getScaleX();
-        if (vertical) {
-            g2.transform(FLIP);  // everything below draws the flat bar
-        }
-        int bw = lw();
-        int bh = lh();
-        int pw = (int) Math.ceil(bw * s);
-        int ph = (int) Math.ceil(bh * s);
-
-        if (appear < 1f) {
-            g2.setComposite(AlphaComposite.SrcOver.derive(appear));
-            double k = 0.9 + 0.1 * appear;
-            g2.translate(bw / 2.0, bh / 2.0);
-            g2.scale(k, k);
-            g2.translate(-bw / 2.0, -bh / 2.0);
-        }
-
-        long key = stateKey(s);
-        if (glassCache == null || glassKey != key) {
-            CachedScene cached = glassScenes.get(key);
-            if (cached == null) {
-                // Render the actual refractive capsule once per changed backing scene.
-                // The hover droplet magnifies this *same* image, avoiding an entire
-                // second (1.28x, Retina-scale) glass render on the Swing event thread.
-                BufferedImage raw = backdropImage(s, pw, ph, 0, 0);
-                BufferedImage glass = renderGlass(s, pw, ph, raw, 0, 0);
-                BufferedImage sceneImage = new BufferedImage(pw, ph, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D scene = sceneImage.createGraphics();
-                scene.drawImage(raw, 0, 0, null);
-                scene.drawImage(glass, 0, 0, null);
-                scene.dispose();
-                cached = new CachedScene(glass, sceneImage,
-                        sceneImage.getRGB(0, 0, pw, ph, null, 0, pw));
-                glassScenes.put(key, cached);
-            }
-            glassCache = cached.glass();
-            sceneCache = cached.scene();
-            scenePixels = cached.pixels();
-            glassKey = key;
-        }
-        g2.drawImage(glassCache, 0, 0, bw, bh, null);
-        if (lensAlpha > 0.01f) {
-            // The optical refraction, dispersion, 1.28x magnification, rim and gloss
-            // remain intact. Only the oversized source image is reused.
-            paintHoverLens(g2, s, s, sceneCache, 0, 0, lensShape());
+        if (vertical) g2.transform(FLIP);
+        hints(g2);
+        if (appear < 1f) g2.setComposite(AlphaComposite.SrcOver.derive(appear));
+        RoundRectangle2D.Float cap = capsule(press.x * 3f);
+        double deviceScale = Math.hypot(g2.getTransform().getScaleX(), g2.getTransform().getShearY());
+        GlassBackdropCache.Sample sample = opticalBackdrop.region(lw(), lh(), vertical, origin(),
+                version.getAsLong(), timer.isRunning(), deviceScale, this::captureBackdrop);
+        paintFace(g2, sample, cap);
+        float scale = cap.width / capW;
+        paintForeground(g2, cap, scale);
+        if (lensAlpha > .01f) {
+            RoundRectangle2D.Float lens = lensShape();
+            // Restore the original magnifying, dispersive droplet. Only its small
+            // local optical region is rasterized; the rest of the bar stays vector.
+            Graphics2D optical = (Graphics2D) g2.create();
+            float base = optical.getComposite() instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
+            optical.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha));
+            lensRaster.paint(optical, lens, sample, sceneVersion(), deviceScale, HOVER_MAG,
+                    scene -> {
+                        sample.paint(scene);
+                        paintFace(scene, sample, cap);
+                        paintForeground(scene, cap, scale);
+                    });
+            optical.setPaint(new GradientPaint(0, lens.y, new Color(255,255,255,40),
+                    0, lens.y + lens.height * .5f, new Color(255,255,255,0)));
+            optical.fill(lens);
+            optical.setStroke(new BasicStroke(1.6f));
+            optical.setPaint(rimPaint(lens, 255, 170));
+            optical.draw(inset(lens, 1.3f));
+            optical.dispose();
         }
         g2.dispose();
     }
 
+    private void paintFace(Graphics2D g2, GlassBackdropCache.Sample sample, RoundRectangle2D.Float cap) {
+        Graphics2D face = (Graphics2D) g2.create();
+        face.clip(cap);
+        sample.paint(face);
+        face.setColor(BoardTheme.TINT);
+        face.fill(cap);
+        face.setPaint(new GradientPaint(0, cap.y, new Color(255, 255, 255, BoardTheme.GLOSS),
+                0, cap.y + cap.height * .55f, new Color(255, 255, 255, 0)));
+        face.fill(cap);
+        float scale = cap.width / capW;
+        for (Platter p : platters.values()) {
+            face.setColor(BoardTheme.PLATTER);
+            face.fill(slot(p.x.x, p.w.x, cap, scale));
+        }
+        if (glow > .01f) {
+            face.setPaint(new RadialGradientPaint(glowAt, 70f, new float[]{0f,1f},
+                    new Color[]{new Color(1f,1f,1f,.20f*glow), new Color(1f,1f,1f,0f)}));
+            face.fill(cap);
+        }
+        face.dispose();
+        g2.setStroke(new BasicStroke(1.4f));
+        g2.setPaint(rimPaint(cap, BoardTheme.RIM_TOP, BoardTheme.RIM_BOTTOM));
+        g2.draw(inset(cap, 1.2f));
+    }
+
+    /** Only actual local scene changes invalidate the lens raster; alpha does not. */
+    private long sceneVersion() {
+        long h = Objects.hash(capW, press.x, glow, glowAt.x, glowAt.y, squeeze, vertical, compact);
+        for (Platter p : platters.values()) h = h * 31 + Objects.hash(p.x.x, p.w.x);
+        for (Item it : items) h = h * 31 + Objects.hash(it.x, it.w, it.reveal.x, it.label,
+                it.icon, it.color, it.custom, it.enabled.getAsBoolean(), selected.get(it.group) == it,
+                hoverItem == it);
+        return h;
+    }
+
     // where this bar sits in the backdrop's coords
-    private Point origin() {
-        return origin.get();
-    }
-
-    private long stateKey(double s) {
-        long h = Double.doubleToLongBits(s);
-        h = h * 31 + Float.floatToIntBits(appear);
-        h = h * 31 + Float.floatToIntBits(press.x);
-        h = h * 31 + Float.floatToIntBits(glow);
-        h = h * 31 + Float.floatToIntBits(glowAt.x);
-        h = h * 31 + Float.floatToIntBits(glowAt.y);
-        for (Map.Entry<Integer, Platter> e : platters.entrySet()) {
-            h = h * 31 + e.getKey();
-            h = h * 31 + Float.floatToIntBits(e.getValue().x.x);
-            h = h * 31 + Float.floatToIntBits(e.getValue().w.x);
-        }
-        for (Map.Entry<Integer, Item> e : selected.entrySet()) {
-            h = h * 31 + e.getKey() * 17 + System.identityHashCode(e.getValue());
-        }
-        for (Item it : items) {
-            h = h * 31 + (it.enabled.getAsBoolean() ? 1 : 0);
-            if (it.color != null) {
-                h = h * 31 + it.color.getRGB();
-            }
-        }
-        h = h * 31 + (compact ? 1 : 0) + (vertical ? 2 : 0);
-        if (hoverToolLabels) h = h * 31 + (hoverItem == null ? 0 : System.identityHashCode(hoverItem));
-        h = h * 31 + version.getAsLong();
-        Point o = origin();
-        h = h * 31 + o.x;
-        h = h * 31 + o.y;
-        return h * 31 + getWidth() * 7919L + getHeight();
-    }
-
-    private BufferedImage renderGlass(double s, int pw, int ph, BufferedImage raw, int ox, int oy) {
-        BufferedImage glass = new BufferedImage(pw, ph, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D gg = glass.createGraphics();
-        hints(gg);
-        gg.translate(-ox, -oy);
-        gg.scale(s, s);
-        paintGlass(gg, s, raw, ox, oy);
-        gg.dispose();
-        return glass;
-    }
+    private Point origin() { return origin.get(); }
 
     static void hints(Graphics2D g) {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -783,98 +877,24 @@ public class GlassBar extends JComponent {
         g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
     }
 
-    // backdrop in the flat layout's coords (flipped when standing up)
-    private BufferedImage backdropImage(double s, int pw, int ph, int ox, int oy) {
-        if (!vertical) {
-            return backdropReal(s, pw, ph, ox, oy);
-        }
-        return flip(backdropReal(s, ph, pw, oy, ox));
-    }
-
-    private static BufferedImage flip(BufferedImage src) {
-        int w = src.getWidth();
-        int h = src.getHeight();
-        int[] in = src.getRGB(0, 0, w, h, null, 0, w);
-        int[] out = new int[w * h];
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                out[x * h + y] = in[y * w + x];
-            }
-        }
-        BufferedImage res = new BufferedImage(h, w, BufferedImage.TYPE_INT_ARGB);
-        res.setRGB(0, 0, h, w, out, 0, h);
-        return res;
-    }
-
-    // what's under the bar, at scale s, window starting at device px (ox, oy)
-    private BufferedImage backdropReal(double s, int pw, int ph, int ox, int oy) {
-        BufferedImage src = new BufferedImage(Math.max(1, pw), Math.max(1, ph), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D bg = src.createGraphics();
-        bg.translate(-ox, -oy);
-        bg.scale(s, s);
+    // Capture a fixed reference-space rectangle, not the currently animated size.
+    private BufferedImage captureBackdrop(Rectangle bounds, double scale) {
+        BufferedImage raw = new BufferedImage(Math.max(1, (int)Math.ceil(bounds.width * scale)),
+                Math.max(1, (int)Math.ceil(bounds.height * scale)), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D bg = raw.createGraphics();
+        bg.scale(scale, scale);
         bg.setColor(BoardTheme.CANVAS);
-        bg.fillRect(0, 0, getWidth(), getHeight());
-        Point o = origin();
-        bg.translate(-o.x, -o.y);
-        bg.clipRect(o.x + (int) Math.floor(ox / s), o.y + (int) Math.floor(oy / s),
-                (int) Math.ceil(pw / s) + 1, (int) Math.ceil(ph / s) + 1);
+        bg.fillRect(0, 0, bounds.width, bounds.height);
+        bg.translate(-bounds.x, -bounds.y);
+        bg.clip(bounds);
         backdrop.accept(bg);
         bg.dispose();
-        return src;
-    }
-
-    private static void drawPx(Graphics2D g, BufferedImage img, double s, int ox, int oy) {
-        g.drawImage(img, new AffineTransform(1 / s, 0, 0, 1 / s, ox / s, oy / s), null);
-    }
-
-    private void paintGlass(Graphics2D g2, double s, BufferedImage raw, int ox, int oy) {
-        RoundRectangle2D.Float cap = capsule(press.x * 3f);
-        int pw = raw.getWidth();
-        int ph = raw.getHeight();
-
-        Point o = origin();
-        long bk = Objects.hash(ox, oy, pw, ph, version.getAsLong(), o.x, o.y, getWidth());
-        Blurred bl = blurCaches.computeIfAbsent(s, k -> new Blurred());
-        if (bl.img == null || bl.key != bk) {
-            bl.img = gaussian(raw, (float) (BLUR_SIGMA * s));
-            bl.key = bk;
-        }
-        drawPx(g2, refract(bl.img, s, cap, appear, ox, oy), s, ox, oy);
-
-        g2.setColor(BoardTheme.TINT);
-        g2.fill(cap);
-        g2.setPaint(new GradientPaint(0, cap.y, new Color(255, 255, 255, BoardTheme.GLOSS),
-                0, cap.y + cap.height * 0.55f, new Color(255, 255, 255, 0)));
-        g2.fill(cap);
-
-        float scale = cap.width / capW;
-        for (Platter p : platters.values()) {
-            g2.setColor(BoardTheme.PLATTER);
-            g2.fill(slot(p.x.x, p.w.x, cap, scale));
-        }
-
-        if (glow > 0.01f) {
-            float r = 70f + 50f * (1f - glow);
-            g2.setPaint(new RadialGradientPaint(glowAt, r, new float[]{0f, 1f},
-                    new Color[]{new Color(1f, 1f, 1f, 0.40f * glow), new Color(1f, 1f, 1f, 0f)}));
-            g2.fill(cap);
-        }
-
-        // The dark stroke reads as a black floating border on light themes.
-        // Keep only the luminous optical rim; refraction/gloss remain intact.
-        g2.setStroke(new BasicStroke(1.4f));
-        g2.setPaint(rimPaint(cap, BoardTheme.RIM_TOP, BoardTheme.RIM_BOTTOM));
-        g2.draw(inset(cap, 1.2f));
-
-        BufferedImage fg = new BufferedImage(pw, ph, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D fgG = fg.createGraphics();
-        hints(fgG);
-        fgG.translate(-ox, -oy);
-        fgG.scale(s, s);
-        paintForeground(fgG, cap, scale);
-        fgG.dispose();
-        drawPx(g2, halo(fg, (float) (2.2 * s)), s, ox, oy);
-        drawPx(g2, fg, s, ox, oy);
+        if (!vertical) return raw;
+        BufferedImage flipped = new BufferedImage(raw.getHeight(), raw.getWidth(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D fg = flipped.createGraphics();
+        fg.drawImage(raw, FLIP, null);
+        fg.dispose();
+        return flipped;
     }
 
     private static Paint rimPaint(RoundRectangle2D.Float r, int top, int bottom) {
@@ -913,9 +933,15 @@ public class GlassBar extends JComponent {
                 Color c = !it.enabled.getAsBoolean() ? BoardTheme.LABEL_DISABLED
                         : selected.get(it.group) == it ? BoardTheme.LABEL_SELECTED : BoardTheme.LABEL;
                 g2.setColor(c);
-                boolean iconOnly = (hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null;
+                float r = revealsLabel(it) ? clamp01(it.reveal.x) : -1f;
+                boolean iconOnly = r >= 0 ? r < 0.01f
+                        : (hoverToolLabels && hoverItem != it) || compact || vertical || it.label == null;
                 float textW = iconOnly ? 0 : fm.stringWidth(it.label);
-                double total = iconOnly ? ICON * scale : (ICON + ICON_GAP) * scale + textW;
+                double total = iconOnly ? ICON * scale
+                        : (ICON + ICON_GAP) * scale + textW;
+                if (r >= 0 && !iconOnly) {
+                    total = ICON * scale + ((ICON_GAP * scale) + textW) * r;  // icon eases left as the word arrives
+                }
                 double x0 = b.getCenterX() - total / 2;
                 AffineTransform t = g2.getTransform();
                 g2.translate(x0 + ICON * scale / 2, b.getCenterY());
@@ -926,8 +952,16 @@ public class GlassBar extends JComponent {
                 it.icon.paint(g2);
                 g2.setTransform(t);
                 if (!iconOnly) {
-                    g2.drawString(it.label, (float) (x0 + (ICON + ICON_GAP) * scale),
+                    Graphics2D tg = (Graphics2D) g2.create();
+                    if (r >= 0) {
+                        tg.clip(b);
+                        java.awt.Composite base = tg.getComposite();
+                        float baseAlpha = base instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
+                        tg.setComposite(AlphaComposite.SrcOver.derive(baseAlpha * r * r));
+                    }
+                    tg.drawString(it.label, (float) (x0 + (ICON + ICON_GAP) * scale),
                             (float) (b.getCenterY() - fm.getHeight() / 2.0 + fm.getAscent()));
+                    tg.dispose();
                 }
             } else if (it.kind == Kind.SWATCH) {
                 paintSwatch(g2, it, b.getCenterX(), b.getCenterY(), scale);
@@ -981,90 +1015,6 @@ public class GlassBar extends JComponent {
         return new RoundRectangle2D.Float(lcx - lw / 2, lcy - lh / 2, lw, lh, lh, lh);
     }
 
-    // magnifying droplet over the hovered button
-    private void paintHoverLens(Graphics2D g2, double s, double ls, BufferedImage scene, int ox, int oy,
-                                RoundRectangle2D.Float lens) {
-        float lh = lens.height;
-        float lw = lens.width;
-        float lcx = lens.x + lw / 2;
-        float lcy = lens.y + lh / 2;
-
-        Composite base = g2.getComposite();
-        float baseAlpha = base instanceof AlphaComposite ? ((AlphaComposite) base).getAlpha() : 1f;
-        g2.setComposite(AlphaComposite.SrcOver.derive(baseAlpha * lensAlpha));
-        hints(g2);
-
-        int pw = (int) Math.ceil(lw() * s);
-        int ph = (int) Math.ceil(lh() * s);
-        int sw = scene.getWidth();
-        int sh = scene.getHeight();
-        double r = ls / s;
-        int[] in = scenePixels;
-        double cx = lcx * s;
-        double cy = lcy * s;
-        double radius = lh / 2.0 * s;
-        double x0 = cx - (lw / 2.0 - lh / 2.0) * s;
-        double x1 = cx + (lw / 2.0 - lh / 2.0) * s;
-        double band = HOVER_EDGE_BAND * s;
-        double k = HOVER_EDGE_K * s;
-        int yMin = Math.max(0, (int) (cy - radius) - 1);
-        int yMax = Math.min(ph, (int) Math.ceil(cy + radius) + 1);
-        int xMin = Math.max(0, (int) (x0 - radius) - 1);
-        int xMax = Math.min(pw, (int) Math.ceil(x1 + radius) + 1);
-        if (xMin >= xMax || yMin >= yMax) {
-            g2.setComposite(base);
-            return;
-        }
-        int lensPixelWidth = xMax - xMin;
-        int lensPixelHeight = yMax - yMin;
-        int[] out = new int[lensPixelWidth * lensPixelHeight];
-        for (int y = yMin; y < yMax; y++) {
-            double py = y + 0.5;
-            for (int x = xMin; x < xMax; x++) {
-                double px = x + 0.5;
-                double qx = Math.max(x0, Math.min(x1, px));
-                double dx = px - qx;
-                double dy = py - cy;
-                double len = Math.sqrt(dx * dx + dy * dy);
-                double d = len - radius;
-                if (d > 0.5) {
-                    continue;
-                }
-                double coverage = Math.min(1.0, 0.5 - d);
-                double bx = (cx + (px - cx) / HOVER_MAG) * r - ox;
-                double by = (cy + (py - cy) / HOVER_MAG) * r - oy;
-                double off = 0;
-                double nx = 0;
-                double ny = 0;
-                if (-d < band && len > 1e-6) {
-                    double t = 1.0 + d / band;
-                    off = t * t * k;
-                    nx = dx / len;
-                    ny = dy / len;
-                }
-                double oR = off * (1 + HOVER_DISPERSION);
-                double oB = off * (1 - HOVER_DISPERSION);
-                int cr = bilinear(in, sw, sh, bx + nx * oR * r - 0.5, by + ny * oR * r - 0.5);
-                int cg = bilinear(in, sw, sh, bx + nx * off * r - 0.5, by + ny * off * r - 0.5);
-                int cb = bilinear(in, sw, sh, bx + nx * oB * r - 0.5, by + ny * oB * r - 0.5);
-                int a = (int) Math.round(255 * coverage);
-                out[(y - yMin) * lensPixelWidth + (x - xMin)] = (a << 24) | (cr & 0xFF0000) | (cg & 0xFF00) | (cb & 0xFF);
-            }
-        }
-        BufferedImage img = new BufferedImage(lensPixelWidth, lensPixelHeight, BufferedImage.TYPE_INT_ARGB);
-        img.setRGB(0, 0, lensPixelWidth, lensPixelHeight, out, 0, lensPixelWidth);
-        drawPx(g2, img, s, xMin, yMin);
-
-        g2.setPaint(new GradientPaint(0, lens.y, new Color(255, 255, 255, 40),
-                0, lens.y + lens.height * 0.5f, new Color(255, 255, 255, 0)));
-        g2.fill(lens);
-        // A light refractive rim is enough; the dark perimeter looked like a shadow.
-        g2.setStroke(new BasicStroke(1.6f));
-        g2.setPaint(rimPaint(lens, 255, 170));
-        g2.draw(inset(lens, 1.3f));
-        g2.setComposite(base);
-    }
-
     private RoundRectangle2D.Float slot(float x, float w, RoundRectangle2D.Float cap, float scale) {
         float sx = cap.x + (PAD + x) * scale;
         float sy = cap.y + PAD * scale;
@@ -1078,199 +1028,4 @@ public class GlassBar extends JComponent {
                 r.arcwidth - 2 * d, r.archeight - 2 * d);
     }
 
-    // bends the backdrop at the rim, clips to the capsule
-    private BufferedImage refract(BufferedImage src, double s, RoundRectangle2D.Float cap, float strength,
-                                  int ox, int oy) {
-        int pw = src.getWidth();
-        int ph = src.getHeight();
-        int[] in = src.getRGB(0, 0, pw, ph, null, 0, pw);
-        int[] out = new int[pw * ph];
-        double radius = cap.height / 2.0 * s;
-        double cy = (cap.y + cap.height / 2.0) * s - oy;
-        double x0 = (cap.x + cap.height / 2.0) * s - ox;
-        double x1 = (cap.x + cap.width - cap.height / 2.0) * s - ox;
-        double band = LENS_BAND * s;
-        double k = LENS_STRENGTH * s * strength;
-        int yMin = Math.max(0, (int) (cy - radius) - 1);
-        int yMax = Math.min(ph, (int) Math.ceil(cy + radius) + 1);
-        int xMin = Math.max(0, (int) (x0 - radius) - 1);
-        int xMax = Math.min(pw, (int) Math.ceil(x1 + radius) + 1);
-        for (int y = yMin; y < yMax; y++) {
-            double py = y + 0.5;
-            for (int x = xMin; x < xMax; x++) {
-                double px = x + 0.5;
-                double qx = Math.max(x0, Math.min(x1, px));
-                double dx = px - qx;
-                double dy = py - cy;
-                double len = Math.sqrt(dx * dx + dy * dy);
-                double d = len - radius;
-                if (d > 0.5) {
-                    continue;
-                }
-                double coverage = Math.min(1.0, 0.5 - d);
-                double sx = px;
-                double sy = py;
-                if (-d < band && len > 1e-6) {
-                    double t = 1.0 + d / band;
-                    double off = t * t * k;
-                    sx += dx / len * off;
-                    sy += dy / len * off;
-                }
-                int c = bilinear(in, pw, ph, sx - 0.5, sy - 0.5);
-                int a = (int) Math.round(((c >>> 24) & 0xFF) * coverage);
-                out[y * pw + x] = (a << 24) | (c & 0xFFFFFF);
-            }
-        }
-        BufferedImage res = new BufferedImage(pw, ph, BufferedImage.TYPE_INT_ARGB);
-        res.setRGB(0, 0, pw, ph, out, 0, pw);
-        return res;
-    }
-
-    // soft canvas-coloured halo behind the glyphs
-    private static BufferedImage halo(BufferedImage fg, float sigma) {
-        int w = fg.getWidth();
-        int h = fg.getHeight();
-        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        int[] px = fg.getRGB(0, 0, w, h, null, 0, w);
-        int minX = w;
-        int minY = h;
-        int maxX = -1;
-        int maxY = -1;
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                if ((px[y * w + x] >>> 24) != 0) {
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x);
-                    minY = Math.min(minY, y);
-                    maxY = Math.max(maxY, y);
-                }
-            }
-        }
-        if (maxX < 0) {
-            return out;
-        }
-        int pad = (int) Math.ceil(sigma * 3);
-        int x0 = Math.max(0, minX - pad);
-        int y0 = Math.max(0, minY - pad);
-        int x1 = Math.min(w, maxX + 1 + pad);
-        int y1 = Math.min(h, maxY + 1 + pad);
-        int bw = x1 - x0;
-        int bh = y1 - y0;
-        int hc = BoardTheme.HALO.getRGB() & 0xFFFFFF;
-        float ha = BoardTheme.HALO.getAlpha() / 255f;
-        float[] a = new float[bw * bh];
-        float[] tmp = new float[bw * bh];
-        for (int y = 0; y < bh; y++) {
-            for (int x = 0; x < bw; x++) {
-                a[y * bw + x] = (px[(y + y0) * w + x + x0] >>> 24) * ha;
-            }
-        }
-        double ideal = Math.sqrt(12.0 * sigma * sigma / 3 + 1);
-        int wl = (int) Math.floor(ideal);
-        if (wl % 2 == 0) {
-            wl--;
-        }
-        if (wl < 1) {
-            wl = 1;
-        }
-        int wu = wl + 2;
-        int m = (int) Math.round((12.0 * sigma * sigma - 3 * wl * wl - 12 * wl - 9) / (-4.0 * wl - 4));
-        for (int pass = 0; pass < 3; pass++) {
-            boxBlur(a, tmp, bw, bh, ((pass < m ? wl : wu) - 1) / 2);
-        }
-        int[] o = new int[bw * bh];
-        for (int i = 0; i < o.length; i++) {
-            int al = Math.min(255, Math.round(a[i] * 2));
-            o[i] = (al << 24) | hc;
-        }
-        out.setRGB(x0, y0, bw, bh, o, 0, bw);
-        return out;
-    }
-
-    private static void boxBlur(float[] a, float[] tmp, int w, int h, int r) {
-        float inv = 1f / (2 * r + 1);
-        for (int y = 0; y < h; y++) {
-            int b = y * w;
-            float sum = 0;
-            for (int i = 0; i <= Math.min(r, w - 1); i++) {
-                sum += a[b + i];
-            }
-            for (int x = 0; x < w; x++) {
-                tmp[b + x] = sum * inv;
-                if (x + r + 1 < w) {
-                    sum += a[b + x + r + 1];
-                }
-                if (x - r >= 0) {
-                    sum -= a[b + x - r];
-                }
-            }
-        }
-        for (int x = 0; x < w; x++) {
-            float sum = 0;
-            for (int i = 0; i <= Math.min(r, h - 1); i++) {
-                sum += tmp[i * w + x];
-            }
-            for (int y = 0; y < h; y++) {
-                a[y * w + x] = sum * inv;
-                if (y + r + 1 < h) {
-                    sum += tmp[(y + r + 1) * w + x];
-                }
-                if (y - r >= 0) {
-                    sum -= tmp[(y - r) * w + x];
-                }
-            }
-        }
-    }
-
-    private static int bilinear(int[] px, int w, int h, double x, double y) {
-        x = Math.max(0, Math.min(w - 1.001, x));
-        y = Math.max(0, Math.min(h - 1.001, y));
-        int ix = (int) x;
-        int iy = (int) y;
-        double fx = x - ix;
-        double fy = y - iy;
-        int c00 = px[iy * w + ix];
-        int c10 = px[iy * w + Math.min(w - 1, ix + 1)];
-        int c01 = px[Math.min(h - 1, iy + 1) * w + ix];
-        int c11 = px[Math.min(h - 1, iy + 1) * w + Math.min(w - 1, ix + 1)];
-        int r = 0;
-        for (int sh = 0; sh <= 24; sh += 8) {
-            double v = ((c00 >>> sh) & 0xFF) * (1 - fx) * (1 - fy) + ((c10 >>> sh) & 0xFF) * fx * (1 - fy)
-                    + ((c01 >>> sh) & 0xFF) * (1 - fx) * fy + ((c11 >>> sh) & 0xFF) * fx * fy;
-            r |= ((int) Math.round(v) & 0xFF) << sh;
-        }
-        return r;
-    }
-
-    // separable gaussian, edges extended
-    private static BufferedImage gaussian(BufferedImage src, float sigma) {
-        if (sigma < 0.3f) {
-            return src;
-        }
-        int r = (int) Math.ceil(sigma * 3);
-        int w = src.getWidth();
-        int h = src.getHeight();
-        BufferedImage padded = new BufferedImage(w + 2 * r, h + 2 * r, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = padded.createGraphics();
-        g.drawImage(src, r, r, null);
-        g.drawImage(src.getSubimage(0, 0, w, 1), r, 0, w, r, null);
-        g.drawImage(src.getSubimage(0, h - 1, w, 1), r, h + r, w, r, null);
-        g.drawImage(padded.getSubimage(r, 0, 1, h + 2 * r), 0, 0, r, h + 2 * r, null);
-        g.drawImage(padded.getSubimage(w + r - 1, 0, 1, h + 2 * r), w + r, 0, r, h + 2 * r, null);
-        g.dispose();
-        float[] k = new float[2 * r + 1];
-        float sum = 0;
-        for (int i = -r; i <= r; i++) {
-            k[i + r] = (float) Math.exp(-(i * i) / (2 * sigma * sigma));
-            sum += k[i + r];
-        }
-        for (int i = 0; i < k.length; i++) {
-            k[i] /= sum;
-        }
-        BufferedImage a = new ConvolveOp(new Kernel(k.length, 1, k), ConvolveOp.EDGE_NO_OP, null)
-                .filter(padded, null);
-        BufferedImage b = new ConvolveOp(new Kernel(1, k.length, k), ConvolveOp.EDGE_NO_OP, null)
-                .filter(a, null);
-        return b.getSubimage(r, r, w, h);
-    }
 }

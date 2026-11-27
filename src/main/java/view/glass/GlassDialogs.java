@@ -64,6 +64,15 @@ public final class GlassDialogs {
 
     public enum Tone { INFO, WARNING, ERROR, QUESTION }
 
+    /** View-only hint: defer optional work while a visible modal card is fading. */
+    public static boolean isAnimating(Component parent) {
+        JRootPane root = parent == null ? null : SwingUtilities.getRootPane(parent);
+        if (root == null) return false;
+        for (Component child : root.getLayeredPane().getComponentsInLayer(JLayeredPane.MODAL_LAYER))
+            if (child instanceof ModalOverlay overlay && overlay.appearTimer.isRunning()) return true;
+        return false;
+    }
+
     public static void info(Component parent, String message) {
         present(parent, "Message", message, Tone.INFO, null, new String[]{"OK"});
     }
@@ -113,6 +122,13 @@ public final class GlassDialogs {
                                  Consumer<Runnable> registerAccept) {
         return present(parent, title, "", Tone.QUESTION, Objects.requireNonNull(content),
                 new String[]{Objects.requireNonNull(affirmative), "Cancel"}, registerAccept) == 0;
+    }
+
+    /** Caller-owned editor actions may validate asynchronously and dismiss only on success.
+     * Esc/owner close still dismiss the same modal presentation. */
+    public static void edit(Component parent, String title, JComponent content, Consumer<Runnable> registerClose) {
+        present(parent, title, "", Tone.QUESTION, Objects.requireNonNull(content), new String[0],
+                Objects.requireNonNull(registerClose));
     }
 
     public enum UnsavedDecision { DONT_SAVE, CANCEL, SAVE }
@@ -198,6 +214,8 @@ public final class GlassDialogs {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { dialog.dispose(); }
         });
         setDefaultOption(dialog.getRootPane(), pane, labels);
+        if (content != null && content.getClientProperty("glass.defaultAction") instanceof javax.swing.JButton button)
+            dialog.getRootPane().setDefaultButton(button);
         dialog.pack();
         dialog.setLocationRelativeTo(parent);
         if (content instanceof JTextField field) {
@@ -249,6 +267,18 @@ public final class GlassDialogs {
         };
         private final KeyEventDispatcher keys;
         private final PropertyChangeListener focusListener;
+        // Only the card fades; the scrim is painted once at its final opacity.
+        private float appear = 1f;
+        private long openedAt;
+        private static final long FADE_NANOS = 140_000_000L;
+        private final javax.swing.Timer appearTimer = new javax.swing.Timer(view.board.Motion.FRAME_MS, e -> stepFade());
+
+        private void stepFade() {
+            float t = Math.min(1f, (System.nanoTime() - openedAt) / (float) FADE_NANOS);
+            appear = 1f - (1f-t)*(1f-t);
+            if (t >= 1f) appearTimer.stop();
+            repaint(card.getBounds());
+        }
 
         private ModalOverlay(Window owner, JRootPane root, String title, String message,
                              Tone tone, JComponent extra, String[] labels,
@@ -313,6 +343,8 @@ public final class GlassDialogs {
             shieldOwnerShortcuts();
             if (registerAccept != null) registerAccept.accept(() -> finish(0));
             setDefaultOption(root, pane, labels);
+            if (extra != null && extra.getClientProperty("glass.defaultAction") instanceof javax.swing.JButton button)
+                root.setDefaultButton(button);
         }
 
         /**
@@ -342,7 +374,11 @@ public final class GlassDialogs {
             if (finished.get()) return selected.get();
             try {
                 layers.add(this, JLayeredPane.MODAL_LAYER, 0);
+                appear = view.board.Motion.reduced() ? 1f : .12f;
+                openedAt = System.nanoTime();
                 updateBounds();
+                doLayout();
+                if (appear < 1f) appearTimer.start();
                 layers.addComponentListener(resizeListener);
                 owner.addWindowListener(closeListener);
                 focusManager.addKeyEventDispatcher(keys);
@@ -385,6 +421,23 @@ public final class GlassDialogs {
             g2.dispose();
         }
 
+        private float level() {
+            return appear;
+        }
+
+        @Override protected void paintChildren(Graphics graphics) {
+            float a = level();
+            if (a >= 0.999f) {
+                super.paintChildren(graphics);
+                return;
+            }
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            g2.setComposite(java.awt.AlphaComposite.SrcOver.derive(a));
+            // Fade without a visual-only scale: child hit targets remain aligned.
+            super.paintChildren(g2);
+            g2.dispose();
+        }
+
         private boolean onTop() {
             return getParent() == layers && layers.getLayer(this) == JLayeredPane.MODAL_LAYER.intValue()
                     && layers.getPosition(this) == 0;
@@ -404,9 +457,9 @@ public final class GlassDialogs {
         }
 
         private static Component findTextField(java.awt.Container parent) {
-            if (parent instanceof JTextField field && field.isEnabled() && field.isShowing()) return field;
+            if (parent instanceof javax.swing.text.JTextComponent field && field.isEditable() && field.isEnabled() && field.isShowing()) return field;
             for (Component child : parent.getComponents()) {
-                if (child instanceof JTextField field && field.isEnabled() && field.isShowing()) return field;
+                if (child instanceof javax.swing.text.JTextComponent field && field.isEditable() && field.isEnabled() && field.isShowing()) return field;
                 if (child instanceof java.awt.Container container) {
                     Component found = findTextField(container);
                     if (found != null) return found;
@@ -421,6 +474,7 @@ public final class GlassDialogs {
                 return;
             }
             if (!finished.compareAndSet(false, true)) return;
+            appearTimer.stop();
             selected.set(answer);
             focusManager.removePropertyChangeListener("focusOwner", focusListener);
             focusManager.removeKeyEventDispatcher(keys);
@@ -522,7 +576,7 @@ public final class GlassDialogs {
                 actions.add(leadingRow, BorderLayout.WEST);
             }
             actions.add(trailing, BorderLayout.EAST);
-            add(actions, BorderLayout.SOUTH);
+            if (labels.length > 0 || actions.getComponentCount() > 1) add(actions, BorderLayout.SOUTH);
         }
 
         @Override public Dimension getPreferredSize() {
@@ -575,11 +629,26 @@ public final class GlassDialogs {
             Glass.setUp(g2);
             int inset = 3;
             int w = getWidth() - 2 * inset, h = getHeight() - 2 * inset;
+            double press = pressAmount();
+            double hover = hoverAmount();
+            // shrinks a touch under the finger, darkens while held
+            double k = 1 - 0.03 * press;
+            g2.translate(getWidth() / 2.0, getHeight() / 2.0);
+            g2.scale(k, k);
+            g2.translate(-getWidth() / 2.0, -getHeight() / 2.0);
             RoundRectangle2D shape = new RoundRectangle2D.Double(inset, inset, w, h, h, h);
             if (style != Style.DESTRUCTIVE) {
-                g2.setColor(style == Style.PRIMARY ? new Color(0, 122, 255) : new Color(238, 238, 240));
+                g2.setColor(style == Style.PRIMARY ? Glass.ACCENT : new Color(238, 238, 240));
+                g2.fill(shape);
+            } else if (hover > 0) {
+                g2.setColor(new Color(220, 38, 38, (int) (22 * hover)));
                 g2.fill(shape);
             }
+            if (press > 0 || hover > 0) {
+                g2.setColor(new Color(0, 0, 0, (int) (8 * hover + 22 * press)));
+                g2.fill(shape);
+            }
+            paintFocusRing(g2, shape);
             g2.setColor(style == Style.PRIMARY ? Color.WHITE :
                     style == Style.DESTRUCTIVE ? new Color(220, 38, 38) : new Color(27, 29, 33));
             g2.setFont(getFont());

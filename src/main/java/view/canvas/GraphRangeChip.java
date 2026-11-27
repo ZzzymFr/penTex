@@ -46,7 +46,7 @@ import java.util.Map;
  * elsewhere closes it unchanged.
  */
 final class GraphRangeChip extends JComponent {
-    static final Color ACCENT = new Color(0, 122, 255);
+    static final Color ACCENT = view.board.BoardTheme.ACCENT;
     private static final Color INK = new Color(51, 65, 85);
     private static final Color FAINT = new Color(148, 163, 184);
     private static final Color BAD = new Color(220, 38, 38);
@@ -833,16 +833,30 @@ final class GraphRangeChip extends JComponent {
         boolean pill;
         boolean on;
         private boolean hover;
+        private boolean pressed;
 
         Button(String text, boolean filled, Runnable action) {
             this.text = text;
             this.filled = filled;
             this.action = action;
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            // darkens the moment it's pressed, acts on release over it (drag off = cancel);
+            // mouseClicked dropped clicks whenever the hand moved a pixel
             addMouseListener(new MouseAdapter() {
                 @Override
-                public void mouseClicked(MouseEvent e) {
+                public void mousePressed(MouseEvent e) {
                     if (SwingUtilities.isLeftMouseButton(e)) {
+                        pressed = true;
+                        repaint();
+                    }
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    boolean go = pressed && contains(e.getPoint()) && SwingUtilities.isLeftMouseButton(e);
+                    pressed = false;
+                    repaint();
+                    if (go) {
                         action.run();
                     }
                 }
@@ -894,6 +908,14 @@ final class GraphRangeChip extends JComponent {
                     text = on ? ACCENT : INK;
                 } else {
                     text = hover ? new Color(0, 95, 210) : ACCENT;
+                }
+                if (pressed) {
+                    if (filled || pill) {
+                        g.setColor(new Color(0, 0, 0, filled ? 40 : 16));
+                        g.fill(shape);
+                    } else {
+                        text = new Color(0, 80, 180);
+                    }
                 }
                 g.setFont(getFont());
                 g.setColor(text);

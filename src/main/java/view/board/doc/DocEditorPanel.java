@@ -69,7 +69,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     private RibbonButton captureButton;
     private boolean capturing;
     private boolean updatingZoom;
-    private boolean restoredViewPending;
+    private boolean viewInitialized;
     private Runnable toggleFullscreen = () -> { };
     public void setFullscreenAction(Runnable callback) { toggleFullscreen = Objects.requireNonNull(callback); }
 
@@ -141,7 +141,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
                                   pdf_editor.use_case.PdfPreviewGateway previewer) {
         if (persistence != null) return;
         persistence = new pdf_editor.view.PdfWorkspaceDialogs(this, controller, paper, documents, previewer,
-                saved -> { zoom(saved.zoom()); restoredViewPending = !isShowing(); updateStatus(); }, title::setText);
+                saved -> { zoom(saved.zoom()); updateStatus(); }, title::setText);
         for (Component action : persistenceActions.getComponents()) action.setEnabled(true);
         persistence.start();
         revalidate(); repaint();
@@ -188,25 +188,113 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     @Deprecated public boolean isLibraryVisible() { return false; }
 
     /** Floating Apple-like controls: rounded capsules rather than full-width white strips. */
-    private static final class Capsule extends JPanel {
+    private static class Capsule extends JPanel {
         Capsule(java.awt.LayoutManager layout) {
             super(layout);
             setOpaque(false);
             setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
         }
+        // a pill while it's one row high, a 14px card once it grows taller
+        int arc() {
+            return getHeight() - 3 <= 48 ? getHeight() - 3 : 16;
+        }
         @Override protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(new Color(0,0,0,12));
-            g2.fillRoundRect(1, 3, getWidth()-2, getHeight()-3, 28, 28);
-            g2.setColor(new Color(255,255,255,252));
-            g2.fillRoundRect(0, 0, getWidth()-1, getHeight()-3, 28, 28);
-            g2.setColor(new Color(210,216,227));
-            g2.drawRoundRect(0, 0, getWidth()-1, getHeight()-3, 28, 28);
+            int arc = arc();
+            for (int i = 1; i <= 3; i++) {
+                g2.setColor(new Color(0, 0, 0, 6));
+                g2.fillRoundRect(0, i, getWidth() - 1, getHeight() - 3, arc, arc);
+            }
+            g2.setColor(Color.WHITE);
+            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 3, arc, arc);
+            g2.setColor(new Color(0, 0, 0, 22));
+            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 3, arc, arc);
             g2.dispose();
             super.paintComponent(g);
         }
     }
+
+    /**
+     * macOS segmented control for the ribbon tabs: a grey track, and a white raised pill under the
+     * chosen tab that slides (spring) to the next one instead of jumping.
+     */
+    private static final class SegmentTrack extends JPanel {
+        private final view.board.Spring pillX = new view.board.Spring();
+        private final view.board.Spring pillW = new view.board.Spring();
+        private final view.board.Motion.Clock clock = new view.board.Motion.Clock();
+        private final javax.swing.Timer timer = new javax.swing.Timer(view.board.Motion.FRAME_MS, e -> step());
+        private Component chosen;
+        private boolean placed;
+
+        SegmentTrack() {
+            super(new FlowLayout(FlowLayout.CENTER, 0, 0));
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(3, 3, 3, 3));
+        }
+
+        void choose(Component tab) {
+            chosen = tab;
+            if (!placed || !isShowing()) {
+                placed = false;  // snap on the next layout
+            }
+            if (isShowing()) timer.start();
+            repaint();
+        }
+
+        @Override public void removeNotify() {
+            timer.stop();
+            clock.reset();
+            placed = false;
+            super.removeNotify();
+        }
+
+        @Override public void doLayout() {
+            super.doLayout();
+            if (chosen != null && (!placed || !timer.isRunning())) {
+                pillX.snap(chosen.getX());
+                pillW.snap(chosen.getWidth());
+                placed = chosen.getWidth() > 0;
+            }
+        }
+
+        private void step() {
+            if (chosen == null) {
+                timer.stop();
+                return;
+            }
+            float dt = clock.tick();
+            boolean still = pillX.step(chosen.getX(), view.board.Motion.SELECT, dt);
+            still &= pillW.step(chosen.getWidth(), view.board.Motion.SELECT, dt);
+            if (still) {
+                timer.stop();
+                clock.reset();
+            }
+            repaint();
+        }
+
+        @Override protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int h = getHeight();
+            g2.setColor(new Color(0, 0, 0, 16));
+            g2.fillRoundRect(0, 0, getWidth(), h, h, h);
+            if (chosen != null && pillW.x > 0) {
+                int y = 3;
+                int ph = h - 6;
+                for (int i = 1; i <= 2; i++) {
+                    g2.setColor(new Color(0, 0, 0, 10));
+                    g2.fillRoundRect(Math.round(pillX.x), y + i, Math.round(pillW.x), ph, ph, ph);
+                }
+                g2.setColor(Color.WHITE);
+                g2.fillRoundRect(Math.round(pillX.x), y, Math.round(pillW.x), ph, ph, ph);
+                g2.setColor(new Color(0, 0, 0, 14));
+                g2.drawRoundRect(Math.round(pillX.x), y, Math.round(pillW.x), ph, ph, ph);
+            }
+            g2.dispose();
+        }
+    }
+    private SegmentTrack segmentTrack;
 
     private JComponent buildHeader() {
         JPanel top = new JPanel(new BorderLayout());
@@ -215,7 +303,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         nameRow.setOpaque(false);
         nameRow.setBorder(BorderFactory.createEmptyBorder(BoardTheme.TOP + 2, 10, 1, 0));
         Capsule document = new Capsule(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        title.setFont(BoardTheme.font(14f));
+        title.setFont(BoardTheme.semibold(14f));
         document.add(DocumentGlyphs.component(23, Icons::document));
         document.add(title);
         nameRow.add(document);
@@ -223,7 +311,8 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
 
         JPanel tabsRow = new JPanel(new WrapLayout(FlowLayout.CENTER, 7, 3));
         tabsRow.setOpaque(false);
-        JPanel names = new Capsule(new WrapLayout(FlowLayout.CENTER, 2, 1));
+        segmentTrack = new SegmentTrack();
+        JPanel names = segmentTrack;
         tabs.add(new Tab("Home", homeRibbon()));
         tabs.add(new Tab("Insert", insertRibbon()));
         tabs.add(new Tab("Layout", layoutRibbon()));
@@ -341,37 +430,40 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         return bar;
     }
     private JButton flatButton(String text, Runnable task) {
-        return new RoundedActionButton(text, task, false);
+        RoundedActionButton b = new RoundedActionButton(text, task, false);
+        b.quiet = true;  // footer arrows / zoom: nothing until hovered
+        b.setBorder(BorderFactory.createEmptyBorder(4, 9, 4, 9));
+        b.setFont(BoardTheme.font(14f));
+        return b;
     }
     /** Readable rounded buttons with a real opaque fill; unlike platform LAF translucent defaults. */
     private static final class RoundedActionButton extends JButton {
         private final boolean primary;
+        boolean quiet;
         private boolean over;
         RoundedActionButton(String text, Runnable action, boolean primary) {
             super(text);this.primary = primary;
-            setFont(BoardTheme.font(12f));
-            setFocusable(false);setContentAreaFilled(false);setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(8, 13, 8, 13));
-            setForeground(primary ? Color.WHITE : new Color(42, 57, 79));
+            setFont(BoardTheme.font(12.5f));
+            setFocusable(false);setContentAreaFilled(false);setOpaque(false);setBorderPainted(false);
+            setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
+            setRolloverEnabled(true);
             addActionListener(e -> action.run());
             addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override public void mouseEntered(MouseEvent e) {over = true;repaint();}
                 @Override public void mouseExited(MouseEvent e) {over = false;repaint();}
             });
         }
+        private view.glass.AppleLook.Tone tone() {
+            if (primary) return view.glass.AppleLook.Tone.PRIMARY;
+            if (getModel().isSelected()) return view.glass.AppleLook.Tone.TINTED;
+            return quiet ? view.glass.AppleLook.Tone.QUIET : view.glass.AppleLook.Tone.SECONDARY;
+        }
         @Override protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             int w = getWidth(), h = getHeight();
-            Color top = primary ? (over ? new Color(41, 143, 255) : new Color(0, 122, 255))
-                    : (getModel().isSelected() ? new Color(222, 235, 254)
-                    : over ? new Color(228, 237, 249, 252) : new Color(247, 249, 253, 242));
-            Color end = primary ? new Color(0, 93, 216) : new Color(239, 243, 249);
-            g2.setPaint(new GradientPaint(0, 0, top, 0, h, end));
-            g2.fillRoundRect(0, 0, w - 1, h - 1, 17, 17);
-            g2.setColor(primary ? new Color(255, 255, 255, 95) : new Color(189, 198, 213, 145));
-            g2.drawRoundRect(0, 0, w - 1, h - 1, 17, 17);
-            g2.dispose();super.paintComponent(g);
+            boolean pressed = getModel().isArmed() && getModel().isPressed();
+            view.glass.AppleLook.paintButton((Graphics2D) g, w, h, h, tone(), over, pressed, isEnabled());
+            setForeground(view.glass.AppleLook.buttonText(tone(), isEnabled()));
+            super.paintComponent(g);
         }
     }
     private void updateStatus() {
@@ -386,6 +478,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         updateStatus();
     }
     private void zoom(double z) {
+        viewInitialized = true;
         double actual = paper.setZoom(z);
         updatingZoom = true;
         try {zoomSlider.setValue((int) Math.round(100 * actual));zoomValue.setText((int) Math.round(100 * actual) + "%");}
@@ -404,8 +497,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         workspace.repaint();
     }
     @Override public void fitWhenOpened() {
-        if (restoredViewPending) { restoredViewPending = false; return; }
-        fitPage();
+        if (!viewInitialized) fitPage();
     }
     private void fitPage() {
         int w = pageScroll.getViewport().getWidth();
@@ -736,10 +828,20 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         }, problem -> GlassDialogs.error(this, "Graph preview failed: " + problem));
     }
     private void export() {
-        JFileChooser chooser = new JFileChooser();chooser.setDialogTitle("Export PDF");
-        chooser.setSelectedFile(new java.io.File("math-lab.pdf"));
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        Path target = chooser.getSelectedFile().toPath();
+        // the system's own save panel (NSSavePanel on macOS, the Windows one there), not JFileChooser
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        FileDialog chooser = owner instanceof Dialog d ? new FileDialog(d, "Export PDF", FileDialog.SAVE)
+                : new FileDialog(owner instanceof Frame f ? f : null, "Export PDF", FileDialog.SAVE);
+        chooser.setFile("math-lab.pdf");
+        Path selected;
+        try {
+            chooser.setVisible(true);
+            if (chooser.getFile() == null) return;
+            selected = Path.of(chooser.getDirectory() == null ? "" : chooser.getDirectory(), chooser.getFile());
+        } finally {
+            chooser.dispose();
+        }
+        Path target = selected;
         if (!target.toString().toLowerCase(java.util.Locale.ROOT).endsWith(".pdf"))
             target = Path.of(target.toString() + ".pdf");
         if (java.nio.file.Files.exists(target) && !GlassDialogs.confirm(this,
@@ -748,7 +850,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         paper.prepareGraphSnapshots(() -> {
             try {
                 controller.export(output);
-                title.setText(output.getFileName().toString());
+
             } catch (IOException bad) { error("Export failed", bad); }
         }, problem -> GlassDialogs.error(this, "Graph export failed: " + problem));
     }
@@ -761,18 +863,16 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
             this.text = text;this.ribbon = ribbon;
             button = new JToggleButton(text) {
                 @Override protected void paintComponent(Graphics g) {
-                    Graphics2D g2 = (Graphics2D) g.create();
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    if (isSelected() || getModel().isRollover()) {
-                        g2.setColor(isSelected() ? new Color(225, 237, 254) : new Color(244, 246, 250));
-                        g2.fillRoundRect(0, 0, getWidth(), getHeight(), 13, 13);
-                    }
-                    g2.dispose(); super.paintComponent(g);
+                    // the track draws the sliding pill; here just the word
+                    setForeground(isSelected() ? BoardTheme.LABEL : getModel().isRollover()
+                            ? BoardTheme.LABEL : BoardTheme.LABEL_SECONDARY);
+                    super.paintComponent(g);
                 }
             };
             button.setContentAreaFilled(false);
             button.setOpaque(false);
-            button.setBorder(BorderFactory.createEmptyBorder(8, 13, 8, 13));
+            button.setBorderPainted(false);
+            button.setBorder(BorderFactory.createEmptyBorder(6, 15, 6, 15));
             button.setFocusable(false);
             button.setRolloverEnabled(true);
             button.setFont(BoardTheme.font(12f));
@@ -780,6 +880,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         }
         private void select() {
             for (Tab tab : tabs) tab.button.setSelected(tab == this);
+            if (segmentTrack != null) segmentTrack.choose(button);
             ribbonHolder.removeAll();
             Capsule capsule = new Capsule(new BorderLayout());
             capsule.add(ribbon, BorderLayout.CENTER);

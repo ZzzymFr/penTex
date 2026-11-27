@@ -19,10 +19,10 @@ import java.awt.geom.RoundRectangle2D;
  */
 public final class Glass {
     /** Apple-style system blue, used for the selected state. */
-    public static final Color ACCENT = new Color(0, 122, 255);
-    static final Color TEXT = new Color(15, 23, 42);
+    public static final Color ACCENT = view.board.BoardTheme.ACCENT;
+    static final Color TEXT = view.board.BoardTheme.LABEL;
     /** Secondary text on glass. */
-    public static final Color TEXT_MUTED = new Color(51, 65, 85);
+    public static final Color TEXT_MUTED = view.board.BoardTheme.LABEL_SECONDARY;
 
     /** Room around a glass shape for its shadow. */
     static final int SHADOW = 3;

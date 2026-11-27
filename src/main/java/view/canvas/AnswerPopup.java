@@ -7,6 +7,8 @@ import org.scilab.forge.jlatexmath.TeXIcon;
 import view.board.BoardTheme;
 import view.board.GlassBar;
 import view.board.Icons;
+import view.board.Motion;
+import view.board.Spring;
 import view.stack.Fonts;
 
 import javax.swing.JComponent;
@@ -67,6 +69,17 @@ public class AnswerPopup extends JPanel {
     private Runnable onPhase = () -> { };
     private String latex;
     private TeXIcon icon;
+    // arrives out of the "=" it sits beside: fades in while sliding right from it
+    private static final int ARRIVE_SLIDE = 10;
+    private final Spring arrive = new Spring(0.004f, true);
+    private final Motion.Clock arriveClock = new Motion.Clock();
+    private final javax.swing.Timer arriveTimer = new javax.swing.Timer(Motion.FRAME_MS, e -> {
+        if (arrive.step(1f, Motion.ENTER, arriveClock.tick())) {
+            ((javax.swing.Timer) e.getSource()).stop();
+            arriveClock.reset();
+        }
+        repaint();
+    });
 
     public AnswerPopup(Consumer<Graphics2D> backdrop) {
         this(backdrop, () -> 0L);
@@ -112,6 +125,33 @@ public class AnswerPopup extends JPanel {
         bothBar.setVisible(false);
         phaseBar.setVisible(false);
         setVisible(false);
+    }
+
+    @Override
+    public void setVisible(boolean visible) {
+        if (visible && !isVisible()) {
+            arrive.snap(0f);
+            arriveClock.reset();
+            arriveTimer.start();
+        } else if (!visible) {
+            arriveTimer.stop();
+            arrive.snap(1f);
+        }
+        super.setVisible(visible);
+    }
+
+    @Override
+    public void paint(Graphics g) {
+        float a = Math.max(0f, Math.min(1f, arrive.x));
+        if (a >= 0.999f) {
+            super.paint(g);
+            return;
+        }
+        // Fade in place so a button never moves away from its actual hit target.
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.setComposite(java.awt.AlphaComposite.SrcOver.derive(a));
+        super.paint(g2);
+        g2.dispose();
     }
 
     private GlassBar newBar(Consumer<Graphics2D> backdrop, LongSupplier version) {

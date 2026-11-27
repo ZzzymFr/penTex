@@ -100,7 +100,7 @@ public class HistoryPanel extends JPanel {
         header.setOpaque(false);
         header.setBorder(BorderFactory.createEmptyBorder(TOP_ROOM + 4, 16, 8, 10));
         JLabel title = new JLabel("Saved materials");
-        title.setFont(BoardTheme.font(13f));
+        title.setFont(BoardTheme.semibold(13f));
         header.add(title, BorderLayout.WEST);
         JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
         actions.setOpaque(false);
@@ -260,11 +260,17 @@ public class HistoryPanel extends JPanel {
                     Point screen = mouse.getLocationOnScreen();
                     host.draggingAt(item, dragPreview, new Point(screen.x - grab.x, screen.y - grab.y), screen);
                 } else if (event instanceof MouseEvent mouse && mouse.getID() == MouseEvent.MOUSE_RELEASED
+                        && mouse.getSource() != Row.this
                         && SwingUtilities.isLeftMouseButton(mouse)) {
                     // AWT can deliver the release to the Canvas, a popup or the window
                     // instead of the original History row (notably on macOS).
                     Point screen = mouse.getLocationOnScreen();
-                    SwingUtilities.invokeLater(() -> finishDrag(screen));
+                    // A release delivered to this row is handled synchronously by its own
+                    // listener. Only external releases need deferred routing.
+                    java.awt.event.AWTEventListener gesture = releaseWatcher;
+                    SwingUtilities.invokeLater(() -> {
+                        if (releaseWatcher == gesture && gesture != null) finishDrag(screen);
+                    });
                 } else if (event instanceof java.awt.event.KeyEvent key
                         && key.getID() == java.awt.event.KeyEvent.KEY_PRESSED
                         && key.getKeyCode() == java.awt.event.KeyEvent.VK_ESCAPE) {
@@ -272,7 +278,14 @@ public class HistoryPanel extends JPanel {
                 } else if (event instanceof java.awt.event.WindowEvent window
                         && (window.getID() == java.awt.event.WindowEvent.WINDOW_DEACTIVATED
                             || window.getID() == java.awt.event.WindowEvent.WINDOW_LOST_FOCUS)) {
-                    SwingUtilities.invokeLater(this::cancelDrag);
+                    // Other windows (including dialogs) must not cancel this row
+                    // just because they lost focus. Ignore queued events from old gestures.
+                    if (window.getWindow() == SwingUtilities.getWindowAncestor(Row.this)) {
+                        java.awt.event.AWTEventListener gesture = releaseWatcher;
+                        SwingUtilities.invokeLater(() -> {
+                            if (releaseWatcher == gesture && gesture != null) cancelDrag();
+                        });
+                    }
                 }
             };
             java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(releaseWatcher,
@@ -320,8 +333,21 @@ public class HistoryPanel extends JPanel {
             repaint();
         }
 
+        private boolean hovered;
+        private boolean overDelete;
+
         Row(HistoryItem item) {
             this.item = item;
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { hovered = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e) { hovered = false; overDelete = false; repaint(); }
+            });
+            addMouseMotionListener(new MouseAdapter() {
+                @Override public void mouseMoved(MouseEvent e) {
+                    boolean d = e.getX() > getWidth() - 30;
+                    if (d != overDelete) { overDelete = d; repaint(); }
+                }
+            });
             this.icon = item.hasImage() ? null : typeset(HistoryAnswerArtwork.formulaLatex(item));
             this.graphImage = item.hasImage() ? picture(item) : null;
             setToolTipText("Drag to Canvas / PDF. Right-click for more actions.");
@@ -411,7 +437,12 @@ public class HistoryPanel extends JPanel {
                 g2.dispose();
                 return;
             }
-            // A History item is transparent: no white capsule or its drop shadow.
+            // A History item is transparent: no white capsule or its drop shadow. Hover shows a soft
+            // rounded row, like a macOS source list, so it's clear what you're about to drag.
+            if (hovered) {
+                g2.setColor(new Color(0, 0, 0, 10));
+                g2.fill(new RoundRectangle2D.Double(0, 0, getWidth(), ROW_H, 14, 14));
+            }
             g2.setColor(BoardTheme.LABEL_DISABLED);
             Graphics2D grip = (Graphics2D) g2.create();
             grip.translate(20, ROW_H / 2.0);
@@ -430,9 +461,17 @@ public class HistoryPanel extends JPanel {
             }
             // Subtle delete affordance at the trailing edge, never part of the drag payload.
             g2.setClip(null);
-            g2.setColor(new Color(130, 139, 153));
-            g2.setFont(BoardTheme.font(16f));
-            g2.drawString("×", getWidth() - 23, ROW_H / 2 + 5);
+            Graphics2D close = (Graphics2D) g2.create();
+            close.translate(getWidth() - 29, ROW_H / 2.0 - 12);
+            if (hovered) {
+                view.glass.AppleLook.paintClose(close, 24, 24, overDelete, false);
+            } else {
+                close.setColor(new Color(0, 0, 0, 70));  // faint until the row is hovered
+                close.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                close.draw(new java.awt.geom.Line2D.Double(9, 9, 15, 15));
+                close.draw(new java.awt.geom.Line2D.Double(15, 9, 9, 15));
+            }
+            close.dispose();
             g2.dispose();
         }
     }

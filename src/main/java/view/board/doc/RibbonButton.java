@@ -157,10 +157,10 @@ class RibbonButton extends JComponent {
             g2.setColor(hover ? new Color(0, 0, 0, 60) : BOX);
             g2.draw(shape);
         } else if (active || pressed || hover) {
-            g2.setColor(active ? new Color(43, 81, 133, 55) : pressed ? PRESS : HOVER);
+            g2.setColor(active ? new Color(0, 122, 255, pressed ? 46 : 30) : pressed ? PRESS : HOVER);
             g2.fill(shape);
         }
-        g2.setColor(BoardTheme.LABEL);
+        g2.setColor(active ? BoardTheme.ACCENT : BoardTheme.LABEL);
         if (dropdown) {
             g2.setFont(textFont);
             FontMetrics fm = g2.getFontMetrics();

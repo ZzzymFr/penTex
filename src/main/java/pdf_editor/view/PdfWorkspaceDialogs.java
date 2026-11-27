@@ -115,6 +115,9 @@ public final class PdfWorkspaceDialogs {
     }
     private void autosave() {
         if (closed || busy || paper.isEditingNote() || (recoveryWrite != null && !recoveryWrite.isDone())) return;
+        if (GlassDialogs.isAnimating(parent)) return;
+        java.awt.Component board = SwingUtilities.getAncestorOfClass(view.board.BoardWindow.class, parent);
+        if (board instanceof view.board.BoardWindow window && window.isPanelAnimating()) return;
         SavedPdfDocument draft = snapshot();
         if (same(lastQueued, draft)) return;
         queueRecovery(draft);
@@ -179,9 +182,29 @@ public final class PdfWorkspaceDialogs {
     public void open() {
         if (closed || busy) return;
         paper.finishInlineEdit();
+        busy = true;
+        GlassNotices.NoticeHandle[] progress = {null};
+        Timer hint = new Timer(160, e -> progress[0] = GlassNotices.showProgress(parent, "Opening PDF documents…"));
+        hint.setRepeats(false); hint.start();
+        io.submit(() -> {
+            try {
+                var entries = workspace.list();
+                SwingUtilities.invokeLater(() -> {
+                    hint.stop(); if (progress[0] != null) progress[0].dismiss();
+                    if (closed) return;
+                    busy = false; openEntries(entries);
+                });
+            } catch (IOException | RuntimeException failure) {
+                SwingUtilities.invokeLater(() -> {
+                    hint.stop(); if (progress[0] != null) progress[0].dismiss();
+                    fail("Can't open PDF", failure);
+                });
+            }
+        });
+    }
+    private void openEntries(java.util.List<pdf_editor.use_case.PdfDocumentRepository.Summary> entries) {
         // Keep named saves separate from the latest recovery; confirm before leaving edits.
         try {
-            var entries = workspace.list();
             if (entries.isEmpty()) { GlassDialogs.info(parent, "No saved PDF documents yet."); return; }
             var choice = SavedPdfChooser.choose(parent, entries, this::deleteSaved);
             if (choice == null) return;

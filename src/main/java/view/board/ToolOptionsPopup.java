@@ -6,7 +6,6 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JColorChooser;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -34,7 +33,7 @@ import java.util.function.Consumer;
 
 /** Presentation of tool settings. Ink operations remain owned by DrawingCanvas. */
 final class ToolOptionsPopup extends JPopupMenu {
-    private static final Color BLUE = new Color(0x007AFF);
+    private static final Color BLUE = BoardTheme.ACCENT;
     private static final Color INK = new Color(0x26282D);
     private static final Color MUTED = new Color(0x747781);
     private static final Color TRACK = new Color(0xF0F0F4);
@@ -48,9 +47,74 @@ final class ToolOptionsPopup extends JPopupMenu {
     // A native/heavyweight macOS popup can paint an opaque rectangular backing even
     // when JPopupMenu and the rounded content are non-opaque.  Use the root's
     // existing layered pane on macOS instead of allocating a native popup window.
-    private JPanel macOverlay;
+    private Overlay macOverlay;
     private JLayeredPane macLayer;
     private AWTEventListener outsidePress;
+
+    /** Grows out of the tool that opened it and shrinks back into it; same path in and out. */
+    private static final class Overlay extends JPanel {
+        private final Spring appear = new Spring(0.004f, true);
+        private final Motion.Clock clock = new Motion.Clock();
+        private final javax.swing.Timer timer = new javax.swing.Timer(Motion.FRAME_MS, e -> step());
+        private float target;
+        private Point origin = new Point();   // the tool, in this panel's coords
+        private Runnable gone = () -> { };
+        boolean closing;
+
+        Overlay() {
+            super(new java.awt.BorderLayout());
+            setOpaque(false);
+            setBackground(new Color(0, 0, 0, 0));
+        }
+
+        void open(Point from) {
+            origin = from;
+            closing = false;
+            target = 1f;
+            if (!timer.isRunning() && appear.x >= 1f) appear.snap(0f);  // fresh open, not a re-grab
+            timer.start();
+        }
+
+        void close(Runnable after) {
+            closing = true;
+            target = 0f;
+            gone = after;
+            timer.start();
+        }
+
+        private void step() {
+            boolean still = appear.step(target, Motion.ENTER, clock.tick());
+            repaint();
+            if (still || (target == 0f && appear.x < 0.02f)) {
+                timer.stop();
+                clock.reset();
+                if (target == 0f) {
+                    appear.snap(0f);
+                    gone.run();
+                } else {
+                    appear.snap(1f);
+                }
+            }
+        }
+
+        // on its way out it's just a picture, clicks go to what's under it
+        @Override public boolean contains(int x, int y) {
+            return !closing && super.contains(x, y);
+        }
+
+        @Override public void paint(Graphics g) {
+            float a = Math.max(0f, Math.min(1f, appear.x));
+            if (a >= 0.999f) {
+                super.paint(g);
+                return;
+            }
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setComposite(java.awt.AlphaComposite.SrcOver.derive(a));
+            // Keep the visual and input coordinates identical during the fade.
+            super.paint(g2);
+            g2.dispose();
+        }
+    }
 
     ToolOptionsPopup(DrawingCanvas canvas, Consumer<Color> colorChanged) {
         this.canvas = canvas;
@@ -63,39 +127,74 @@ final class ToolOptionsPopup extends JPopupMenu {
         setFocusable(false);
     }
 
-    void showFor(DrawingCanvas.Tool tool, Component anchor, int x, int y) {
+    /**
+     * Opens beside the tool, on the side of the bar that faces the canvas: above a bottom bar,
+     * below a top one, out to the side of an upright one. capsule = the bar's visible capsule and
+     * toolAt = the clicked tool's centre, both in the bar's coords.
+     */
+    void showFor(DrawingCanvas.Tool tool, Component bar, ToolbarSpot spot,
+                 java.awt.Rectangle capsule, Point toolAt) {
         rebuild(tool);
-        if (BoardTheme.MAC && anchor.isShowing()) {
-            JRootPane root = SwingUtilities.getRootPane(anchor);
-            if (root != null) {
-                // All painting now belongs to the existing window's transparent
-                // Swing layer: no heavyweight white rectangle on Retina/Aqua.
-                JLayeredPane layer = root.getLayeredPane();
-                if (macOverlay == null) {
-                    macOverlay = new JPanel(new java.awt.BorderLayout());
-                    macOverlay.setOpaque(false);
-                    macOverlay.setBackground(new Color(0, 0, 0, 0));
-                }
-                Component content = getComponent(0);
+        JRootPane root = bar.isShowing() ? SwingUtilities.getRootPane(bar) : null;
+        if (root != null) {
+            // All painting belongs to the existing window's transparent Swing layer (same on
+            // Windows and macOS): no heavyweight native popup with a square backing.
+            JLayeredPane layer = root.getLayeredPane();
+            if (macOverlay == null) {
+                macOverlay = new Overlay();
+            }
+            Component content = getComponentCount() > 0 ? getComponent(0) : null;
+            if (content != null) {
                 remove(content);
                 macOverlay.removeAll();
                 macOverlay.add(content, java.awt.BorderLayout.CENTER);
-                if (macLayer != null && macLayer != layer) macLayer.remove(macOverlay);
-                macLayer = layer;
-                java.awt.Dimension size = macOverlay.getPreferredSize();
-                Point location = SwingUtilities.convertPoint(anchor, x, GlassBar.MARGIN, layer);
-                int left = Math.max(0, Math.min(location.x, layer.getWidth() - size.width));
-                int top = Math.max(0, location.y - size.height - TOOLBAR_GAP);
-                macOverlay.setBounds(left, top, size.width, size.height);
-                layer.add(macOverlay, JLayeredPane.POPUP_LAYER);
-                macOverlay.setVisible(true);
-                macOverlay.revalidate();
-                macOverlay.repaint();
-                listenForOutsidePress();
-                return;
             }
+            if (macLayer != null && macLayer != layer) macLayer.remove(macOverlay);
+            macLayer = layer;
+            RoundedSurface card = macOverlay.getComponentCount() > 0
+                    && macOverlay.getComponent(0) instanceof RoundedSurface r ? r : null;
+            if (card != null) card.pointTo(spot);
+            Dimension size = macOverlay.getPreferredSize();
+            java.awt.Rectangle cap = SwingUtilities.convertRectangle(bar, capsule, layer);
+            Point at = SwingUtilities.convertPoint(bar, toolAt, layer);
+            int left;
+            int top;
+            switch (spot) {
+                case TOP -> {
+                    left = at.x - size.width / 2;
+                    top = cap.y + cap.height + TOOLBAR_GAP;
+                }
+                case LEFT -> {
+                    left = cap.x + cap.width + TOOLBAR_GAP;
+                    top = at.y - size.height / 2;
+                }
+                case RIGHT -> {
+                    left = cap.x - size.width - TOOLBAR_GAP;
+                    top = at.y - size.height / 2;
+                }
+                default -> {
+                    left = at.x - size.width / 2;
+                    top = cap.y - size.height - TOOLBAR_GAP;
+                }
+            }
+            left = Math.max(0, Math.min(left, layer.getWidth() - size.width));
+            top = Math.max(0, Math.min(top, layer.getHeight() - size.height));
+            macOverlay.setBounds(left, top, size.width, size.height);
+            if (card != null) {
+                card.tipAt(spot.isVertical() ? at.y - top : at.x - left);
+            }
+            if (macOverlay.getParent() != layer) layer.add(macOverlay, JLayeredPane.POPUP_LAYER);
+            macOverlay.setVisible(true);
+            // the edge point nearest the tool: where it grows out of
+            Point origin = new Point(Math.max(0, Math.min(at.x - left, size.width)),
+                    Math.max(0, Math.min(at.y - top, size.height)));
+            macOverlay.open(origin);
+            macOverlay.revalidate();
+            macOverlay.repaint();
+            listenForOutsidePress();
+            return;
         }
-        show(anchor, x, GlassBar.MARGIN - getPreferredSize().height - TOOLBAR_GAP);
+        show(bar, toolAt.x - getPreferredSize().width / 2, capsule.y - getPreferredSize().height - TOOLBAR_GAP);
     }
 
     private void listenForOutsidePress() {
@@ -112,7 +211,7 @@ final class ToolOptionsPopup extends JPopupMenu {
 
     @Override public boolean isVisible() {
         return super.isVisible() || (macOverlay != null && macOverlay.isVisible()
-                && macOverlay.getParent() != null);
+                && macOverlay.getParent() != null && !macOverlay.closing);
     }
 
     @Override public void setVisible(boolean visible) {
@@ -121,13 +220,19 @@ final class ToolOptionsPopup extends JPopupMenu {
                 Toolkit.getDefaultToolkit().removeAWTEventListener(outsidePress);
                 outsidePress = null;
             }
-            if (macOverlay != null) {
-                macOverlay.setVisible(false);
-                if (macLayer != null) {
-                    macLayer.remove(macOverlay);
-                    macLayer.repaint();
-                    macLayer = null;
-                }
+            if (macOverlay != null && macLayer != null && macOverlay.getParent() == macLayer
+                    && !macOverlay.closing) {
+                Overlay leaving = macOverlay;
+                JLayeredPane layer = macLayer;
+                // shrinks back into its tool, then leaves the layer
+                leaving.close(() -> {
+                    if (leaving.closing) {
+                        leaving.setVisible(false);
+                        layer.remove(leaving);
+                        layer.repaint();
+                        if (macLayer == layer && !isVisible()) macLayer = null;
+                    }
+                });
             }
         }
         super.setVisible(visible);
@@ -187,7 +292,8 @@ final class ToolOptionsPopup extends JPopupMenu {
         }
         JButton wheel = colorDot(null, false, true);
         wheel.addActionListener(e -> {
-            Color selected = JColorChooser.showDialog(this, "Choose Pen Color", canvas.getInkColor());
+            setVisible(false);  // the sheet replaces the popover
+            Color selected = view.glass.GlassColorPicker.pick(canvas, "Pen Color", canvas.getInkColor());
             if (selected != null) { colorChanged.accept(selected); setVisible(false); }
         });
         colors.add(wheel);
@@ -394,29 +500,69 @@ final class ToolOptionsPopup extends JPopupMenu {
     }
 
     /** One self-painted rounded card, avoiding the native white menu-item surface. */
-    private static final class RoundedSurface extends JPanel {
+    static final class RoundedSurface extends JPanel {
+        private static final int TIP = 17;
+        // which edge of the card the tip sits on (the side facing the toolbar), and where along it
+        private ToolbarSpot facing = ToolbarSpot.BOTTOM;
+        private int tipAlong = -1;   // -1 = middle
+
         RoundedSurface() {
             super(new java.awt.BorderLayout());
             setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(10, 10, 14, 10));
+            pointTo(ToolbarSpot.BOTTOM);
         }
+
+        /** The toolbar is on this side of the window: the card opens away from it, tip toward it. */
+        void pointTo(ToolbarSpot toolbar) {
+            facing = switch (toolbar) {
+                case TOP -> ToolbarSpot.TOP;
+                case LEFT -> ToolbarSpot.LEFT;
+                case RIGHT -> ToolbarSpot.RIGHT;
+                default -> ToolbarSpot.BOTTOM;
+            };
+            int t = 10, l = 10, b = 10, r = 10;
+            switch (facing) {
+                case TOP -> t += TIP - 3;
+                case LEFT -> l += TIP - 3;
+                case RIGHT -> r += TIP - 3;
+                default -> b += TIP - 3;
+            }
+            setBorder(BorderFactory.createEmptyBorder(t, l, b, r));
+        }
+
+        void tipAt(int along) {
+            tipAlong = along;
+            repaint();
+        }
+
         @Override protected void paintComponent(Graphics graphics) {
             Graphics2D g=graphics2(graphics);
-            int cardBottom = getHeight() - 17;
-            int center = getWidth() / 2;
+            int x = 1, y = 1, w = getWidth() - 2, h = getHeight() - 2;
+            switch (facing) {
+                case TOP -> { y += TIP; h -= TIP; }
+                case LEFT -> { x += TIP; w -= TIP; }
+                case RIGHT -> w -= TIP;
+                default -> h -= TIP;
+            }
+            boolean across = facing == ToolbarSpot.TOP || facing == ToolbarSpot.BOTTOM;
+            int length = across ? getWidth() : getHeight();
+            int at = tipAlong < 0 ? length / 2 : Math.max(26, Math.min(tipAlong, length - 26));
+            Path2D tip = new Path2D.Double();
+            switch (facing) {
+                case TOP -> { tip.moveTo(at - 12, y + 1); tip.lineTo(at, y - 12); tip.lineTo(at + 12, y + 1); }
+                case LEFT -> { tip.moveTo(x + 1, at - 12); tip.lineTo(x - 12, at); tip.lineTo(x + 1, at + 12); }
+                case RIGHT -> { tip.moveTo(x + w - 1, at - 12); tip.lineTo(x + w + 12, at); tip.lineTo(x + w - 1, at + 12); }
+                default -> { tip.moveTo(at - 12, y + h - 1); tip.lineTo(at, y + h + 12); tip.lineTo(at + 12, y + h - 1); }
+            }
+            tip.closePath();
             // No artificial drop shadow or dark backing rectangle. Retain the
             // rounded card and the small white tip, including on Retina/Aqua.
             g.setColor(Color.WHITE);
-            g.fillRoundRect(1,1,getWidth()-2,cardBottom-1,23,23);
-            Path2D tip = new Path2D.Double();
-            tip.moveTo(center - 12, cardBottom - 1);
-            tip.lineTo(center, cardBottom + 12);
-            tip.lineTo(center + 12, cardBottom - 1);
-            tip.closePath();
+            g.fillRoundRect(x, y, w, h, 23, 23);
             g.fill(tip);
-            g.setColor(new Color(0xDBDFE7));
+            g.setColor(new Color(0, 0, 0, 26));
             g.setStroke(new BasicStroke(1));
-            g.drawRoundRect(1,1,getWidth()-3,cardBottom-2,23,23);
+            g.drawRoundRect(x, y, w - 1, h - 1, 23, 23);
             g.dispose();
         }
     }

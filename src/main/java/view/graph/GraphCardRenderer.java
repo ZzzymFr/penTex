@@ -267,7 +267,7 @@ final class GraphCardRenderer {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             float ui = ui(w);
-            Color accent = new Color(0, 122, 255);
+            Color accent = view.board.BoardTheme.ACCENT;
             Shape card = new RoundRectangle2D.Double(1, 1, w - 3, h - 3, GraphTheme.ARC * ui, GraphTheme.ARC * ui);
             g.setColor(new Color(0, 122, 255, 22));
             g.fill(card);

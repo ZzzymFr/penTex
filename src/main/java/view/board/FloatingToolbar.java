@@ -3,7 +3,6 @@ package view.board;
 import view.DrawingCanvas;
 import view.board.PdfPanel;
 
-import javax.swing.JColorChooser;
 import javax.swing.JComponent;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -18,8 +17,9 @@ import java.awt.event.ComponentEvent;
  * on its end; it docks to the middle of the nearest edge (standing up on the left / right) and remembers it.
  */
 public final class FloatingToolbar {
-    private static final int FRAME_MS = 16;
-    private static final float REF_MS = 16f;
+    private static final int FRAME_MS = Motion.FRAME_MS;
+    private static final float DECELERATION = 0.99f;  // snappy throw, ~0.1s of travel per px/s
+    private static final long VELOCITY_WINDOW_NS = 90_000_000L;
 
     private final DrawingCanvas canvas;
     private final JComponent area;
@@ -36,7 +36,8 @@ public final class FloatingToolbar {
     private final Spring sx = new Spring();
     private final Spring sy = new Spring();
     private final Timer timer = new Timer(FRAME_MS, e -> step());
-    private long lastNanos;
+    private final Motion.Clock clock = new Motion.Clock();
+    private final java.util.ArrayDeque<long[]> samples = new java.util.ArrayDeque<>();  // {nanos, x, y}
     private ToolbarSpot spot = ToolbarSpot.BOTTOM;
     private boolean dragging;
     private Point grab;
@@ -78,7 +79,7 @@ public final class FloatingToolbar {
         pdfPanel.editor().pageView().configurePdfDrawing(true,
                 () -> pdfPointerMode ? null : canvas.getTool(),
                 canvas::getInkColor, canvas::getPenWidth, canvas::getEraserMode, canvas::getEraserSize);
-        bar.setHoverToolLabels(true, this::relayout);
+        bar.setHoverToolLabels(true, this::hoverResized);
 
         canvas.addPropertyChangeListener(DrawingCanvas.TOOL_PROPERTY, e -> {
             pdfPointerMode = false;
@@ -95,6 +96,10 @@ public final class FloatingToolbar {
                 relayout();
             }
         });
+        if (area instanceof BoardWindow board) {
+            board.addPropertyChangeListener("canvasDockBounds", e -> relayout());
+            // The Board reports the actual clipped viewport, not the overscanned page.
+        }
     }
 
     public JComponent component() {
@@ -146,8 +151,7 @@ public final class FloatingToolbar {
             // Track explicit clicks, not isVisible(), so every click really toggles.
             optionsOpen = !optionsOpen;
             if (optionsOpen) {
-                int x = Math.max(0, (bar.getWidth() - 335) / 2);
-                options.showFor(canvas.getTool(), bar, x, -285);
+                options.showFor(canvas.getTool(), bar, spot, bar.capsuleBounds(), bar.centerOf(itemFor(tool)));
             } else {
                 options.setVisible(false);
             }
@@ -173,6 +177,16 @@ public final class FloatingToolbar {
         }
     }
 
+    // a hovered tool's label grows the bar: keep its start edge where it is, so the tool under the
+    // pointer stays under it (re-centring here made the whole bar slide on every hover)
+    private void hoverResized() {
+        if (dragging) {
+            return;
+        }
+        bar.setSize(bar.getPreferredSize());
+        bar.repaint();
+    }
+
     // stands up on the side edges; narrow room: labels off, then squeezes; then to the remembered spot
     public void relayout() {
         if (!dragging) {
@@ -181,18 +195,31 @@ public final class FloatingToolbar {
         if (!dragging && !timer.isRunning()) {
             bar.setLocation(target());
         }
-        area.repaint();
+        bar.repaint();
+    }
+
+    // where it docks: the canvas part of the window (not over an open PDF / History panel)
+    private java.awt.Rectangle dockFrame() {
+        if (area instanceof BoardWindow board) {
+            java.awt.Rectangle page = board.pageBounds();
+            if (page.width > 0 && page.height > 0) {
+                return page;
+            }
+        }
+        return new java.awt.Rectangle(0, 0, area.getWidth(), area.getHeight());
     }
 
     private void fit(ToolbarSpot s) {
+        java.awt.Rectangle f = area instanceof BoardWindow board ? board.toolbarFitBounds() : dockFrame();
         bar.setVertical(s.isVertical());
-        bar.fitTo(s.room(area.getWidth(), area.getHeight()));
+        bar.fitTo(s.room(f.width, f.height));
         bar.setSize(bar.getPreferredSize());
     }
 
     private Point target() {
-        Point cap = spot.capsuleAt(area.getWidth(), area.getHeight(), bar.capsuleWidth(), GlassBar.CAP_H);
-        return new Point(cap.x - GlassBar.MARGIN, cap.y - GlassBar.MARGIN);
+        java.awt.Rectangle f = dockFrame();
+        Point cap = spot.capsuleAt(f.width, f.height, bar.restingCapsuleWidth(), GlassBar.CAP_H);
+        return new Point(f.x + cap.x - GlassBar.MARGIN, f.y + cap.y - GlassBar.MARGIN);
     }
 
     // middle of the grip, in bar coords
@@ -204,7 +231,9 @@ public final class FloatingToolbar {
 
     private void startDrag(Point screen) {
         dragging = true;
-        timer.stop();
+        timer.stop();  // caught mid-flight: carry on from where it is on screen
+        clock.reset();
+        samples.clear();
         Point at = bar.getLocationOnScreen();
         grab = new Point(screen.x - at.x, screen.y - at.y);
     }
@@ -216,49 +245,80 @@ public final class FloatingToolbar {
         }
         Point areaAt = area.getLocationOnScreen();
         pointer = new Point(screen.x - areaAt.x, screen.y - areaAt.y);
-        ToolbarSpot live = ToolbarSpot.nearest(pointer, area.getWidth(), area.getHeight());
+        java.awt.Rectangle f = dockFrame();
+        ToolbarSpot live = ToolbarSpot.nearest(new Point(pointer.x - f.x, pointer.y - f.y), f.width, f.height);
         if (live.isVertical() != bar.isVertical()) {
             fit(live);
             grab = gripCenter();  // keep the grip under the mouse
         }
+        remember(pointer);
         int m = GlassBar.MARGIN;
-        int x = pointer.x - grab.x;
-        int y = pointer.y - grab.y;
-        x = Math.max(-m, Math.min(x, area.getWidth() - bar.getWidth() + m));
-        y = Math.max(-m, Math.min(y, area.getHeight() - bar.getHeight() + m));
+        int x = soften(pointer.x - grab.x, -m, area.getWidth() - bar.getWidth() + m, bar.getWidth());
+        int y = soften(pointer.y - grab.y, -m, area.getHeight() - bar.getHeight() + m, bar.getHeight());
         bar.setLocation(x, y);
-        area.repaint();
+        bar.repaint();
     }
 
-    // spring to the closest edge
+    // past an edge it still follows, just less and less
+    private static int soften(int v, int lo, int hi, int size) {
+        if (v < lo) return lo + Math.round(Motion.rubberband(v - lo, size));
+        if (v > hi) return hi + Math.round(Motion.rubberband(v - hi, size));
+        return v;
+    }
+
+    private void remember(Point p) {
+        long now = System.nanoTime();
+        samples.addLast(new long[]{now, p.x, p.y});
+        while (samples.size() > 2 && now - samples.peekFirst()[0] > VELOCITY_WINDOW_NS) {
+            samples.removeFirst();
+        }
+    }
+
+    // px/s over the last ~90ms; zero if the mouse sat still before letting go
+    private float[] releaseVelocity() {
+        if (samples.size() < 2) return new float[]{0, 0};
+        long[] a = samples.peekFirst();
+        long[] b = samples.peekLast();
+        long sinceLast = System.nanoTime() - b[0];
+        float secs = (b[0] - a[0]) / 1e9f;
+        if (secs <= 0.005f || sinceLast > VELOCITY_WINDOW_NS) return new float[]{0, 0};
+        return new float[]{(b[1] - a[1]) / secs, (b[2] - a[2]) / secs};
+    }
+
+    // throw it: dock at the edge the flick is heading for, keep the hand's speed
     private void drop() {
         dragging = false;
+        float[] v = releaseVelocity();
+        samples.clear();
         if (pointer != null) {
-            spot = ToolbarSpot.nearest(pointer, area.getWidth(), area.getHeight());
+            Point projected = new Point(
+                    pointer.x + Math.round(Motion.project(v[0], DECELERATION)),
+                    pointer.y + Math.round(Motion.project(v[1], DECELERATION)));
+            java.awt.Rectangle f = dockFrame();
+            spot = ToolbarSpot.nearest(new Point(projected.x - f.x, projected.y - f.y), f.width, f.height);
         }
         pointer = null;
         Point from = bar.getLocation();
+        boolean turned = bar.isVertical() != spot.isVertical();
         fit(spot);
         sx.x = from.x;
         sy.x = from.y;
-        sx.v = 0;
-        sy.v = 0;
-        lastNanos = 0;
+        // turning upright swaps the bar's axes, the old speed wouldn't mean much
+        sx.v = turned ? 0 : v[0];
+        sy.v = turned ? 0 : v[1];
+        clock.reset();
         timer.start();
     }
 
     private void step() {
-        long now = System.nanoTime();
-        float f = lastNanos == 0 ? FRAME_MS / REF_MS
-                : Math.max(0.1f, Math.min(2f, (now - lastNanos) / (REF_MS * 1e6f)));
-        lastNanos = now;
+        float dt = clock.tick();
         Point t = target();
-        boolean done = sx.step(t.x, 0.16f, 0.70f, f) & sy.step(t.y, 0.16f, 0.70f, f);
+        boolean done = sx.step(t.x, Motion.THROW, dt) & sy.step(t.y, Motion.THROW, dt);
         bar.setLocation(Math.round(sx.x), Math.round(sy.x));
-        area.repaint();
+        bar.repaint();
         if (done) {
             timer.stop();
-            lastNanos = 0;
+            clock.reset();
         }
     }
 }
