@@ -17,7 +17,6 @@ import java.awt.event.ComponentEvent;
  * on its end; it docks to the middle of the nearest edge (standing up on the left / right) and remembers it.
  */
 public final class FloatingToolbar {
-    private static final int FRAME_MS = Motion.FRAME_MS;
     private static final float DECELERATION = 0.99f;  // snappy throw, ~0.1s of travel per px/s
     private static final long VELOCITY_WINDOW_NS = 90_000_000L;
 
@@ -35,7 +34,7 @@ public final class FloatingToolbar {
     private boolean pdfPointerMode;
     private final Spring sx = new Spring();
     private final Spring sy = new Spring();
-    private final Timer timer = new Timer(FRAME_MS, e -> step());
+    private final Timer timer = new FrameTimer(e -> step());
     private final Motion.Clock clock = new Motion.Clock();
     private final java.util.ArrayDeque<long[]> samples = new java.util.ArrayDeque<>();  // {nanos, x, y}
     private ToolbarSpot spot = ToolbarSpot.BOTTOM;

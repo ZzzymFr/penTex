@@ -32,16 +32,13 @@ public final class PdfPageCanvas extends JPanel {
         default void bodyOverflow() { }
         default void bodyChanged() { }
     }
-    private static final int MARGIN = 28;
+    static final int PAGE_MARGIN = 28;
+    private static final int MARGIN = PAGE_MARGIN;
     private final PdfEditorController controller;
     private final pdf_editor.data_access.PdfScreenRasterCache screenRasters =
             new pdf_editor.data_access.PdfScreenRasterCache();
     private final PdfViewportPaintCache viewportPaint = new PdfViewportPaintCache();
-    /** Immutable page values are the cache key, not the frequency of Swing repaint events. */
-    private record StablePage(int page, double zoom, Dimension size, Color background,
-                              List<PdfDocument.Placement> placements, List<PdfDocument.NoteSpan> body,
-                              java.util.Set<String> selection, boolean editingBody, String editingNote) { }
-    private record BodyRaster(List<PdfDocument.NoteSpan> spans, List<PdfDocument.Placement> placements) { }
+    private final PdfBodyRasterCache bodyRasters = new PdfBodyRasterCache();
     private final Listener listener;
     private final PageZoomModel zoomModel = new PageZoomModel();
     private InteractiveGraphLayer graphs;
@@ -61,6 +58,7 @@ public final class PdfPageCanvas extends JPanel {
     public void resetInteractiveGraphs() {
         screenRasters.clear();
         viewportPaint.clear();
+        bodyRasters.clear();
         if (graphs != null) graphs.reset();
     }
     boolean isTextEditorShowing() { return inlineNote != null || inlineBody != null; }
@@ -88,6 +86,7 @@ public final class PdfPageCanvas extends JPanel {
         if (before != zoomModel.zoom()) {
             screenRasters.clear();
             viewportPaint.clear();
+            bodyRasters.clear();
         }
         updateSize();
         if (inlineNote != null) {
@@ -619,6 +618,7 @@ public final class PdfPageCanvas extends JPanel {
                 updateToolCursor();
                 requestFocusInWindow();
                 if (inkToolActive()) {beginPdfStroke(e);return;}
+                PdfPageDamage.State before = paintState();
                 // Commit an active body/note before choosing a PDF object.
                 editingBeforePress = inlineNote != null || inlineBody != null;
                 finishInlineEdit();
@@ -659,7 +659,7 @@ public final class PdfPageCanvas extends JPanel {
                 }
                 if (e.isPopupTrigger()) listener.contextMenu(e);
                 refreshInteractiveGraphs();
-                repaint();
+                repaintChange(before);
             }
             @Override public void mouseDragged(MouseEvent e) {
                 updateToolCursor();
@@ -671,6 +671,7 @@ public final class PdfPageCanvas extends JPanel {
                     repaint(); return;
                 }
                 if (controller.selected() == null || anchor == null) return;
+                PdfPageDamage.State before = paintState();
                 float dx = PageCoordinateMapper.deltaToPage(e.getX() - anchor.x, zoom());
                 float dy = PageCoordinateMapper.deltaToPage(e.getY() - anchor.y, zoom());
                 if (!dragStarted) {
@@ -684,7 +685,7 @@ public final class PdfPageCanvas extends JPanel {
                 } else if (resizing) controller.transform(oldX, oldY, oldW + dx, oldH + dy);
                 else controller.transform(oldX + dx, oldY + dy, oldW, oldH);
                 refreshInteractiveGraphs();
-                repaint();
+                repaintChange(before);
             }
             @Override public void mouseReleased(MouseEvent e) {
                 if (inkToolActive()) {
@@ -815,8 +816,7 @@ public final class PdfPageCanvas extends JPanel {
                         g.getDeviceConfiguration().getDefaultTransform().getScaleX()));
                 int w = Math.min(3200, (int)Math.ceil(body.width()*scale));
                 int h = Math.min(3200, (int)Math.ceil(body.height()*scale));
-                g.drawImage(pdf_editor.data_access.PdfScreenRasterCache.render(new BodyRaster(spans, items), w, h,
-                                () -> PdfWrapTextLayout.render(spans, items, w, h)),
+                g.drawImage(bodyRaster(spans, items, w, h),
                         Math.round(body.x())+MARGIN, Math.round(body.y())+MARGIN,
                         Math.round(body.width()), Math.round(body.height()), null);
             }
@@ -870,15 +870,17 @@ public final class PdfPageCanvas extends JPanel {
     @Override public void removeNotify() {
         viewportPaint.clear();
         screenRasters.clear();
+        bodyRasters.clear();
         super.removeNotify();
     }
 
     @Override protected void paintComponent(Graphics g) {
-        // Preserve the original live rendering for ink, lasso, transforms and printing.
+        // Preserve live rendering for ink, lasso and printing. Normal transforms
+        // keep the backing surface and update just the old/new object bounds.
         // Inline text editors and interactive graphs are Swing children, not cached pixels.
         if (isPaintingForPrint()) { paintPage(g); return; }
         if (g instanceof Graphics2D target && isOpaque()
-                && !dragStarted && !selectingBox
+                && !selectingBox
                 && inkPreview.isEmpty() && erasePreview.isEmpty() && liveErasedInk.isEmpty()
                 && selectionCandidates.isEmpty()) {
             Rectangle visible = getVisibleRect();
@@ -889,13 +891,35 @@ public final class PdfPageCanvas extends JPanel {
             // Explicit full-page/offscreen callers can ask for more than the visible
             // viewport; preserve their original drawing rather than omitting content.
             if (!dirty.isEmpty() && visible.contains(dirty)) {
-                StablePage state = new StablePage(controller.currentPage(), zoom(), getSize(), getBackground(),
-                        controller.placements(), controller.body(), controller.selectedIds(),
-                        inlineBody != null, inlineNote == null ? null : editingId);
+                PdfPageDamage.State state = paintState();
                 if (viewportPaint.paint(target, visible, state, this::paintPage)) return;
             }
         } else viewportPaint.clear();
         paintPage(g);
+    }
+
+    private PdfPageDamage.State paintState() {
+        return new PdfPageDamage.State(controller.currentPage(), zoom(), getSize(), getBackground(),
+                controller.placements(), controller.body(), controller.selectedIds(),
+                inlineBody != null, inlineNote == null ? null : editingId);
+    }
+
+    /** Avoid sending the entire A4-sized component to Swing's dirty-region manager
+     * on every pointer event. The backing still compares against its last painted state. */
+    private void repaintChange(PdfPageDamage.State before) {
+        Rectangle visible = getVisibleRect();
+        if (selectingBox || isTextEditorShowing() || visible.isEmpty() || !selectionCandidates.isEmpty()) {
+            repaint();
+            return;
+        }
+        Rectangle damage = PdfPageDamage.between(before, paintState(), visible);
+        if (!damage.isEmpty()) repaint(damage);
+    }
+
+    private BufferedImage bodyRaster(List<PdfDocument.NoteSpan> spans,
+                                     List<PdfDocument.Placement> placements, int w, int h) {
+        return isPaintingForPrint() ? PdfWrapTextLayout.render(spans, placements, w, h)
+                : bodyRasters.render(spans, placements, w, h);
     }
 
     private void paintPage(Graphics g) {
@@ -928,7 +952,7 @@ public final class PdfPageCanvas extends JPanel {
                         g2.getDeviceConfiguration().getDefaultTransform().getScaleX()));
                 int w = Math.min(3200, (int)Math.ceil(body.width()*deviceScale));
                 int h = Math.min(3200, (int)Math.ceil(body.height()*deviceScale));
-                g2.drawImage(PdfWrapTextLayout.render(controller.body(), placements, w, h),
+                g2.drawImage(bodyRaster(controller.body(), placements, w, h),
                         Math.round(body.x())+MARGIN, Math.round(body.y())+MARGIN,
                         Math.round(body.width()), Math.round(body.height()), null);
             }

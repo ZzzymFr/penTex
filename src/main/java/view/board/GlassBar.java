@@ -182,13 +182,14 @@ public class GlassBar extends JComponent {
     private final Spring lensW = new Spring();
     private float lensAlpha;
 
-    private final Timer timer = new Timer(FRAME_MS, e -> step());
+    private final Timer timer = new FrameTimer(e -> step());
     private final Motion.Clock clock = new Motion.Clock();
     private final GlassBackdropCache opticalBackdrop = new GlassBackdropCache(this::repaint);
     private final GlassLensRaster lensRaster = new GlassLensRaster();
     private Item pendingHover;
     private float hoverWait;
-    private static final float HOVER_DWELL = .12f;
+    // none: lens + label move the moment the pointer does
+    private static final float HOVER_DWELL = 0f;
 
     public GlassBar(Font font, JComponent reference, Consumer<Graphics2D> backdrop, LongSupplier version) {
         this(font, (Supplier<Point>) null, backdrop, version, reference);
@@ -782,6 +783,7 @@ public class GlassBar extends JComponent {
 
     @Override public void removeNotify() {
         timer.stop(); clock.reset(); opticalBackdrop.clear(); lensRaster.clear();
+        faceImage = null; faceKey = null;
         hoverItem = pendingHover = null; hoverWait = 0; lensAlpha = 0;
         super.removeNotify();
     }
@@ -804,8 +806,8 @@ public class GlassBar extends JComponent {
         RoundRectangle2D.Float cap = capsule(press.x * 3f);
         double deviceScale = Math.hypot(g2.getTransform().getScaleX(), g2.getTransform().getShearY());
         GlassBackdropCache.Sample sample = opticalBackdrop.region(lw(), lh(), vertical, origin(),
-                version.getAsLong(), timer.isRunning(), deviceScale, this::captureBackdrop);
-        paintFace(g2, sample, cap);
+                version.getAsLong(), timer.isRunning() || hostSliding(), deviceScale, this::captureBackdrop);
+        paintFaceCached(g2, sample, cap);
         float scale = cap.width / capW;
         paintForeground(g2, cap, scale);
         if (lensAlpha > .01f) {
@@ -815,7 +817,10 @@ public class GlassBar extends JComponent {
             Graphics2D optical = (Graphics2D) g2.create();
             float base = optical.getComposite() instanceof AlphaComposite ac ? ac.getAlpha() : 1f;
             optical.setComposite(AlphaComposite.SrcOver.derive(base * lensAlpha));
-            lensRaster.paint(optical, lens, sample, sceneVersion(), deviceScale, HOVER_MAG,
+            // magnifies as it fades in, so the icon grows instead of a big copy popping over it
+            float a = Math.min(1f, lensAlpha);
+            float mag = 1f + (HOVER_MAG - 1f) * a * a * a;
+            lensRaster.paint(optical, lens, sample, sceneVersion(), deviceScale, mag,
                     scene -> {
                         sample.paint(scene);
                         paintFace(scene, sample, cap);
@@ -830,6 +835,59 @@ public class GlassBar extends JComponent {
             optical.dispose();
         }
         g2.dispose();
+    }
+
+    // The face (round clip = Java2D's slow software path) is the same frame to frame while a panel
+    // slides or the bar moves, so draw it once and reuse the pixels. Same pixels as painting it
+    // directly; only used when they land 1:1 on device pixels (mac retina, windows 100 / 200%).
+    private BufferedImage faceImage;
+    private List<Object> faceKey;
+
+    private void paintFaceCached(Graphics2D g2, GlassBackdropCache.Sample sample, RoundRectangle2D.Float cap) {
+        AffineTransform at = g2.getTransform();
+        boolean plain = (at.getType() & ~(AffineTransform.TYPE_TRANSLATION | AffineTransform.TYPE_UNIFORM_SCALE)) == 0;
+        double s = at.getScaleX();
+        int ox = (int) Math.floor(cap.x) - 2;
+        int oy = (int) Math.floor(cap.y) - 2;
+        double devX = at.getTranslateX() + ox * s;
+        double devY = at.getTranslateY() + oy * s;
+        boolean aligned = plain && s >= 1 && Math.abs(s - Math.rint(s)) < 1e-6
+                && Math.abs(devX - Math.rint(devX)) < 1e-6 && Math.abs(devY - Math.rint(devY)) < 1e-6;
+        if (!aligned || appear < 1f || !(g2.getComposite() instanceof AlphaComposite ac)
+                || ac.getRule() != AlphaComposite.SRC_OVER || ac.getAlpha() < 1f) {
+            paintFace(g2, sample, cap);
+            return;
+        }
+        int k = (int) Math.rint(s);
+        int w = (int) Math.ceil(cap.x + cap.width) + 2 - ox;
+        int h = (int) Math.ceil(cap.y + cap.height) + 2 - oy;
+        List<Object> key = new ArrayList<>(List.of(sample.image(), sample.offsetX(), sample.offsetY(),
+                sample.scale(), cap.x, cap.y, cap.width, cap.height, capW, glow, glowAt.x, glowAt.y, k));
+        for (Platter p : platters.values()) {
+            key.add(p.x.x);
+            key.add(p.w.x);
+        }
+        if (faceImage == null || !key.equals(faceKey)) {
+            BufferedImage img = new BufferedImage(w * k, h * k, BufferedImage.TYPE_INT_ARGB_PRE);
+            Graphics2D fg = img.createGraphics();
+            try {
+                fg.setRenderingHints(g2.getRenderingHints());
+                fg.scale(k, k);
+                fg.translate(-ox, -oy);
+                paintFace(fg, sample, cap);
+            } finally {
+                fg.dispose();
+            }
+            faceImage = img;
+            faceKey = key;
+        }
+        g2.drawImage(faceImage, new AffineTransform(1.0 / k, 0, 0, 1.0 / k, ox, oy), null);
+    }
+
+    // side panels sliding: keep the backdrop we have, the last frame refreshes it
+    private boolean hostSliding() {
+        BoardWindow board = (BoardWindow) SwingUtilities.getAncestorOfClass(BoardWindow.class, this);
+        return board != null && board.isPanelAnimating();
     }
 
     private void paintFace(Graphics2D g2, GlassBackdropCache.Sample sample, RoundRectangle2D.Float cap) {
@@ -1009,7 +1067,8 @@ public class GlassBar extends JComponent {
 
     private RoundRectangle2D.Float lensShape() {
         float lh = capH + 2 * HOVER_GROW_Y + press.x * 4f;
-        float lw = Math.max(lh, lensW.x + Math.min(Math.abs(lensX.v) * 1.2f, 28f) + press.x * 4f);
+        // no speed stretch: it added up to 28px mid-move, so the zoomed bubble puffed up then shrank
+        float lw = Math.max(lh, lensW.x + press.x * 4f);
         float lcx = MARGIN + PAD + lensX.x;
         float lcy = MARGIN + capH / 2f;
         return new RoundRectangle2D.Float(lcx - lw / 2, lcy - lh / 2, lw, lh, lh, lh);

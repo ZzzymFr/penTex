@@ -65,12 +65,12 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         else refreshSaveState();
     });
     // side panels slide in / out (shown width), instead of popping; a divider drag tracks 1:1
-    private final Spring historyShown = new Spring(0.5f);
-    private final Spring pdfShown = new Spring(0.5f);
-    private long panelStartNanos;
-    private float panelFromHistory, panelFromPdf;
-    private static final long PANEL_DURATION_NANOS = 220_000_000L;
-    private final javax.swing.Timer panelTimer = new javax.swing.Timer(Motion.FRAME_MS, e -> stepPanels());
+    // 1px: the last sub-pixel creep costs full frames and nobody sees it
+    private final Spring historyShown = new Spring(1f);
+    private final Spring pdfShown = new Spring(1f);
+    // springs, not a fixed curve: a reversal mid-way keeps its speed instead of stopping dead
+    private final Motion.Clock panelClock = new Motion.Clock();
+    private final javax.swing.Timer panelTimer = new FrameTimer(e -> stepPanels());
     private boolean panelsMoving;
     private int historyTarget;
     private int pdfTarget;
@@ -78,6 +78,11 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     // The live page is translated at a stable size while the panels animate. The
     // mask covers the portions outside the true viewport, including transparent History.
     private final CanvasTransitionMask transitionMask = new CanvasTransitionMask();
+    // focus mode in / out: the PDF grows from its spot instead of popping
+    private final FocusMorph focusMorph = new FocusMorph();
+    // while a panel slides it's drawn from one picture, not repainted live every frame
+    private final PanelStandIn historyStandIn = new PanelStandIn();
+    private final PanelStandIn pdfStandIn = new PanelStandIn();
     private Rectangle transitionVisible;
     private Rectangle transitionDock;
     private int transitionRightLimit;
@@ -166,7 +171,7 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         historyClose.finish();
         pdfBar = bar(15f);
         // Default to real split view, with no second overlay mode in the UI.
-        pdfBar.action("PDF", Icons::document, () -> {pdfOverlay = false; setPdfOpen(true, true);}, () -> true);
+        pdfBar.action("PDF", Icons::document, () -> {pdfOverlay = false; setPdfOpen(!pdfOpen, true);}, () -> true);
         pdfBar.finish();
         pdfClose = bar(15f);
         pdfClose.action(null, Icons::close, () -> setPdfOpen(false, true), () -> true);
@@ -190,7 +195,9 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         }
         add(historyDivider);
         add(pdfDivider);
+        add(historyStandIn);
         add(this.history);
+        add(pdfStandIn);
         add(pdf);
         add(transitionMask);
         add(page);
@@ -288,7 +295,10 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private void setPdfOpen(boolean open, boolean animate) {
         if (!animate) snapPanels = true;
         if (open != pdfOpen) { pdfFitGeneration++; }
-        if (!open) { pdfFullscreen = false; pdfJustOpened = false; ghost.clearOutline(); }
+        if (!open) {
+            focusMorph.cancel();
+            pdfFullscreen = false; pdfJustOpened = false; ghost.clearOutline();
+        }
         boolean firstOpen = open && !pdfOpen;
         pdfOpen = open;
         if (firstOpen) pdfJustOpened = true;
@@ -298,16 +308,76 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     public boolean isPdfFullscreen() { return pdfFullscreen; }
     /** Full PDF focus mode, escaped with Esc or the View ribbon control. */
     public void setPdfFullscreen(boolean fullscreen) {
+        boolean animate = fullscreen != pdfFullscreen && isShowing() && getWidth() > 0 && getHeight() > 0;
+        Rectangle morphFrom = null;
+        java.awt.image.BufferedImage before = null;
+        if (animate) {
+            // mid-flight toggle: start from what's on screen, morph included
+            morphFrom = focusMorph.isVisible() ? focusMorph.liveRect() : pdfRect();
+            before = snapshot();
+        }
         if (fullscreen) { pdfOpen = true; ghost.clearOutline(); }
         if (pdfFullscreen != fullscreen) {
             pdfFitGeneration++;
             panelTimer.stop();
+            panelClock.reset();
             panelsMoving = false;
             snapPanels = true;
         }
         pdfFullscreen = fullscreen;
         if (fullscreen) pdfJustOpened = true;
         relayout();
+        if (animate) morphFocus(before, morphFrom);
+    }
+
+    private void morphFocus(java.awt.image.BufferedImage before, Rectangle from) {
+        // only in the tree while it runs, on top of everything incl. the floating toolbar
+        if (focusMorph.getParent() == this) setComponentZOrder(focusMorph, 0);
+        else add(focusMorph, 0);
+        focusMorph.setBounds(0, 0, getWidth(), getHeight());
+        focusMorph.begin(before, from);
+        validate();  // final layout now; its deferred PDF fit is queued before us
+        long generation = pdfFitGeneration;
+        SwingUtilities.invokeLater(() -> {
+            if (generation != pdfFitGeneration || !focusMorph.isVisible()) return;
+            validate();
+            focusMorph.setCapturing(true);
+            java.awt.image.BufferedImage after;
+            try { after = snapshot(); }
+            finally { focusMorph.setCapturing(false); }
+            focusMorph.land(after, pdfRect());
+        });
+    }
+
+    // where the PDF sits on screen; closed = a sliver at the right edge it comes in from
+    private Rectangle pdfRect() {
+        if (pdfFullscreen) return new Rectangle(0, 0, getWidth(), getHeight());
+        if (!pdf.isVisible()) return new Rectangle(getWidth(), 0, 0, getHeight());
+        return pdf.getBounds().intersection(new Rectangle(0, 0, getWidth(), getHeight()));
+    }
+
+    // A bounded picture for the short focus transition only. The live PDF stays native DPI.
+    private java.awt.image.BufferedImage snapshot() {
+        int w = getWidth();
+        int h = getHeight();
+        java.awt.GraphicsConfiguration gc = getGraphicsConfiguration();
+        double nativeScale = gc == null ? 1 : Math.max(1, gc.getDefaultTransform().getScaleX());
+        double scale = FocusMorph.snapshotScale(w, h, nativeScale);
+        int iw = (int) Math.ceil(w * scale);
+        int ih = (int) Math.ceil(h * scale);
+        java.awt.image.BufferedImage img = gc == null
+                ? new java.awt.image.BufferedImage(iw, ih, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                : gc.createCompatibleImage(iw, ih, java.awt.Transparency.OPAQUE);
+        Graphics2D g = img.createGraphics();
+        try {
+            g.scale(iw / (double) w, ih / (double) h);
+            g.setColor(BoardTheme.CANVAS);
+            g.fillRect(0, 0, w, h);
+            paint(g);
+        } finally {
+            g.dispose();
+        }
+        return img;
     }
     public void addFloatingToolbar(JComponent toolbar) {
         floatingToolbar = java.util.Objects.requireNonNull(toolbar);
@@ -360,6 +430,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     public void doLayout() {
         int w = getWidth();
         int h = getHeight();
+        // a resize mid-morph would stretch the pictures: just show the live layout
+        if (focusMorph.isVisible() && (focusMorph.getWidth() != w || focusMorph.getHeight() != h)) focusMorph.cancel();
         int half = SplitDivider.HIT / 2;
         if (pdfFullscreen) {
             clearPanelTransition();
@@ -377,6 +449,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             if (titleStrip != null) titleStrip.setVisible(false);
             pdf.setBounds(0, 0, w, h);
             ghost.setBounds(0, 0, w, h);
+            historyStandIn.drop();
+            pdfStandIn.drop();
             finishPdfOpen();
             return;
         }
@@ -418,6 +492,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             pdf.setBounds(w - pw, 0, full, h);
             pdfDivider.setBounds(w - pw - half, 0, SplitDivider.HIT, h);
         }
+        standIn(historyStandIn, history, historyOut);
+        standIn(pdfStandIn, pdf, pdfOut);
         int canvasWidth = Math.max(0, w - hw - (pdfOut && !pdfOverlay ? pw : 0));
         Rectangle visibleCanvas = new Rectangle(hw, 0, canvasWidth, h);
         Rectangle targetCanvas = new Rectangle(hTarget, 0,
@@ -497,9 +573,20 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         if (!panelsMoving) finishPdfOpen();
     }
 
+    private void standIn(PanelStandIn standIn, JComponent panel, boolean out) {
+        if (panelsMoving && out) {
+            if (!standIn.holds()) {
+                standIn.take(panel);
+                panelClock.reset();  // the picture took a while: don't count it as motion, no jump
+            }
+            standIn.follow(panel);
+        } else {
+            standIn.drop();
+        }
+    }
+
     // panels head for their new widths; jump there when not on screen or when a divider drags
     private void settlePanels(int hTarget, int pTarget) {
-        boolean changed = historyTarget != hTarget || pdfTarget != pTarget;
         historyTarget = hTarget;
         pdfTarget = pTarget;
         boolean snap = snapPanels || !isShowing() || Motion.reduced();
@@ -509,19 +596,21 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
             pdfShown.snap(pTarget);
             panelsMoving = false;
             panelTimer.stop();
+            panelClock.reset();
             return;
         }
-        if (historyShown.x != hTarget || pdfShown.x != pTarget) {
-            if (changed || !panelTimer.isRunning()) {
-                panelFromHistory = historyShown.x;
-                panelFromPdf = pdfShown.x;
-                panelStartNanos = System.nanoTime();
+        boolean moving = historyShown.x != hTarget || pdfShown.x != pTarget
+                || historyShown.v != 0 || pdfShown.v != 0;
+        if (moving) {
+            // new target: the springs just re-aim, speed carries over
+            if (!panelTimer.isRunning()) {
+                panelClock.reset();
                 panelTimer.start();
             }
             panelsMoving = true;
         } else if (panelsMoving) {
-            // A rapid reversal may return to the starting width before the first tick.
             panelTimer.stop();
+            panelClock.reset();
             panelsMoving = false;
         }
     }
@@ -552,18 +641,21 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     private void stepPanels() {
         if (!isShowing()) {
             panelTimer.stop();
+            panelClock.reset();
             panelsMoving = false;
             snapPanels = true;
             return;
         }
-        double t = Math.min(1.0, (System.nanoTime() - panelStartNanos) / (double) PANEL_DURATION_NANOS);
-        float progress = (float) (1 - Math.pow(1 - t, 3));
-        historyShown.snap(panelFromHistory + (historyTarget - panelFromHistory) * progress);
-        pdfShown.snap(panelFromPdf + (pdfTarget - panelFromPdf) * progress);
-        if (t >= 1.0) {
-            historyShown.snap(historyTarget);
-            pdfShown.snap(pdfTarget);
+        stepPanels(panelClock.tick());
+    }
+
+    // dt split out so smoke tests can drive frames
+    void stepPanels(float dt) {
+        boolean still = historyShown.step(historyTarget, Motion.PANEL, dt);
+        still &= pdfShown.step(pdfTarget, Motion.PANEL, dt);
+        if (still) {
             panelTimer.stop();
+            panelClock.reset();
             panelsMoving = false;
         }
         Rectangle beforeHistory = history.isVisible() ? history.getBounds() : new Rectangle();
@@ -596,7 +688,9 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
     }
 
     @Override public void removeNotify() {
+        focusMorph.cancel();
         panelTimer.stop();
+        panelClock.reset();
         clearPanelTransition();
         saveStateDebounce.stop();
         panelsMoving = false;

@@ -182,9 +182,10 @@ public final class AppleUiOpticsAndPanelMotionSmoke {
         check(!board.isPanelAnimating(),"Panel transition failed to settle");
         check(canvas.getBounds().equals(board.pageBounds()),"Final live Canvas must have exact viewport bounds");
     }
+    // springs now: one ~frame per call, 1.0+ runs until it settles
     private static void tick(BoardWindow board,double fraction) {
-        try {Field f=BoardWindow.class.getDeclaredField("panelStartNanos");f.setAccessible(true);f.setLong(board,System.nanoTime()-(long)(220_000_000L*fraction));}
-        catch(ReflectiveOperationException ex){throw new AssertionError(ex);}
-        invoke(board,"stepPanels",new Class<?>[0]);
+        int frames=fraction>=1?400:1;
+        for(int i=0;i<frames&&(i==0||board.isPanelAnimating());i++)
+            invoke(board,"stepPanels",new Class<?>[]{float.class},.05f);
     }
 }
