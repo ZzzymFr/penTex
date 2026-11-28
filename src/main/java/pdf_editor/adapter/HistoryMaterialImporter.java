@@ -3,7 +3,7 @@ package pdf_editor.adapter;
 import entity.graph.GraphDefinition;
 import interface_adapter.graph.GraphDefinitionCodec;
 import interface_adapter.history.HistoryItem;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import javax.imageio.ImageIO;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;

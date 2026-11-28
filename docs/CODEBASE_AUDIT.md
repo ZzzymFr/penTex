@@ -22,7 +22,7 @@
 
 ```mermaid
 flowchart TD
-    Main[app.main] --> Model[vital_mini.init]
+    Main[app.Main.main] --> Model[vital_mini.init]
     Main --> Builder[StackedAppBuilder.build]
     Builder --> Board[BoardWindow / DrawingCanvas]
     Board --> Page[AnswerCanvasPage]
@@ -61,7 +61,7 @@ Arrows show calls, published results or the path of a user action. The builder s
 4. **From completed work to documents.** `MathLabCollector` marshals changes to the event thread. For calculations it attempts to persist history before publishing a material to library listeners. For graphs it first creates a library material, then passes its encoded PNG to history. Persistence failures are logged and publication may still succeed in memory. Copies into a `PdfDocument` acquire placement coordinates and their own edit history. The editor renders pages and exports through PDFBox. Clearing board ink leaves archived items available.
 5. **From board state to disk.** `CanvasWorkspaceDialogs` and `CanvasWorkspace` coordinate save, Save As and restart selection. `FileCanvasRepository` encodes ink, answer data, assets and viewport into versioned files under the user's home. History storage has a separate format and lifecycle. Editable PDF placements, the local user-function map and live plot sessions do not share either repository. A PDF export produces a finished file.
 
-**Core patterns.** `NodeVisitor`, `ValueVisitor` and `PlotVisitor` dispatch by math/plot type. Formula capture revisions address stale asynchronous results. View models publish property changes to separate fresh artifacts, view changes and calculation results. Function, graph and phase stores implement narrow use-case interfaces. The editor's snapshots support undo/redo. Swing event handlers and layout, input hit-testing and rendering state occupy much of the project. Tests for those areas often exercise actual component geometry and event dispatch.
+**Core patterns.** `NodeVisitor`, `ValueVisitor` and `PlotVisitor` dispatch by math/plot type. Formula capture revisions address stale asynchronous results. View models publish property changes to separate fresh artifacts, view changes and calculation results. Function, graph and phase stores implement narrow use-case interfaces. The editor's snapshots support undo/redo. The board canvas uses the Command pattern: drawing, erasing, Clear, selection edits, picture edits, zoom and Reset view are `Command` objects run through one `CommandHistory` ([use_case/command](../src/main/java/use_case/command/), [interface_adapter/canvas](../src/main/java/interface_adapter/canvas/)). Content commands keep a canvas memento, view commands keep the replaced `ViewportState`, and the notches of one zoom gesture merge into one step. Swing event handlers and layout, input hit-testing and rendering state occupy much of the project. Tests for those areas often exercise actual component geometry and event dispatch.
 
 ## Bootstrap, recognition and infrastructure
 
@@ -69,9 +69,9 @@ Paths in the following source tables are under `src/main/java`. The live recogni
 
 | File | Responsibility, inputs, outputs and connections |
 |---|---|
-| [app.java](../src/main/java/app.java) | Default-package entry point. `main` constructs the model and calls `init` before scheduling `run`. Startup creates a timestamped log, initializes native inference, installs the system look and feel when available, builds the frame on Swing's event thread and shows it. The window-closed callback releases the model. An initialization exception handled in main closes it and exits with status 1. |
+| [app/Main.java](../src/main/java/app/Main.java) | Entry point (`app.Main`, the Maven main class). `main` constructs the model and calls `init` before scheduling `run`. Startup creates a timestamped log, initializes native inference, installs the system look and feel when available, builds the frame on Swing's event thread and shows it. The window-closed callback releases the model. An initialization exception handled in main closes it and exits with status 1. |
 | [app/StackedAppBuilder.java](../src/main/java/app/StackedAppBuilder.java) | Composition root. `build` wires use cases, data adapters and view models, routes integrals, supplies a session factory per card, embeds PDF and history, and binds shortcuts and close confirmation. A second `MathLabViewModel` isolates history recalculation from the board's pending result. Both evaluators share the function store. Startup calls `restoreLatestAtStartup`. |
-| [app/log_writer.java](../src/main/java/app/log_writer.java) | Creates missing parent directories, appends `.log` if necessary, opens a Java logging `FileHandler` in append mode and exposes level/exception overloads plus `close`. `app.init` logs startup and successful model initialization. |
+| [app/LogWriter.java](../src/main/java/app/LogWriter.java) | Creates missing parent directories, appends `.log` if necessary, opens a Java logging `FileHandler` in append mode and exposes level/exception overloads plus `close`. `app.init` logs startup and successful model initialization. |
 | [data_access/BandRule.java](../src/main/java/data_access/BandRule.java) | Injectable line-height rule with tallest-band or whole-ink implementations. The optional grayscale overload of `prepare` consumes it. |
 | [data_access/CropScale.java](../src/main/java/data_access/CropScale.java) | Lazily loads and validates the scale model, computes occupancy, band statistics, component boxes, row-run and shear features from the cropped mask. `chooseIndex` predicts a candidate multiplier using direct or surface trees. `RULE` gives a constant 1. Missing deployment file raises an unchecked I/O error. |
 | [data_access/FormulaImagePreprocessor.java](../src/main/java/data_access/FormulaImagePreprocessor.java) | `prepare(image)` composites alpha on white, finds the foreground, sizes it using `CropScale` and `FormulaLayout`, and centers resized RGB on black/white padding. Empty ink raises an argument error. The overload accepting `BandRule` estimates pen thickness and uses grayscale. |
@@ -483,9 +483,14 @@ Each table covers one production source directory under `src/main/java`. The nam
 
 | Source | Implementation and connections |
 | --- | --- |
-| [DrawingCanvas.java](../src/main/java/view/DrawingCanvas.java) | Owns world-space strokes, per-stroke color and width, FormulaBook, placed images and graph slots. Mouse and key events draw, erase, select, transform, undo and pan. Captures revision-tagged ink for recognition, paints answers and exports or restores CanvasState. Restored graph slots contain an image and bounds with a null live-session tag. Entry `registerSelection()`. |
+| [DrawingCanvas.java](../src/main/java/view/DrawingCanvas.java) | Swing view and controller of the board canvas; keeps the public canvas API and forwards to the parts in [view/drawing](../src/main/java/view/drawing/). Mouse and key events go through `CanvasInput` to one `CanvasTool` per tool (pen, eraser, lasso/box). Every edit and zoom runs as a command through `CommandHistory` for undo/redo. Captures revision-tagged ink for recognition via `CanvasFormulaReader`, places answers and exports or restores CanvasState. Entry `registerSelection()`. |
+| [CanvasFormulaReader.java](../src/main/java/view/CanvasFormulaReader.java) | Recognition input for the canvas: binds loose strokes into formulas at a pause (through `FormulaGrouper`) and captures a formula as a revision-tagged image scaled to a size the model reads well. |
+| [view/drawing](../src/main/java/view/drawing/) | Swing-free parts of the canvas. `CanvasDocument` is the model (ink, pictures, graph cards, selection, edits, undo memento) over `InkModel`, `GraphCardLayer`, `CanvasPicture`, `CanvasSelection` and `SelectionDrag`. `CanvasViewport` holds the view transform. `CanvasInput` routes the mouse to `PenTool`, `EraserTool` and `SelectionTool` (Strategy). `CanvasPainter` draws the layers, `InkImageExporter` makes copy images, `CanvasStateMapper` saves and opens, `FormulaGrouper` groups ink into formulas and `CanvasEvents` notifies subscribers (Observer). |
+| [pdf_editor/rendering](../src/main/java/pdf_editor/rendering/) | Swing/AWT text layout and rasterizing shared by the PDF view and exporter: `PdfBodyFlowLayout`, `PdfWrapTextLayout`, `NoteTextDocumentFactory`, `NoteRenderer`, `MaterialRenderer`, `PdfScreenRasterCache`. The editor controller reaches pagination only through the `TextReflow` port. |
+| [interface_adapter/UiThread.java](../src/main/java/interface_adapter/UiThread.java) | Port for running work on the UI thread (now, later or repeatedly). `view.SwingUiThread` implements it; collectors, presenters and answer recovery receive it, so no adapter depends on Swing. |
+| [app](../src/main/java/app/) | Composition root: `Main` starts the app, `StackedAppBuilder` connects the parts, `CalculationModule` and `GraphModule` wire US2/US4, `WindowShortcuts` and `WindowLifecycle` handle keys and closing, `PdfStudioLauncher.create` wires the PDF studio. |
 | [FormulaCapture.java](../src/main/java/view/FormulaCapture.java) | Carries formula ID, ink revision and BufferedImage together. The optional second image omits a trailing equals sign so CaptureReader can recognize the preceding expression. Entry `getRevision()`. |
-| [FormulaImageRenderer.java](../src/main/java/view/FormulaImageRenderer.java) | Draws supplied stroke points as black antialiased ink on white, grows bounds for pen caps, scales by four and pads dimensions to multiples of 16. Display zoom and canvas decorations do not enter the model input. Entry `render()`. |
+| [FormulaImageRenderer.java](../src/main/java/view/drawing/FormulaImageRenderer.java) | Draws supplied stroke points as black antialiased ink on white, grows bounds for pen caps, scales by four and pads dimensions to multiples of 16. Display zoom and canvas decorations do not enter the model input. Entry `render()`. |
 
 ### `view/answer`
 
@@ -622,9 +627,9 @@ Each table covers one production source directory under `src/main/java`. The nam
 
 | Source | Implementation and connections |
 | --- | --- |
-| [MathLibrary.java](../src/main/java/pdf_editor/MathLibrary.java) | Keeps session materials, updates subscribers and replaces a prior calculation associated with the same canvas source ID. Formula-only additions reuse an exact match. Delete and undo operate on a bounded local stack. Entry `addSourceCalculation()`. |
-| [PdfStudioLauncher.java](../src/main/java/pdf_editor/PdfStudioLauncher.java) | Composes the Library, collector, document editor, auto-layout and PDFBox output ports, and wires the source canvas for capture and answer recovery. Normal canvas synchronization monitors pending answers and preserves saved history and materials. Entry `setSourceCanvas()`. |
-| [Us4InputBoundary.java](../src/main/java/pdf_editor/Us4InputBoundary.java) | Incoming contract for publishing calculations or a graph bitmap and requesting that the editor be shown. Entry `addGraph()`. |
+| [MaterialStore.java](../src/main/java/pdf_editor/use_case/MaterialStore.java) | Keeps session materials, updates subscribers and replaces a prior calculation associated with the same canvas source ID. Formula-only additions reuse an exact match. Delete and undo operate on a bounded local stack. Entry `addSourceCalculation()`. |
+| [PdfStudioLauncher.java](../src/main/java/app/PdfStudioLauncher.java) | Composes the Library, collector, document editor, auto-layout and PDFBox output ports, and wires the source canvas for capture and answer recovery. Normal canvas synchronization monitors pending answers and preserves saved history and materials. Entry `setSourceCanvas()`. |
+| [Us4InputBoundary.java](../src/main/java/pdf_editor/adapter/Us4InputBoundary.java) | Incoming contract for publishing calculations or a graph bitmap and requesting that the editor be shown. Entry `addGraph()`. |
 
 ### `pdf_editor/adapter`
 
@@ -635,26 +640,25 @@ Each table covers one production source directory under `src/main/java`. The nam
 | [CanvasSnapshotGateway.java](../src/main/java/pdf_editor/adapter/CanvasSnapshotGateway.java) | Read-only port that supplies a BufferedImage of the current canvas to the PDF composition root. Entry `capture()`. |
 | [FormulaRevisionCoordinator.java](../src/main/java/pdf_editor/adapter/FormulaRevisionCoordinator.java) | Validates a formula revision, updates matching document materials and Library copies and records the new History content before retiring a unique old record. Undo reconciliation compares placement and material IDs. Entry `editPdf()`. |
 | [HistoryFormulaCalculator.java](../src/main/java/pdf_editor/adapter/HistoryFormulaCalculator.java) | Runs the evaluation controller and extracts a typeset result from its view model. Definitions return empty results and evaluation errors propagate to the formula editor. Entry `calculate()`. |
-| [HistoryLibraryImporter.java](../src/main/java/pdf_editor/adapter/HistoryLibraryImporter.java) | Reads a HistoryItem, adds formula-only or formula/result content to the Library, or decodes a stored graph PNG and adds the bitmap. Invalid image data is rejected. Entry `importRecord()`. |
 | [MathLabCollector.java](../src/main/java/pdf_editor/adapter/MathLabCollector.java) | Dispatches incoming events to the Swing thread, attempts archival storage through HistoryInteractor and updates the Library. Logs archival I/O/validation failure. Graph events encode a PNG and record dimensions. Entry `acceptCalculation()`. |
-| [NoteTextDocumentFactory.java](../src/main/java/pdf_editor/adapter/NoteTextDocumentFactory.java) | Maps immutable note spans to styled JTextPane attributes and converts edited attributed ranges back into point-size spans at the current scale. Entry `toSpans()`. |
+| [NoteTextDocumentFactory.java](../src/main/java/pdf_editor/rendering/NoteTextDocumentFactory.java) | Maps immutable note spans to styled JTextPane attributes and converts edited attributed ranges back into point-size spans at the current scale. Entry `toSpans()`. |
 | [PageCoordinateMapper.java](../src/main/java/pdf_editor/adapter/PageCoordinateMapper.java) | Translates positions and drag deltas between screen pixels and A4 page points using the origin and validated zoom. Entry `screenToPage()`. |
 | [PageZoomModel.java](../src/main/java/pdf_editor/adapter/PageZoomModel.java) | Stores and clamps page-view zoom, multiplies it on wheel input and fits an A4 sheet into viewport dimensions. Entry `adjustWheel()`. |
-| [PdfBodyFlowLayout.java](../src/main/java/pdf_editor/adapter/PdfBodyFlowLayout.java) | Maps between continuous styled text and per-page spans. Measures Swing text rows and tracks character-offset anchor changes across edits. Entry `reanchor()`. |
+| [PdfBodyFlowLayout.java](../src/main/java/pdf_editor/rendering/PdfBodyFlowLayout.java) | Maps between continuous styled text and per-page spans. Measures Swing text rows and tracks character-offset anchor changes across edits. Entry `reanchor()`. |
 | [PdfEditorController.java](../src/main/java/pdf_editor/adapter/PdfEditorController.java) | Maps page selection, hit tests, placement gestures, formatting and export to DocumentEditor, layout and output interactors. Selection and active page live outside document snapshots. Entry `imageLayoutAndReflow()`. |
 | [PdfSelectionModel.java](../src/main/java/pdf_editor/adapter/PdfSelectionModel.java) | Tracks primary and multiple selected placement IDs. Removes invalid IDs after page/document changes, supplying a valid primary if any survive. Entry `retain()`. |
-| [PdfWrapTextLayout.java](../src/main/java/pdf_editor/adapter/PdfWrapTextLayout.java) | Measures styled glyphs and chooses line slots around wrap-text placements. Paginates a continuous story and renders resulting lines for print/preview. Entry `paginate()`. |
-| [SelectedInkArtwork.java](../src/main/java/pdf_editor/adapter/SelectedInkArtwork.java) | Matches selected strokes by identity to saved geometry/color/width, optionally includes a fully selected formula's answer and paints transparent artwork. Entry `rasterize()`. |
+| [PdfWrapTextLayout.java](../src/main/java/pdf_editor/rendering/PdfWrapTextLayout.java) | Measures styled glyphs and chooses line slots around wrap-text placements. Paginates a continuous story and renders resulting lines for print/preview. Entry `paginate()`. |
+| [SelectedInkArtwork.java](../src/main/java/pdf_editor/view/SelectedInkArtwork.java) | Matches selected strokes by identity to saved geometry/color/width, optionally includes a fully selected formula's answer and paints transparent artwork. Entry `rasterize()`. |
 | [SelectedInkRegistry.java](../src/main/java/pdf_editor/adapter/SelectedInkRegistry.java) | Tracks material IDs against selected source strokes. An ink-change listener drops stale links while preserving the Library material. Entry `synchronize()`. |
 
 ### `pdf_editor/data_access`
 
 | Source | Implementation and connections |
 | --- | --- |
-| [CanvasCapture.java](../src/main/java/pdf_editor/data_access/CanvasCapture.java) | Computes a crop from all ink and the reported graph-card bounds, adds a margin and downscales large captures before painting canvas content. Entry `overview()`. |
-| [DrawingCanvasSnapshotAdapter.java](../src/main/java/pdf_editor/data_access/DrawingCanvasSnapshotAdapter.java) | Implements CanvasSnapshotGateway using the shared canvas and CanvasCapture.overview. Entry `capture()`. |
-| [MaterialRenderer.java](../src/main/java/pdf_editor/data_access/MaterialRenderer.java) | Scales graph/ink images or fits LaTeX formula and result icons into an output rectangle. Handles fallback formula rendering. Entry `render()`. |
-| [NoteRenderer.java](../src/main/java/pdf_editor/data_access/NoteRenderer.java) | Renders a note through the styled pane from NoteTextDocumentFactory into a transparent image for PDF output. Entry `render()`. |
+| [CanvasCapture.java](../src/main/java/pdf_editor/view/CanvasCapture.java) | Computes a crop from all ink and the reported graph-card bounds, adds a margin and downscales large captures before painting canvas content. Entry `overview()`. |
+| [DrawingCanvasSnapshotAdapter.java](../src/main/java/pdf_editor/view/DrawingCanvasSnapshotAdapter.java) | Implements CanvasSnapshotGateway using the shared canvas and CanvasCapture.overview. Entry `capture()`. |
+| [MaterialRenderer.java](../src/main/java/pdf_editor/rendering/MaterialRenderer.java) | Scales graph/ink images or fits LaTeX formula and result icons into an output rectangle. Handles fallback formula rendering. Entry `render()`. |
+| [NoteRenderer.java](../src/main/java/pdf_editor/rendering/NoteRenderer.java) | Renders a note through the styled pane from NoteTextDocumentFactory into a transparent image for PDF output. Entry `render()`. |
 | [PdfBoxOutputAdapter.java](../src/main/java/pdf_editor/data_access/PdfBoxOutputAdapter.java) | Implements both output ports. Builds the real PDF, renders every page with PDFRenderer at a positive DPI, PNG-encodes each page and closes the document. Entry `preview()`. |
 | [PdfExporter.java](../src/main/java/pdf_editor/data_access/PdfExporter.java) | Builds A4 PDFBox pages in background/body/foreground order. Embeds rendered body and placements as images and appends copyable source for distinct placed formula materials, keyed by ID. Entry `build()`. |
 
@@ -672,7 +676,7 @@ Each table covers one production source directory under `src/main/java`. The nam
 | Source | Implementation and connections |
 | --- | --- |
 | [AutoLayoutInteractor.java](../src/main/java/pdf_editor/use_case/AutoLayoutInteractor.java) | Places Library materials below existing items, sizes graphs from their aspect ratio and adds A4 pages when necessary. Treats the multi-item import as a single editor transaction. Entry `importMaterials()`. |
-| [CanvasRegionSnapshot.java](../src/main/java/pdf_editor/use_case/CanvasRegionSnapshot.java) | Intersects the drag rectangle with the image, enforces an 8×8 minimum and copies the pixels. A separate predicate finds visible nonwhite ink in the crop. Entry `crop()`. |
+| [CanvasRegionSnapshot.java](../src/main/java/pdf_editor/view/CanvasRegionSnapshot.java) | Intersects the drag rectangle with the image, enforces an 8×8 minimum and copies the pixels. A separate predicate finds visible nonwhite ink in the crop. Entry `crop()`. |
 | [DocumentEditor.java](../src/main/java/pdf_editor/use_case/DocumentEditor.java) | Mutates PdfDocument through validated operations, bounds placement geometry, supports multi-item edits, page deletion, splitting, layers, body reflow and snapshot undo/redo. Entry `transaction()`. |
 | [FormulaEditSubmission.java](../src/main/java/pdf_editor/use_case/FormulaEditSubmission.java) | Validates trimmed input. Manual mode produces an empty result and Calculate mode calls the supplied evaluator and packages its result as a revision. Entry `submit()`. |
 | [NoteFormatting.java](../src/main/java/pdf_editor/use_case/NoteFormatting.java) | Transforms note spans for uniform bold, italic, underline, font family and size changes, supplying initial content when required. Entry `toggle()`. |
@@ -681,14 +685,12 @@ Each table covers one production source directory under `src/main/java`. The nam
 | [PdfPreviewGateway.java](../src/main/java/pdf_editor/use_case/PdfPreviewGateway.java) | Accepts a document and DPI and returns rendered page values through a separate output port. Entry `preview()`. |
 | [PreviewZoomModel.java](../src/main/java/pdf_editor/use_case/PreviewZoomModel.java) | Calculates read-only preview scale from page and viewport size, with a margin, a fallback for unavailable viewport dimensions and limits of 10–300 percent. Entry `fit()`. |
 | [SelectedInkRecognitionGateway.java](../src/main/java/pdf_editor/use_case/SelectedInkRecognitionGateway.java) | Outbound port from the selection use case to recognition, taking a buffered image and returning LaTeX or an exception. Entry `recognize()`. |
-| [SelectionToLibrary.java](../src/main/java/pdf_editor/use_case/SelectionToLibrary.java) | Validates explicitly selected recognition output. Its add methods send formula text, calculated pairs or selected handwriting artwork into the session Library. Entry `recognize()`. |
 
 ### `pdf_editor/view`
 
 | Source | Implementation and connections |
 | --- | --- |
 | [CanvasHistoryEditMenu.java](../src/main/java/pdf_editor/view/CanvasHistoryEditMenu.java) | Installs platform popup handlers on selected history artwork. Routes a requested text revision through the editor and applies the raster preview to the canvas. Entry `install()`. |
-| [CanvasLibrarySelectionMenu.java](../src/main/java/pdf_editor/view/CanvasLibrarySelectionMenu.java) | Installs popup-trigger handlers on selected ink. Copies selected handwriting or uses a background worker for recognition before publishing to the Library. Entry `install()`. |
 | [CanvasPdfDragController.java](../src/main/java/pdf_editor/view/CanvasPdfDragController.java) | Installs a Swing TransferHandler for COPY of selected ink artwork or structured history assets and generates a translucent drag image. Entry `install()`. |
 | [CanvasRegionCaptureController.java](../src/main/java/pdf_editor/view/CanvasRegionCaptureController.java) | Temporarily overlays a selection rectangle, copies the selected canvas region and validates visible ink before delivering or cancelling the capture. Entry `begin()`. |
 | [FormulaEditDialog.java](../src/main/java/pdf_editor/view/FormulaEditDialog.java) | Opens a formula editor with manual/calculated modes, a preview and background calculation. Returns a revision through its result value and handles invalid input or unsupported translucency. Entry `show()`. |
@@ -1010,15 +1012,15 @@ Recognition adapter tests inject a reader, Newton tests substitute a transport, 
 | [CanvasHistoryImporterTest.java](../src/test/java/pdf_editor/adapter/CanvasHistoryImporterTest.java#L25) | Checks structured calculations, original graph pixels and several independent placements copied from canvas history. | 3 |
 | [FormulaRevisionCoordinatorTest.java](../src/test/java/pdf_editor/adapter/FormulaRevisionCoordinatorTest.java#L40) | Revises linked formulas across placements, library and history and checks recalculated versus manual results. | 10 |
 | [HistoryFormulaCalculatorTest.java](../src/test/java/pdf_editor/adapter/HistoryFormulaCalculatorTest.java#L14) | Connects an evaluation controller and presenter to the editor adapter and checks stale-result handling. | 2 |
-| [HistoryLibraryImporterTest.java](../src/test/java/pdf_editor/adapter/HistoryLibraryImporterTest.java#L16) | Imports structured calculation text and graph images from history into fresh library materials. | 2 |
+| [HistoryMaterialImporterTest.java](../src/test/java/pdf_editor/adapter/HistoryMaterialImporterTest.java#L16) | Imports structured calculation text and graph images from history into fresh library materials. | 2 |
 | [MaterialLifecycleTest.java](../src/test/java/pdf_editor/adapter/MaterialLifecycleTest.java#L9) | Exercises source bindings, erase/restore and integrity of the library's exposed item list. | 12 |
 | [PageCoordinateMapperTest.java](../src/test/java/pdf_editor/adapter/PageCoordinateMapperTest.java#L6) | Checks conversion between screen pixels and page coordinates including origins, scale and invalid values. | 12 |
 | [PageZoomModelTest.java](../src/test/java/pdf_editor/adapter/PageZoomModelTest.java#L6) | Tests zoom bounds and preservation of one zoom setting across page changes. | 15 |
-| [PdfBodyFlowLayoutTest.java](../src/test/java/pdf_editor/adapter/PdfBodyFlowLayoutTest.java#L10) | Flows styled paragraphs across pages, checking empty-page behavior and separation from placements. | 3 |
+| [PdfBodyFlowLayoutTest.java](../src/test/java/pdf_editor/rendering/PdfBodyFlowLayoutTest.java#L10) | Flows styled paragraphs across pages, checking empty-page behavior and separation from placements. | 3 |
 | [PdfEditorControllerTest.java](../src/test/java/pdf_editor/adapter/PdfEditorControllerTest.java#L21) | Routes page switching and selecting placements through the controller and its use cases. | 1 |
 | [PdfMultiSelectionAndLayoutTest.java](../src/test/java/pdf_editor/adapter/PdfMultiSelectionAndLayoutTest.java#L22) | Checks multi-object selection, movement, image order, undo and independence from library deletion. | 3 |
-| [PdfWrapTextLayoutTest.java](../src/test/java/pdf_editor/adapter/PdfWrapTextLayoutTest.java#L22) | Checks reflow beside a picture, wrap settings and preservation of styled text on pagination and undo. | 3 |
-| [SelectedInkArtworkTest.java](../src/test/java/pdf_editor/adapter/SelectedInkArtworkTest.java#L17) | Checks selected ink with original color, transparency and width and verifies which captures include answers. | 6 |
+| [PdfWrapTextLayoutTest.java](../src/test/java/pdf_editor/rendering/PdfWrapTextLayoutTest.java#L22) | Checks reflow beside a picture, wrap settings and preservation of styled text on pagination and undo. | 3 |
+| [SelectedInkArtworkTest.java](../src/test/java/pdf_editor/view/SelectedInkArtworkTest.java#L17) | Checks selected ink with original color, transparency and width and verifies which captures include answers. | 6 |
 | [SelectedInkRegistryTest.java](../src/test/java/pdf_editor/adapter/SelectedInkRegistryTest.java#L15) | Checks whether archived and untracked library materials survive unrelated ink and erasure events. | 4 |
 | [SelectedInkRestoreTest.java](../src/test/java/pdf_editor/adapter/SelectedInkRestoreTest.java#L15) | Tests stable archived item identity after clear and repeated undo/synchronization. | 2 |
 
@@ -1026,8 +1028,8 @@ Recognition adapter tests inject a reader, Newton tests substitute a transport, 
 
 | File | Behavior or fixture | Test methods |
 |---|---|---:|
-| [MaterialRendererQualityTest.java](../src/test/java/pdf_editor/data_access/MaterialRendererQualityTest.java#L21) | Checks rendering of formula/result at larger dimensions and preservation of source image bytes. | 7 |
-| [MaterialTransparencyRegressionTest.java](../src/test/java/pdf_editor/data_access/MaterialTransparencyRegressionTest.java#L12) | Overlays chart/formula artwork and checks that whitespace reveals underlying body text. | 3 |
+| [MaterialRendererQualityTest.java](../src/test/java/pdf_editor/rendering/MaterialRendererQualityTest.java#L21) | Checks rendering of formula/result at larger dimensions and preservation of source image bytes. | 7 |
+| [MaterialTransparencyRegressionTest.java](../src/test/java/pdf_editor/rendering/MaterialTransparencyRegressionTest.java#L12) | Overlays chart/formula artwork and checks that whitespace reveals underlying body text. | 3 |
 | [PdfBoxOutputAdapterIntegrationTest.java](../src/test/java/pdf_editor/data_access/PdfBoxOutputAdapterIntegrationTest.java#L22) | Writes and reopens PDFs with PDFBox. Verifies A4 output, embedded artwork and deduplicated searchable LaTeX. | 6 |
 
 ### `src/test/java/pdf_editor/domain`
@@ -1044,7 +1046,7 @@ Recognition adapter tests inject a reader, Newton tests substitute a transport, 
 |---|---|---:|
 | [AutoLayoutBoundaryTest.java](../src/test/java/pdf_editor/use_case/AutoLayoutBoundaryTest.java#L12) | Checks multi-page placement bounds, graph/formula pairing and rollback of invalid auto-layout. | 4 |
 | [AutoLayoutInteractorTest.java](../src/test/java/pdf_editor/use_case/AutoLayoutInteractorTest.java#L10) | Checks associated items share a page and an empty library leaves the document unchanged. | 2 |
-| [CanvasRegionSnapshotTest.java](../src/test/java/pdf_editor/use_case/CanvasRegionSnapshotTest.java#L16) | Crops selected image regions while preserving color and rejecting blank captures. | 5 |
+| [CanvasRegionSnapshotTest.java](../src/test/java/pdf_editor/view/CanvasRegionSnapshotTest.java#L16) | Crops selected image regions while preserving color and rejecting blank captures. | 5 |
 | [DocumentEditorBoundaryRegressionTest.java](../src/test/java/pdf_editor/use_case/DocumentEditorBoundaryRegressionTest.java#L13) | Checks atomic undo of splits and rejection of invalid splits and graph edits. | 12 |
 | [DocumentEditorTest.java](../src/test/java/pdf_editor/use_case/DocumentEditorTest.java#L13) | Exercises immutable snapshots, placement movement/resizing, page bounds and undo/redo. | 7 |
 | [DocumentWordBodyTest.java](../src/test/java/pdf_editor/use_case/DocumentWordBodyTest.java#L17) | Checks image layering and anchoring around body text and undo of rich-text pagination. | 3 |
@@ -1053,7 +1055,7 @@ Recognition adapter tests inject a reader, Newton tests substitute a transport, 
 | [NoteFormattingTest.java](../src/test/java/pdf_editor/use_case/NoteFormattingTest.java#L11) | Toggles rich-text properties independently and checks controller-level undo. | 5 |
 | [PdfExportInteractorTest.java](../src/test/java/pdf_editor/use_case/PdfExportInteractorTest.java#L22) | Injects export and preview gateways and verifies that each receives a document snapshot. | 1 |
 | [PreviewZoomModelTest.java](../src/test/java/pdf_editor/use_case/PreviewZoomModelTest.java#L6) | Computes fit scales for portrait and wide pages and rejects invalid dimensions. | 4 |
-| [SelectionToLibraryTest.java](../src/test/java/pdf_editor/use_case/SelectionToLibraryTest.java#L10) | Separates explicit recognition/add from preview and checks duplicate material handling. | 7 |
+| [SelectionToHistoryTest.java](../src/test/java/pdf_editor/use_case/SelectionToHistoryTest.java#L10) | Separates explicit recognition/add from preview and checks duplicate material handling. | 7 |
 
 ### `src/test/java/pdf_editor/view`
 

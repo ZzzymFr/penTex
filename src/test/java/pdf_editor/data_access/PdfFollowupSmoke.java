@@ -1,9 +1,13 @@
 package pdf_editor.data_access;
 
+import view.SwingUiThread;
+import pdf_editor.rendering.PdfScreenRasterCache;
+import pdf_editor.rendering.PdfWrapTextLayout;
+import pdf_editor.adapter.PngImages;
 import history.data_access.FileHistoryRepository;
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.domain.PdfMaterial;
@@ -90,14 +94,14 @@ public final class PdfFollowupSmoke {
 
             // A repeated native-graph handoff uses the existing definition match, even with a different thumbnail.
             var store = new MaterialStore();
-            new pdf_editor.adapter.MathLabCollector(store, afterRestart);
+            new pdf_editor.adapter.MathLabCollector(store, afterRestart, SwingUiThread.INSTANCE);
             var definition = new entity.graph.GraphDefinition(List.of("y=x"),
                     new entity.graph.GraphDefinition.Range(-5, 5), new entity.graph.GraphDefinition.Range(-5, 5),
                     null, new entity.graph.GraphDefinition.Camera(0, 0));
-            store.archive(store.addInteractiveGraph(definition, ImageIO.read(new java.io.ByteArrayInputStream(png))));
+            store.archive(store.addInteractiveGraph(definition, PngImages.encode(ImageIO.read(new java.io.ByteArrayInputStream(png)))));
             var nativeRecord = afterRestart.list().get(0);
             afterRestart.recordFormula("x+7");
-            store.archive(store.addInteractiveGraph(definition, new BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB)));
+            store.archive(store.addInteractiveGraph(definition, PngImages.encode(new BufferedImage(160, 80, BufferedImage.TYPE_INT_ARGB))));
             check(afterRestart.list().get(0).id().equals(nativeRecord.id()), "Repeated graph definition moves existing row to top");
             check(afterRestart.list().stream().filter(e -> e.graphDefinition() != null).count() == 1,
                     "Native graph handoff does not duplicate thumbnails");
@@ -165,7 +169,7 @@ public final class PdfFollowupSmoke {
                 var library = new MaterialStore();
                 var editor = new DocumentEditor();
                 var controller = new PdfEditorController(library, editor, new AutoLayoutInteractor(editor),
-                        new PdfExportInteractor((doc, path) -> {}, (doc, dpi) -> List.of()));
+                        new PdfExportInteractor((doc, path) -> {}, (doc, dpi) -> List.of()), PdfWrapTextLayout::reflow);
                 var material = PdfMaterial.restore("image", "Ink", "", "", png(), 80, 40, null);
                 controller.place(material, 40, 45, 280, 140);
                 editor.addNote(0, "Visible note", 40, 210);
@@ -190,7 +194,7 @@ public final class PdfFollowupSmoke {
                 check(rasters.size() >= 2 && rasters.values().stream().noneMatch(firstRasters::contains), "New zoom uses fresh high-resolution raster");
 
                 // Test the shared History/Canvas-graph overlay, not native OS drag delivery.
-                Class<?> ghostType = Class.forName("view.board.BoardWindow$Ghost");
+                Class<?> ghostType = Class.forName("view.board.Ghost");
                 var constructor = ghostType.getDeclaredConstructor(); constructor.setAccessible(true);
                 Object ghost = constructor.newInstance();
                 var show = ghostType.getDeclaredMethod("showGraphPreview", BufferedImage.class, Rectangle.class, Rectangle.class); show.setAccessible(true);

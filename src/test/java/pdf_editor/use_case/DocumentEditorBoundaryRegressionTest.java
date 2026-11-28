@@ -1,13 +1,13 @@
 package pdf_editor.use_case;
 
+import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfDocument;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DocumentEditorBoundaryRegressionTest {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private final DocumentEditor editor = new DocumentEditor();
 
     @Test void undoRedoSplitRestoresOriginalAndSplitAgain() {
@@ -97,8 +97,8 @@ class DocumentEditorBoundaryRegressionTest {
         assertFalse(editor.undo());
     }
     @Test void editingGraphAsLatexIsRejected() {
-        var graph = MathLibrary.region("plot", new java.awt.image.BufferedImage(16, 16,
-                java.awt.image.BufferedImage.TYPE_INT_RGB));
+        var graph = MaterialStore.region("plot", PngImages.encode(new java.awt.image.BufferedImage(16, 16,
+                java.awt.image.BufferedImage.TYPE_INT_RGB)));
         var p = editor.place(0, graph, 10, 10, 200, 90);
         assertThrows(IllegalArgumentException.class, () -> editor.editFormula(0, p.id(), "x", "2"));
         assertTrue(editor.undo());

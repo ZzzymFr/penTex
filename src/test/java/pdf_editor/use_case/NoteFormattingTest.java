@@ -1,7 +1,7 @@
 package pdf_editor.use_case;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.domain.PdfDocument;
 import java.util.List;
@@ -41,9 +41,9 @@ class NoteFormattingTest {
     }
     @Test void controllerFormattingSupportsUndo() {
         DocumentEditor editor = new DocumentEditor();
-        PdfEditorController controller = new PdfEditorController(new MathLibrary(), editor,
+        PdfEditorController controller = new PdfEditorController(new MaterialStore(), editor,
                 new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((document, destination) -> {}, (document, dpi) -> List.of()));
+                new PdfExportInteractor((document, destination) -> {}, (document, dpi) -> List.of()), PdfWrapTextLayout::reflow);
         controller.addNote();
         assertTrue(controller.toggleSelectedNoteStyle(NoteFormatting.Style.BOLD));
         assertTrue(controller.selected().noteSpans().get(0).bold());

@@ -1,7 +1,8 @@
 package view.board;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import interface_adapter.history.HistoryViewModel;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.data_access.FilePdfDocumentRepository;
 import pdf_editor.domain.PdfDocument;
@@ -51,7 +52,7 @@ public final class AppleUiResponsivenessSmoke {
                 AppleLook.install();
                 DocumentEditor editor = new DocumentEditor();
                 PdfEditorController controller = new PdfEditorController(new MaterialStore(), editor,
-                        new AutoLayoutInteractor(editor), new PdfExportInteractor((d,p) -> {}, (d,dpi) -> List.of()));
+                        new AutoLayoutInteractor(editor), new PdfExportInteractor((d,p) -> {}, (d,dpi) -> List.of()), PdfWrapTextLayout::reflow);
                 PdfPanel pdf = new PdfPanel(controller);
                 pdf.editor().enablePersistence(workspace, (d,dpi) -> List.of());
                 DrawingCanvas canvas = new DrawingCanvas();
@@ -119,7 +120,7 @@ public final class AppleUiResponsivenessSmoke {
             check(workspace.recover().orElseThrow().zoom()==3.0,"Close while hidden persists zoom");
             SwingUtilities.invokeAndWait(() -> {
                 DocumentEditor editor=new DocumentEditor();
-                PdfPanel next=new PdfPanel(new PdfEditorController(new MaterialStore(),editor,new AutoLayoutInteractor(editor),new PdfExportInteractor((d,p)->{},(d,dpi)->List.of())));
+                PdfPanel next=new PdfPanel(new PdfEditorController(new MaterialStore(),editor,new AutoLayoutInteractor(editor),new PdfExportInteractor((d,p)->{},(d,dpi)->List.of()), PdfWrapTextLayout::reflow));
                 next.editor().enablePersistence(workspace,(d,dpi)->List.of());
                 DrawingCanvas canvas=new DrawingCanvas();
                 BoardWindow board=new BoardWindow(canvas,canvas,h->new HistoryPanel(new HistoryViewModel(),h),next);

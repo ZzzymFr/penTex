@@ -48,7 +48,7 @@ public final class AutoLayoutInteractor {
         List<List<PdfMaterial>> groups = new ArrayList<>();
         for (int i = 0; i < materials.size(); i++) {
             PdfMaterial current = Objects.requireNonNull(materials.get(i), "material");
-            // MathLibrary appends a separate formula immediately after graph creation.
+            // MaterialStore appends a separate formula immediately after graph creation.
             if (current.isGraph() && i + 1 < materials.size()) {
                 PdfMaterial following = Objects.requireNonNull(materials.get(i + 1), "material");
                 if (!following.isGraph() && !current.formula().isBlank()

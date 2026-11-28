@@ -77,11 +77,6 @@ public class HistoryPanel extends JPanel {
     public HistoryPanel(HistoryViewModel viewModel, DragHost host) {
         this(viewModel, host, (BooleanSupplier) () -> false);
     }
-    /** Kept for old callers; the UI no longer exposes Undo Delete. */
-    @Deprecated
-    public HistoryPanel(HistoryViewModel viewModel, DragHost host, Runnable unusedUndoDelete) {
-        this(viewModel, host, (BooleanSupplier) () -> false);
-    }
     /** The persistent clear command is injected by the composition root. */
     public HistoryPanel(HistoryViewModel viewModel, DragHost host, BooleanSupplier clearAll) {
         super(new BorderLayout());

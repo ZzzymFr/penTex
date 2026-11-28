@@ -2,7 +2,7 @@ package pdf_editor.adapter;
 
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.domain.PdfMaterial;
 import pdf_editor.domain.PdfDocument;
 

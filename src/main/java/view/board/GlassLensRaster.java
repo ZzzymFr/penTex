@@ -53,7 +53,7 @@ final class GlassLensRaster {
         local.setColor(BoardTheme.CANVAS);
         local.fillRect(0, 0, source.getWidth(), source.getHeight());
         local.setComposite(java.awt.AlphaComposite.SrcOver);
-        GlassBar.hints(local);
+        GlassPaint.hints(local);
         local.translate(pad, pad);
         local.scale(s, s);
         local.translate(-k.x / 2.0, -k.y / 2.0);

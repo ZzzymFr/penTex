@@ -1,8 +1,9 @@
 package pdf_editor.domain;
 
+import pdf_editor.adapter.PngImages;
 import entity.graph.GraphDefinition;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.use_case.DocumentEditor;
 
 import java.awt.image.BufferedImage;
@@ -18,9 +19,9 @@ class InteractiveGraphPlacementRegressionTest {
         GraphDefinition definition = new GraphDefinition(List.of("z=x*y"),
                 new GraphDefinition.Range(-4, 4), new GraphDefinition.Range(-4, 4),
                 new GraphDefinition.Range(-8, 8), new GraphDefinition.Camera(-0.6, 0.9));
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         var thumbnail = new BufferedImage(240, 180, BufferedImage.TYPE_INT_ARGB);
-        var material = library.addInteractiveGraph(definition, thumbnail);
+        var material = library.addInteractiveGraph(definition, PngImages.encode(thumbnail));
         DocumentEditor editor = new DocumentEditor();
         var placed = editor.place(0, material, 65f, 83f, 280f, 190f);
         assertTrue(placed.material().isInteractiveGraph());

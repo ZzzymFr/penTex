@@ -1,6 +1,6 @@
 package pdf_editor.view;
 
-import pdf_editor.adapter.PdfWrapTextLayout;
+import pdf_editor.rendering.PdfWrapTextLayout;
 import pdf_editor.domain.PdfDocument;
 
 import java.awt.image.BufferedImage;

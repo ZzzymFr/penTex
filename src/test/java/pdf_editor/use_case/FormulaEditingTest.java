@@ -1,12 +1,11 @@
 package pdf_editor.use_case;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfMaterial;
 import pdf_editor.domain.PdfDocument;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FormulaEditingTest {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private final DocumentEditor editor = new DocumentEditor();
 
     @Test void replaceFormula() {

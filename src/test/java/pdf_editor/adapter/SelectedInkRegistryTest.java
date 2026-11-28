@@ -1,7 +1,7 @@
 package pdf_editor.adapter;
 
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import view.DrawingCanvas;
 import java.awt.event.MouseEvent;
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,22 +14,22 @@ class SelectedInkRegistryTest {
     }
     @Test void eraseOrClearPreservesArchivedMaterial() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);
-        MathLibrary library=new MathLibrary();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
+        MaterialStore library=new MaterialStore();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
         var item=library.addFormula("x");tracker.track(item.id(),c.getStrokes());c.clear();assertNotNull(library.find(item.id()));
     }
     @Test void trackedMaterialsSurviveUnrelatedInkChanges() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);
-        MathLibrary library=new MathLibrary();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
+        MaterialStore library=new MaterialStore();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
         var item=library.addFormula("x");tracker.track(item.id(),c.getStrokes());ink(c);assertNotNull(library.find(item.id()));
     }
     @Test void invalidationDoesNotOfferUndoOfStaleInk() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);
-        MathLibrary library=new MathLibrary();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
+        MaterialStore library=new MaterialStore();SelectedInkRegistry tracker=new SelectedInkRegistry(c,library);
         var item=library.addFormula("x");tracker.track(item.id(),c.getStrokes());c.clear();assertFalse(library.undoDelete());
     }
     @Test void untrackedItemsAreNotPruned() {
         DrawingCanvas c=new DrawingCanvas();c.setSize(500,400);ink(c);
-        MathLibrary library=new MathLibrary();new SelectedInkRegistry(c,library);
+        MaterialStore library=new MaterialStore();new SelectedInkRegistry(c,library);
         var item=library.addFormula("manual");c.clear();assertNotNull(library.find(item.id()));
     }
 }

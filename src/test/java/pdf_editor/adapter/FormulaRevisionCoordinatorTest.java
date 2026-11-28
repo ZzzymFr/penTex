@@ -1,5 +1,6 @@
 package pdf_editor.adapter;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
 import history.use_case.HistoryRepository;
@@ -7,7 +8,7 @@ import history.data_access.FileHistoryRepository;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -32,17 +33,17 @@ class FormulaRevisionCoordinatorTest {
         @Override public List<HistoryEntry> findAll() { return List.copyOf(records); }
         @Override public boolean deleteById(String id) { return records.removeIf(e -> e.id().equals(id)); }
     }
-    private static PdfEditorController editor(MathLibrary library) {
+    private static PdfEditorController editor(MaterialStore library) {
         DocumentEditor edit = new DocumentEditor();
         return new PdfEditorController(library, edit, new AutoLayoutInteractor(edit),
-                new PdfExportInteractor((d, path) -> { }, (d, scale) -> List.of()));
+                new PdfExportInteractor((d, path) -> { }, (d, scale) -> List.of()), PdfWrapTextLayout::reflow);
     }
     @Test void pdfRevisionRecalculatesAndUpdatesLibraryHistoryAndCopies() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         Repository storage = new Repository();
         HistoryInteractor history = new HistoryInteractor(storage);
         history.recordCalculation("2+3", "5");
-        MathLibrary.Material original = library.addCalculation("2+3", "5");
+        MaterialStore.Material original = library.addCalculation("2+3", "5");
         PdfEditorController pdf = editor(library);
         PdfDocument.Placement first = pdf.place(original, 30, 30, 150, 70);
         PdfDocument.Placement second = pdf.place(original, 200, 30, 150, 70);
@@ -76,7 +77,7 @@ class FormulaRevisionCoordinatorTest {
         assertEquals("4+5", history.list().get(0).formula());
     }
     @Test void editAHistoryImportedPdfMaterialAddsCorrespondingLibraryMaterial() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordCalculation("3+3", "6");
         PdfEditorController pdf = editor(library);
@@ -91,10 +92,10 @@ class FormulaRevisionCoordinatorTest {
         assertEquals("7", history.list().get(0).result());
     }
     @Test void libraryRevisionUpdatesPdfAndHistoryAndPreservesMaterialId() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordFormula("x+2");
-        MathLibrary.Material material = library.addFormula("x+2");
+        MaterialStore.Material material = library.addFormula("x+2");
         PdfEditorController pdf = editor(library);
         var placed = pdf.place(material, 10, 10, 200, 80);
         var sync = new FormulaRevisionCoordinator(library, history, s -> "2x");
@@ -109,8 +110,8 @@ class FormulaRevisionCoordinatorTest {
     @Test void revisedCalculationIsPersistedAcrossHistoryReload() throws IOException {
         HistoryInteractor first = new HistoryInteractor(new FileHistoryRepository(directory));
         first.recordCalculation("2+2", "4");
-        MathLibrary library = new MathLibrary();
-        MathLibrary.Material material = library.addCalculation("2+2", "4");
+        MaterialStore library = new MaterialStore();
+        MaterialStore.Material material = library.addCalculation("2+2", "4");
         PdfEditorController pdf = editor(library);
         var placement = pdf.place(material, 5, 10, 180, 60);
         pdf.select(placement.id());
@@ -130,7 +131,7 @@ class FormulaRevisionCoordinatorTest {
             @Override public List<HistoryEntry> findAll() { return List.of(); }
             @Override public boolean deleteById(String id) { return false; }
         };
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         var material = library.addCalculation("2+2", "4");
         PdfEditorController pdf = editor(library);
         var placement = pdf.place(material, 0, 0, 160, 80);
@@ -146,7 +147,7 @@ class FormulaRevisionCoordinatorTest {
     }
 
     @Test void editingCanvasHistoryWithoutEarlierLibraryCopyStillSynchronizesBoth() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordCalculation("6+1", "7");
         PdfEditorController pdf = editor(library);
@@ -158,7 +159,7 @@ class FormulaRevisionCoordinatorTest {
     }
 
     @Test void unrelatedMaterialMustNotChange() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         var unrelated = library.addCalculation("a", "b");
         var edited = library.addCalculation("2+2", "4");
         PdfEditorController pdf = editor(library);
@@ -170,7 +171,7 @@ class FormulaRevisionCoordinatorTest {
         assertEquals("b", library.find(unrelated.id()).result());
     }
     @Test void libraryObserversSeeAlreadyPersistedHistory() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordCalculation("1+1", "2");
         var material = library.addCalculation("1+1", "2");
@@ -186,10 +187,10 @@ class FormulaRevisionCoordinatorTest {
     }
     @Test void manualEntryPreservesUnsupportedExpressionInPdfLibraryAndHistoryWithoutCalculation()
             throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordCalculation("2+2", "4");
-        MathLibrary.Material source = library.addCalculation("2+2", "4");
+        MaterialStore.Material source = library.addCalculation("2+2", "4");
         PdfEditorController pdf = editor(library);
         PdfDocument.Placement placement = pdf.place(source, 15, 20, 150, 60);
         pdf.select(placement.id());
@@ -213,10 +214,10 @@ class FormulaRevisionCoordinatorTest {
     }
 
     @Test void manualEntryFromLibraryRefreshesPdfCopiesAndHistory() throws IOException {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         HistoryInteractor history = new HistoryInteractor(new Repository());
         history.recordFormula("x+1");
-        MathLibrary.Material source = library.addFormula("x+1");
+        MaterialStore.Material source = library.addFormula("x+1");
         PdfEditorController pdf = editor(library);
         pdf.place(source, 10, 15, 170, 70);
         pdf.place(source, 200, 15, 170, 70);

@@ -1,12 +1,13 @@
 package history.adapter;
 
+import view.SwingUiThread;
 import history.data_access.FileHistoryRepository;
 import history.use_case.HistoryInteractor;
 import history.domain.HistoryEntry;
 import interface_adapter.history.HistoryViewModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.MathLabCollector;
 import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
@@ -25,16 +26,16 @@ class OneBoardHistoryIntegrationTest {
         assertTrue(new HistoryInteractor(new FileHistoryRepository(storage)).list().isEmpty());
     }
     @Test void failedPreviewRecognitionCannotPolluteLibrary() throws Exception {
-        MathLibrary library = new MathLibrary();
-        var selected = new pdf_editor.use_case.SelectionToLibrary(
+        MaterialStore library = new MaterialStore();
+        var selected = new pdf_editor.use_case.SelectionToHistory<java.awt.image.BufferedImage>(
                 i -> { throw new IOException("bad model"); }, library);
         assertThrows(IOException.class, () -> selected.recognize(new BufferedImage(1,1,2)));
         assertTrue(library.items().isEmpty());
     }
     @Test void onlyCalculatedResultsAreStoredAndDeduplicated() throws Exception {
         HistoryInteractor history = new HistoryInteractor(new FileHistoryRepository(storage));
-        MathLibrary library = new MathLibrary();
-        MathLabCollector collector = new MathLabCollector(library, history);
+        MaterialStore library = new MaterialStore();
+        MathLabCollector collector = new MathLabCollector(library, history, SwingUiThread.INSTANCE);
         collector.acceptCalculation(12L, "x+2", "3"); flush();
         collector.acceptCalculation(12L, "x+2", "3"); flush();
         assertEquals(1, history.list().size());
@@ -45,7 +46,7 @@ class OneBoardHistoryIntegrationTest {
     @Test void graphSavesAsPngAndCanBeMappedBack() throws Exception {
         HistoryInteractor history = new HistoryInteractor(new FileHistoryRepository(storage));
         BufferedImage graph = new BufferedImage(120, 60, BufferedImage.TYPE_INT_RGB);
-        new MathLabCollector(new MathLibrary(), history).acceptGraph("y=x^2", graph); flush();
+        new MathLabCollector(new MaterialStore(), history, SwingUiThread.INSTANCE).acceptGraph("y=x^2", graph); flush();
         HistoryEntry saved = history.list().get(0);
         assertEquals(HistoryEntry.Kind.GRAPH, saved.kind());
         assertEquals(120, HistoryMaterialMapper.toPdfMaterial(saved).imageWidth());
@@ -55,7 +56,7 @@ class OneBoardHistoryIntegrationTest {
         HistoryInteractor history = new HistoryInteractor(new FileHistoryRepository(storage));
         assertTrue(history.recordFormula(".") );
         HistoryViewModel model = new HistoryViewModel();
-        HistoryBoardPresenter presenter = new HistoryBoardPresenter(history, model);
+        HistoryBoardPresenter presenter = new HistoryBoardPresenter(history, model, SwingUiThread.INSTANCE);
         presenter.refresh();
         assertTrue(model.getItems().isEmpty());
         assertEquals(1, history.list().size());
@@ -64,7 +65,7 @@ class OneBoardHistoryIntegrationTest {
     @Test void deletionNotifiesBoardPresentationAndPersists() throws Exception {
         HistoryInteractor history = new HistoryInteractor(new FileHistoryRepository(storage));
         HistoryViewModel model = new HistoryViewModel();
-        HistoryBoardPresenter presenter = new HistoryBoardPresenter(history, model);
+        HistoryBoardPresenter presenter = new HistoryBoardPresenter(history, model, SwingUiThread.INSTANCE);
         presenter.refresh();
         history.recordCalculation("2+2", "4"); flush();
         assertEquals(1, model.getItems().size());
