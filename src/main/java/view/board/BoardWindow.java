@@ -432,41 +432,28 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         int h = getHeight();
         // a resize mid-morph would stretch the pictures: just show the live layout
         if (focusMorph.isVisible() && (focusMorph.getWidth() != w || focusMorph.getHeight() != h)) focusMorph.cancel();
+        int half = SplitDivider.HIT / 2;
         if (pdfFullscreen) {
-            layoutPdfFullscreen(w, h);
+            clearPanelTransition();
+            history.setVisible(false);historyDivider.setVisible(false);
+            pdf.setVisible(true);pdfDivider.setVisible(false);
+            page.setVisible(false);
+            historyBar.setVisible(false);historyClose.setVisible(false);saveStatusChip.setVisible(false);
+            pdfBar.setVisible(false);pdfClose.setVisible(false);
+            fullscreenExit.setVisible(true);
+            int margin = GlassBar.MARGIN;
+            Dimension closeSize = fullscreenExit.getPreferredSize();
+            fullscreenExit.setBounds(w - BoardTheme.SIDE - fullscreenExit.capsuleWidth() - margin,
+                    BoardTheme.TOP - margin, closeSize.width, closeSize.height);
+            if (floatingToolbar != null) floatingToolbar.setVisible(false);
+            if (titleStrip != null) titleStrip.setVisible(false);
+            pdf.setBounds(0, 0, w, h);
+            ghost.setBounds(0, 0, w, h);
+            historyStandIn.drop();
+            pdfStandIn.drop();
+            finishPdfOpen();
             return;
         }
-        layoutPanelsAndCanvas(w, h);
-        layoutChrome(w);
-        ghost.setBounds(0, 0, w, h);
-        if (!panelsMoving) finishPdfOpen();
-    }
-
-    /** Full-screen PDF: only the PDF panel and its exit button. */
-    private void layoutPdfFullscreen(int w, int h) {
-        clearPanelTransition();
-        history.setVisible(false);historyDivider.setVisible(false);
-        pdf.setVisible(true);pdfDivider.setVisible(false);
-        page.setVisible(false);
-        historyBar.setVisible(false);historyClose.setVisible(false);saveStatusChip.setVisible(false);
-        pdfBar.setVisible(false);pdfClose.setVisible(false);
-        fullscreenExit.setVisible(true);
-        int margin = GlassBar.MARGIN;
-        Dimension closeSize = fullscreenExit.getPreferredSize();
-        fullscreenExit.setBounds(w - BoardTheme.SIDE - fullscreenExit.capsuleWidth() - margin,
-                BoardTheme.TOP - margin, closeSize.width, closeSize.height);
-        if (floatingToolbar != null) floatingToolbar.setVisible(false);
-        if (titleStrip != null) titleStrip.setVisible(false);
-        pdf.setBounds(0, 0, w, h);
-        ghost.setBounds(0, 0, w, h);
-        historyStandIn.drop();
-        pdfStandIn.drop();
-        finishPdfOpen();
-    }
-
-    /** History on the left, PDF on the right (sliding while they open or close), the canvas between. */
-    private void layoutPanelsAndCanvas(int w, int h) {
-        int half = SplitDivider.HIT / 2;
         page.setVisible(true);
         fullscreenExit.setVisible(false);
         historyBar.setVisible(true);pdfBar.setVisible(true);
@@ -551,10 +538,6 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         if (wasTransitioning != panelsMoving) firePropertyChange("canvasDockBounds", null, currentDock);
         else if (!previousDock.equals(currentDock)) firePropertyChange("canvasDockBounds", previousDock, currentDock);
 
-    }
-
-    /** The floating capsules along the top: save state, History, PDF and their close buttons. */
-    private void layoutChrome(int w) {
         int m = GlassBar.MARGIN;
         Dimension hb = historyBar.getPreferredSize();
         // name + save state always shown: a narrow window folds it to a round icon with a badge
@@ -586,6 +569,8 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         if (titleStrip != null) {
             titleStrip.setBounds(0, 0, w, BoardTheme.TITLEBAR_H);
         }
+        ghost.setBounds(0, 0, w, h);
+        if (!panelsMoving) finishPdfOpen();
     }
 
     private void standIn(PanelStandIn standIn, JComponent panel, boolean out) {
@@ -933,7 +918,189 @@ public class BoardWindow extends JPanel implements HistoryPanel.DragHost {
         return true;
     }
 
+    // picture following the mouse while a history row is dragged
+    private static final class Ghost extends JComponent {
+        private BufferedImage picture;
+        private BufferedImage graphThumbnail;
+        private BufferedImage scaledGraphGhost;
+        private Rectangle outline;
+        private Rectangle previewClip;
 
+        Ghost() { setOpaque(false); }
+        private Point at;
+
+        void showOutline(Rectangle bounds) { showGraphPreview(null, bounds, null); }
+
+        void showGraphPreview(BufferedImage image, Rectangle bounds, Rectangle clip) {
+            if (graphThumbnail == image && java.util.Objects.equals(outline, bounds)
+                    && java.util.Objects.equals(previewClip, clip)) return;
+            Rectangle before = outline, oldClip = previewClip;
+            if (image != graphThumbnail || bounds == null || before == null
+                    || before.width != bounds.width || before.height != bounds.height) {
+                scaledGraphGhost = scaledGhost(image, bounds);
+            }
+            outline = bounds == null ? null : new Rectangle(bounds);
+            graphThumbnail = image;
+            previewClip = clip == null ? null : new Rectangle(clip);
+            repaintOutline(before, oldClip);
+            repaintOutline(outline, previewClip);
+        }
+
+        void clearOutline() { showGraphPreview(null, null, null); }
+
+        private void repaintOutline(Rectangle bounds, Rectangle clip) {
+            if (bounds == null) return;
+            Rectangle dirty = new Rectangle(bounds);
+            dirty.grow(4, 4);
+            if (clip != null) dirty = dirty.intersection(clip);
+            if (!dirty.isEmpty()) repaint(dirty.x, dirty.y, dirty.width, dirty.height);
+        }
+
+        /** Rasterize the translucent ghost only when its source or dimensions change.
+         * Mouse movement at a fixed zoom is then just a clipped image blit.
+         */
+        private static BufferedImage scaledGhost(BufferedImage source, Rectangle bounds) {
+            if (source == null || bounds == null || bounds.isEmpty()) return null;
+            double fit = Math.min((double) bounds.width / source.getWidth(),
+                    (double) bounds.height / source.getHeight());
+            int w = Math.max(1, (int)Math.round(source.getWidth() * fit));
+            int h = Math.max(1, (int)Math.round(source.getHeight() * fit));
+            // Guard against unbounded allocations while retaining the precise placement outline.
+            double cap = Math.min(1.0, 1800.0 / Math.max(w, h));
+            w = Math.max(1, (int)Math.round(w * cap));
+            h = Math.max(1, (int)Math.round(h * cap));
+            BufferedImage raster = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+            Graphics2D g = raster.createGraphics();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.setComposite(AlphaComposite.SrcOver.derive(.55f));
+                // Preserve the previous rounded-outline clipping, but do it only once.
+                g.clip(new java.awt.geom.RoundRectangle2D.Float(
+                        -(bounds.width - w) / 2f, -(bounds.height - h) / 2f,
+                        bounds.width, bounds.height, 12, 12));
+                g.drawImage(source, 0, 0, w, h, null);
+            } finally { g.dispose(); }
+            return raster;
+        }
+
+        void showPicture(BufferedImage picture, Point at) {
+            java.awt.Rectangle previous = dirtyBounds();
+            this.picture = picture;
+            this.at = at;
+            repaintDirty(previous);
+            repaintDirty(dirtyBounds());
+        }
+
+        void clear() {
+            if (picture == null) return;
+            java.awt.Rectangle previous = dirtyBounds();
+            picture = null;
+            at = null;
+            repaintDirty(previous);
+            if (getParent() != null && previous != null) getParent().repaint(
+                    previous.x, previous.y, previous.width, previous.height);
+        }
+
+        private java.awt.Rectangle dirtyBounds() {
+            if (picture == null || at == null) return null;
+            return new java.awt.Rectangle(at.x - 3, at.y - 3,
+                    Math.max(1, picture.getWidth() / 2) + 6,
+                    Math.max(1, picture.getHeight() / 2) + 6);
+        }
+
+        private void repaintDirty(java.awt.Rectangle bounds) {
+            if (bounds != null) repaint(bounds.x, bounds.y, bounds.width, bounds.height);
+        }
+
+        @Override
+        public boolean contains(int x, int y) {
+            return false;  // never takes the mouse
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            if (picture == null && outline == null) return;
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (picture != null) {
+                    g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    g2.setComposite(AlphaComposite.SrcOver.derive(0.8f));
+                    g2.drawImage(picture, at.x, at.y, picture.getWidth() / 2, picture.getHeight() / 2, null);
+                }
+                if (outline != null) {
+                    java.awt.Shape originalClip = g2.getClip();
+                    if (previewClip != null) g2.clip(previewClip);
+                    java.awt.Shape pdfClip = g2.getClip();
+                    if (scaledGraphGhost != null) {
+                        int w = scaledGraphGhost.getWidth(), h = scaledGraphGhost.getHeight();
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.drawImage(scaledGraphGhost, outline.x + (outline.width - w) / 2,
+                                outline.y + (outline.height - h) / 2, null);
+                        g2.setClip(pdfClip);
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.setColor(new Color(49, 119, 227, 175));
+                        g2.setStroke(new java.awt.BasicStroke(1.2f, java.awt.BasicStroke.CAP_BUTT,
+                                java.awt.BasicStroke.JOIN_ROUND, 10f, new float[]{5f, 5f}, 0f));
+                        g2.drawRoundRect(outline.x, outline.y, outline.width, outline.height, 12, 12);
+                    } else {
+                        // Legacy callers without a thumbnail still get visible feedback.
+                        g2.setComposite(AlphaComposite.SrcOver);
+                        g2.setColor(new Color(49, 119, 227, 180));
+                        g2.setStroke(new java.awt.BasicStroke(1.4f, java.awt.BasicStroke.CAP_BUTT,
+                                java.awt.BasicStroke.JOIN_ROUND, 10f, new float[]{6f, 4f}, 0f));
+                        g2.drawRect(outline.x, outline.y, outline.width, outline.height);
+                    }
+                    g2.setClip(originalClip);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
+    }
+
+    // mac: the canvas runs under a clear title bar, this strip moves the window
+    private static final class TitleStrip extends JComponent {
+        private Point from;
+        private Point windowFrom;
+
+        TitleStrip() {
+            MouseAdapter m = new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    Window w = SwingUtilities.getWindowAncestor(TitleStrip.this);
+                    if (!SwingUtilities.isLeftMouseButton(e) || w == null) {
+                        return;
+                    }
+                    if (e.getClickCount() == 2 && w instanceof Frame) {
+                        Frame f = (Frame) w;
+                        f.setExtendedState(f.getExtendedState() ^ Frame.MAXIMIZED_BOTH);
+                        from = null;
+                        return;
+                    }
+                    from = e.getLocationOnScreen();
+                    windowFrom = w.getLocation();
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    Window w = SwingUtilities.getWindowAncestor(TitleStrip.this);
+                    if (from == null || w == null) {
+                        return;
+                    }
+                    Point now = e.getLocationOnScreen();
+                    w.setLocation(windowFrom.x + now.x - from.x, windowFrom.y + now.y - from.y);
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    from = null;
+                }
+            };
+            addMouseListener(m);
+            addMouseMotionListener(m);
+        }
+    }
 
     // for tests
     Component pageComponent() {

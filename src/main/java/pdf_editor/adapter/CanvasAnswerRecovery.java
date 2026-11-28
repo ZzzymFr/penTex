@@ -1,6 +1,9 @@
 package pdf_editor.adapter;
 
-import interface_adapter.UiThread;
+import view.answer.CanvasAnswer;
+import view.answer.Formula;
+
+import javax.swing.Timer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +19,7 @@ import java.util.function.Supplier;
  * This adapter observes only such pending, *already exported* sources. It never runs
  * recognition/calculation, changes Canvas state, or creates history for a preview.
  *
- * Runs on the UI thread; its timer runs only while a formula-only source is
+ * Runs on Swing's event thread; its timer runs only while a formula-only source is
  * pending and stops when the associated answer appears or the source is removed.
  */
 public final class CanvasAnswerRecovery {
@@ -24,17 +27,14 @@ public final class CanvasAnswerRecovery {
         void accept(long sourceId, String latex, String result);
     }
     private record Pending(String latex, long revision) { }
-    private final Supplier<List<CanvasFormulaAnswer>> formulaSource;
+    private final Supplier<List<Formula>> formulaSource;
     private final ResultSink resultSink;
     private final Map<Long, Pending> pending = new HashMap<>();
-    private final UiThread ui;
-    private UiThread.Repeating timer;
+    private Timer timer;
 
-    public CanvasAnswerRecovery(Supplier<List<CanvasFormulaAnswer>> formulaSource, ResultSink resultSink,
-                                UiThread ui) {
+    public CanvasAnswerRecovery(Supplier<List<Formula>> formulaSource, ResultSink resultSink) {
         this.formulaSource = Objects.requireNonNull(formulaSource);
         this.resultSink = Objects.requireNonNull(resultSink);
-        this.ui = Objects.requireNonNull(ui, "ui");
     }
 
     /**
@@ -43,10 +43,12 @@ public final class CanvasAnswerRecovery {
      */
     public String displayResult(long sourceId, String rawResult) {
         if (rawResult == null || rawResult.isBlank()) return rawResult;
-        for (CanvasFormulaAnswer formula : formulaSource.get()) {
-            if (formula.id() != sourceId) continue;
-            if (formula.answered() && !formula.error() && !formula.latex().isBlank()) {
-                return formula.latex();
+        for (Formula formula : formulaSource.get()) {
+            if (formula.getId() != sourceId) continue;
+            CanvasAnswer answer = formula.getAnswer();
+            if (answer != null && !answer.isError()
+                    && answer.getLatex() != null && !answer.getLatex().isBlank()) {
+                return answer.getLatex();
             }
             break;
         }
@@ -58,9 +60,9 @@ public final class CanvasAnswerRecovery {
         if (result != null && !result.isBlank()) {
             pending.remove(id);
         } else {
-            for (CanvasFormulaAnswer formula : formulaSource.get()) {
-                if (formula.id() == id) {
-                    pending.put(id, new Pending(latex, formula.revision()));
+            for (Formula formula : formulaSource.get()) {
+                if (formula.getId() == id) {
+                    pending.put(id, new Pending(latex, formula.getRevision()));
                     break;
                 }
             }
@@ -78,18 +80,20 @@ public final class CanvasAnswerRecovery {
 
     private void recover() {
         if (pending.isEmpty()) return;
-        for (CanvasFormulaAnswer formula : formulaSource.get()) {
-            Pending record = pending.get(formula.id());
+        for (Formula formula : formulaSource.get()) {
+            Pending record = pending.get(formula.getId());
             if (record == null) continue;
-            if (record.revision() != formula.revision()) {
-                pending.remove(formula.id());
+            if (record.revision() != formula.getRevision()) {
+                pending.remove(formula.getId());
                 continue;
             }
-            if (!formula.answered() || formula.error()) continue;
-            String result = formula.latex().isBlank() ? formula.text() : formula.latex();
-            if (result.isBlank()) continue;
-            pending.remove(formula.id());
-            resultSink.accept(formula.id(), record.latex(), result);
+            CanvasAnswer answer = formula.getAnswer();
+            if (answer == null || answer.isError()) continue;
+            String latex = answer.getLatex();
+            String result = latex == null || latex.isBlank() ? answer.getText() : latex;
+            if (result == null || result.isBlank()) continue;
+            pending.remove(formula.getId());
+            resultSink.accept(formula.getId(), record.latex(), result);
         }
     }
 
@@ -99,7 +103,7 @@ public final class CanvasAnswerRecovery {
             return;
         }
         if (timer == null) {
-            timer = ui.every(1000, () -> {
+            timer = new Timer(1000, e -> {
                 recover();
                 updateTimer();
             });

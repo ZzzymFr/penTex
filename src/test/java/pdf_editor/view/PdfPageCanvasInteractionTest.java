@@ -1,8 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -15,10 +14,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Real Swing events against the scaled A4 page, with independent output gateways. */
 class PdfPageCanvasInteractionTest {
-    private final MaterialStore library = new MaterialStore();
+    private final MathLibrary library = new MathLibrary();
     private final DocumentEditor document = new DocumentEditor();
     private final PdfEditorController controller = new PdfEditorController(library, document,
-            new AutoLayoutInteractor(document), new PdfExportInteractor((d, p) -> {}, (d, dpi) -> java.util.List.of()), PdfWrapTextLayout::reflow);
+            new AutoLayoutInteractor(document), new PdfExportInteractor((d, p) -> {}, (d, dpi) -> java.util.List.of()));
     private final PdfPageCanvas canvas = new PdfPageCanvas(controller, new PdfPageCanvas.Listener() {
         public void contextMenu(MouseEvent event) { }
         public void editNote() { }

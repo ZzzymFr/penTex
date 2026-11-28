@@ -1,6 +1,7 @@
 package pdf_editor.view;
 
 import view.DrawingCanvas;
+import pdf_editor.adapter.SelectedInkArtwork;
 import interface_adapter.history.CanvasHistorySelection;
 import javax.swing.JComponent;
 import javax.swing.TransferHandler;

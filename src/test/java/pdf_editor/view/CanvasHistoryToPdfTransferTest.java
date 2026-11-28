@@ -1,6 +1,5 @@
 package pdf_editor.view;
 
-import pdf_editor.use_case.MaterialStore;
 import interface_adapter.history.CanvasHistorySelection;
 import org.junit.jupiter.api.Test;
 import view.DrawingCanvas;
@@ -50,11 +49,11 @@ class CanvasHistoryToPdfTransferTest {
     }
 
     @Test void pdfPageAcceptsStructuredCanvasHistoryFlavor() {
-        pdf_editor.use_case.MaterialStore library = new pdf_editor.use_case.MaterialStore();
+        pdf_editor.MathLibrary library = new pdf_editor.MathLibrary();
         pdf_editor.use_case.DocumentEditor doc = new pdf_editor.use_case.DocumentEditor();
         pdf_editor.adapter.PdfEditorController controller = new pdf_editor.adapter.PdfEditorController(
                 library, doc, new pdf_editor.use_case.AutoLayoutInteractor(doc),
-                new pdf_editor.use_case.PdfExportInteractor((d, f) -> { }, (d, dpi) -> java.util.List.of()), pdf_editor.rendering.PdfWrapTextLayout::reflow);
+                new pdf_editor.use_case.PdfExportInteractor((d, f) -> { }, (d, dpi) -> java.util.List.of()));
         PdfPageCanvas page = new PdfPageCanvas(controller, new PdfPageCanvas.Listener() {
             @Override public void contextMenu(MouseEvent e) { }
             @Override public void editNote() { }

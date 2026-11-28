@@ -1,8 +1,8 @@
 package pdf_editor.adapter;
 
-import pdf_editor.domain.NoteSpans;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MaterialStore;
 import pdf_editor.domain.PdfDocument;
+import pdf_editor.adapter.PdfWrapTextLayout;
 import pdf_editor.domain.PdfMaterial;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -50,15 +50,15 @@ public final class PdfEditorController {
     }
 
     public PdfEditorController(MaterialStore library, DocumentEditor editor,
-                               AutoLayoutInteractor layout, PdfExportInteractor output, TextReflow reflow) {
+                               AutoLayoutInteractor layout, PdfExportInteractor output) {
         this.library = Objects.requireNonNull(library);
         this.editor = Objects.requireNonNull(editor);
         this.layout = Objects.requireNonNull(layout);
         this.output = Objects.requireNonNull(output);
-        this.reflow = Objects.requireNonNull(reflow);
     }
-    private final TextReflow reflow;
     public MaterialStore materials() { return library; }
+    /** @deprecated Use materials(). */
+    @Deprecated public MaterialStore library() { return materials(); }
     public int currentPage() { return page; }
     public void loadDocument(PdfDocument document, int targetPage) {
         editor.load(document);
@@ -99,7 +99,7 @@ public final class PdfEditorController {
         if (!changed) return false;
         var body = new java.util.ArrayList<java.util.List<PdfDocument.NoteSpan>>();
         for (int i = 0; i < draft.pageCount(); i++) body.add(draft.body(i));
-        var flow = reflow.paginate(NoteSpans.concat(body), draft);
+        var flow = PdfWrapTextLayout.paginate(PdfBodyFlowLayout.concat(body), draft, 0);
         return editor.imageLayoutAndReflow(page, selection.ids(), layer, flow);
     }
 
@@ -111,7 +111,7 @@ public final class PdfEditorController {
         if (!wrapping) return false;
         var parts = new java.util.ArrayList<java.util.List<PdfDocument.NoteSpan>>();
         for (int i = 0; i < draft.pageCount(); i++) parts.add(draft.body(i));
-        var flow = reflow.paginate(NoteSpans.concat(parts), draft);
+        var flow = PdfWrapTextLayout.paginate(PdfBodyFlowLayout.concat(parts), draft, 0);
         return editor.repaginateAfterImageMove(flow);
     }
     public PdfDocument.Placement selected() { return editor.find(page, selectedId()); }
@@ -197,7 +197,7 @@ public final class PdfEditorController {
     public void replaceInkImages(java.util.Map<String, java.awt.image.BufferedImage> images) {
         if (images.isEmpty()) return;
         java.util.Map<String, pdf_editor.domain.PdfMaterial> materials = new java.util.LinkedHashMap<>();
-        images.forEach((id, image) -> materials.put(id, MaterialStore.region("PDF ink stroke", PngImages.encode(image))));
+        images.forEach((id, image) -> materials.put(id, MaterialStore.region("PDF ink stroke", image)));
         editor.replaceInkMaterials(page, materials);
     }
 

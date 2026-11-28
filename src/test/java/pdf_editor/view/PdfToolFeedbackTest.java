@@ -1,8 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -20,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Regression for PDF-side visual feedback, without changing the document until release. */
 class PdfToolFeedbackTest {
-    private final MaterialStore library = new MaterialStore();
+    private final MathLibrary library = new MathLibrary();
     private final DocumentEditor editor = new DocumentEditor();
     private final PdfEditorController controller = new PdfEditorController(library, editor,
             new AutoLayoutInteractor(editor), new PdfExportInteractor((document, path) -> { },
-            (document, dpi) -> java.util.List.of()), PdfWrapTextLayout::reflow);
+            (document, dpi) -> java.util.List.of()));
     private final AtomicReference<DrawingCanvas.Tool> tool = new AtomicReference<>(DrawingCanvas.Tool.PEN);
     private final PdfPageCanvas page = new PdfPageCanvas(controller, new PdfPageCanvas.Listener() {
         public void contextMenu(MouseEvent e) { }

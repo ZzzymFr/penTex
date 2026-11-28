@@ -1,7 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.rendering.NoteRenderer;
-import pdf_editor.rendering.PdfScreenRasterCache;
+import pdf_editor.data_access.NoteRenderer;
+import pdf_editor.data_access.PdfScreenRasterCache;
 import pdf_editor.domain.PdfDocument;
 
 import javax.swing.JViewport;

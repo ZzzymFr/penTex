@@ -1,6 +1,5 @@
 package view.canvas;
 
-import view.SwingUiThread;
 import history.data_access.FileHistoryRepository;
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
@@ -9,7 +8,7 @@ import interface_adapter.graph.GraphPresenter;
 import interface_adapter.graph.GraphViewModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.MathLabCollector;
 import data_access.InMemoryGraphSessionDataAccessObject;
 import entity.LatexFunctionParser;
@@ -43,9 +42,9 @@ class PopupGraphPublicationTest {
     @TempDir Path storage;
 
     @Test void successfulGraphPublishesItsSourceFormulaAsEditableLibraryAndHistoryMaterial() throws Exception {
-        var library = new MaterialStore();
+        var library = new MathLibrary();
         var history = new HistoryInteractor(new FileHistoryRepository(storage));
-        var collector = new MathLabCollector(library, history, SwingUiThread.INSTANCE);
+        var collector = new MathLabCollector(library, history);
         var viewModel = new GraphViewModel();
         var presenter = new GraphPresenter(viewModel);
         var session = new InMemoryGraphSessionDataAccessObject();
@@ -73,9 +72,9 @@ class PopupGraphPublicationTest {
     }
 
     @Test void graphFailureMustNotPersistTheFormula() throws Exception {
-        var library = new MaterialStore();
+        var library = new MathLibrary();
         var history = new HistoryInteractor(new FileHistoryRepository(storage));
-        var collector = new MathLabCollector(library, history, SwingUiThread.INSTANCE);
+        var collector = new MathLabCollector(library, history);
         var viewModel = new GraphViewModel();
         var presenter = new GraphPresenter(viewModel);
         GraphFunctionInputBoundary graph = input -> presenter.prepareFailView("Invalid graph");

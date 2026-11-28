@@ -1,12 +1,11 @@
 package view.board;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import entity.graph.GraphDefinition;
 import history.domain.HistoryEntry;
 import interface_adapter.graph.GraphDefinitionCodec;
 import interface_adapter.history.HistoryItem;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -31,14 +30,14 @@ class InteractiveGraphPdfHandoffRegressionTest {
         ImageIO.write(thumbnail(), "png", data);
         return data.toByteArray();
     }
-    private static PdfPanel panel(MaterialStore library, DocumentEditor document) {
+    private static PdfPanel panel(MathLibrary library, DocumentEditor document) {
         return new PdfPanel(new PdfEditorController(library, document,
                 new AutoLayoutInteractor(document),
-                new PdfExportInteractor((d, file) -> { }, (d, dpi) -> List.of()), PdfWrapTextLayout::reflow));
+                new PdfExportInteractor((d, file) -> { }, (d, dpi) -> List.of())));
     }
 
     @Test void liveCanvasGraphDroppedOnPdfBecomesEditableAndReusable() {
-        var lib = new MaterialStore();
+        var lib = new MathLibrary();
         var doc = new DocumentEditor();
         var pdf = panel(lib, doc);
         var graph = new GraphDefinition(List.of("y=x^2"), null, null, null);
@@ -55,7 +54,7 @@ class InteractiveGraphPdfHandoffRegressionTest {
                 new GraphDefinition.Camera(0.7, -0.3));
         var entry = new HistoryEntry("graph-1", HistoryEntry.Kind.GRAPH, "Graph", "z=x*y", "",
                 png(), 160, 110, Instant.EPOCH, GraphDefinitionCodec.encode(graph));
-        var lib = new MaterialStore();
+        var lib = new MathLibrary();
         var doc = new DocumentEditor();
         var pdf = panel(lib, doc);
         assertTrue(pdf.dropHistoryItem(new HistoryItem(entry), new Point(80, 90)));

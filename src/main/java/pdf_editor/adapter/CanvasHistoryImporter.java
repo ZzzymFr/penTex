@@ -1,7 +1,7 @@
 package pdf_editor.adapter;
 
 import interface_adapter.history.CanvasHistorySelection;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MaterialStore;
 import java.util.Objects;
 
 /** Adapter from a Canvas History selection into structured PDF materials.
@@ -19,7 +19,7 @@ public final class CanvasHistoryImporter {
         for (CanvasHistorySelection.Asset asset : selection.assets()) {
             MaterialStore.Material material;
             if (asset.isGraph()) {
-                material = controller.materials().addGraph("", PngImages.encode(asset.image()));
+                material = controller.materials().addGraph("", asset.image());
             } else if (asset.result().isBlank()) {
                 material = controller.materials().addFormula(asset.latex());
             } else {

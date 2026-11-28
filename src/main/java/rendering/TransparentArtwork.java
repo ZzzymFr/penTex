@@ -1,6 +1,5 @@
 package rendering;
 
-import pdf_editor.rendering.MaterialRenderer;
 import java.awt.image.BufferedImage;
 import java.util.Objects;
 

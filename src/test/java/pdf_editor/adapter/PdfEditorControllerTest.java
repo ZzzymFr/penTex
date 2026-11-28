@@ -1,8 +1,7 @@
 package pdf_editor.adapter;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.domain.PdfPreviewPage;
 import pdf_editor.use_case.*;
@@ -12,15 +11,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PdfEditorControllerTest {
-    private PdfEditorController newController(MaterialStore library) {
+    private PdfEditorController newController(MathLibrary library) {
         DocumentEditor e = new DocumentEditor();
         PdfExportGateway exportGateway = (document, path) -> {};
         PdfPreviewGateway previewGateway = (document, dpi) -> List.of();
         return new PdfEditorController(library, e, new AutoLayoutInteractor(e),
-                new PdfExportInteractor(exportGateway, previewGateway), PdfWrapTextLayout::reflow);
+                new PdfExportInteractor(exportGateway, previewGateway));
     }
     @Test void selectionAndPageMovesUseUseCases() {
-        MaterialStore library = new MaterialStore();
+        MathLibrary library = new MathLibrary();
         var controller = newController(library);
         var p = controller.place(library.addCalculation("1+1", "2"), 10,20, 300,100);
         controller.selectAt(20,30);

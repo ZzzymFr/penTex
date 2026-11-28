@@ -1,8 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -16,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class PptTextExitTest {
     private static PdfEditorController controller(){
         DocumentEditor editor=new DocumentEditor();
-        return new PdfEditorController(new MaterialStore(),editor,new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((d,p)->{},(d,dpi)->List.of()), PdfWrapTextLayout::reflow);
+        return new PdfEditorController(new MathLibrary(),editor,new AutoLayoutInteractor(editor),
+                new PdfExportInteractor((d,p)->{},(d,dpi)->List.of()));
     }
     private static PdfPageCanvas page(PdfEditorController controller){
         return new PdfPageCanvas(controller,new PdfPageCanvas.Listener(){

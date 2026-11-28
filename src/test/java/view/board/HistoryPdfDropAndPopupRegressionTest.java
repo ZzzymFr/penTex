@@ -1,11 +1,10 @@
 package view.board;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import history.domain.HistoryEntry;
 import interface_adapter.history.HistoryItem;
 import interface_adapter.history.HistoryViewModel;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -31,14 +30,14 @@ class HistoryPdfDropAndPopupRegressionTest {
                 "Calculation", "2+3", "5", null, 0, 0, Instant.EPOCH));
     }
 
-    private static PdfPanel pdf(MaterialStore library, DocumentEditor document) {
+    private static PdfPanel pdf(MathLibrary library, DocumentEditor document) {
         return new PdfPanel(new PdfEditorController(library, document,
                 new AutoLayoutInteractor(document),
-                new PdfExportInteractor((doc, target) -> { }, (doc, dpi) -> List.of()), PdfWrapTextLayout::reflow));
+                new PdfExportInteractor((doc, target) -> { }, (doc, dpi) -> List.of())));
     }
 
     @Test void droppedHistoryCalculationIsPlacedAndAutomaticallyImportedIntoLibrary() {
-        MaterialStore library = new MaterialStore();
+        MathLibrary library = new MathLibrary();
         DocumentEditor document = new DocumentEditor();
         PdfPanel pdf = pdf(library, document);
         assertTrue(pdf.dropHistoryItem(calculation(), new Point(400, 240)));
@@ -57,7 +56,7 @@ class HistoryPdfDropAndPopupRegressionTest {
         assertTrue(ImageIO.write(image, "png", bytes));
         HistoryItem graph = new HistoryItem(new HistoryEntry("graph-1", HistoryEntry.Kind.GRAPH,
                 "Graph", "y=x^2", "", bytes.toByteArray(), 320, 180, Instant.EPOCH));
-        MaterialStore library = new MaterialStore();
+        MathLibrary library = new MathLibrary();
         DocumentEditor document = new DocumentEditor();
         PdfPanel pdf = pdf(library, document);
         assertTrue(pdf.dropHistoryItem(graph, new Point(400, 240)));
@@ -75,7 +74,7 @@ class HistoryPdfDropAndPopupRegressionTest {
     @Test void pdfDropHitTestingUsesVisibleBoardRegionNotInnerPaperShowingState() {
         DrawingCanvas canvas = new DrawingCanvas();
         JPanel page = new JPanel();
-        PdfPanel pdf = pdf(new MaterialStore(), new DocumentEditor());
+        PdfPanel pdf = pdf(new MathLibrary(), new DocumentEditor());
         BoardWindow board = new BoardWindow(page, canvas,
                 host -> new HistoryPanel(new HistoryViewModel(), host), pdf);
         board.setSize(1200, 720);

@@ -1,7 +1,7 @@
 package pdf_editor.use_case;
 
-import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
+import pdf_editor.MathLibrary;
 import java.awt.image.BufferedImage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,8 +26,8 @@ class DocumentEditorNoteTransformRegressionTest {
         editor.beginTransform(0, note.id());
         editor.transform(0, note.id(), 72f, 72f, 300f, 180f);
 
-        var ink = MaterialStore.region("PDF ink stroke",
-                PngImages.encode(new BufferedImage(30, 450, BufferedImage.TYPE_INT_ARGB)));
+        var ink = MathLibrary.region("PDF ink stroke",
+                new BufferedImage(30, 450, BufferedImage.TYPE_INT_ARGB));
         var stroke = editor.place(0, ink, 210f, 100f, 10f, 150f);
         editor.beginTransform(0, stroke.id());
         var moved = editor.transform(0, stroke.id(), 240f, 110f, 10f, 150f);

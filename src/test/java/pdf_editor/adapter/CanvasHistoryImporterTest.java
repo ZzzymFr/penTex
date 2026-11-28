@@ -1,9 +1,8 @@
 package pdf_editor.adapter;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import interface_adapter.history.CanvasHistorySelection;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.use_case.DocumentEditor;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.PdfExportInteractor;
@@ -13,9 +12,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CanvasHistoryImporterTest {
-    private static PdfEditorController controller(MaterialStore library, DocumentEditor document) {
+    private static PdfEditorController controller(MathLibrary library, DocumentEditor document) {
         return new PdfEditorController(library, document, new AutoLayoutInteractor(document),
-                new PdfExportInteractor((doc, file) -> { }, (doc, dpi) -> List.of()), PdfWrapTextLayout::reflow);
+                new PdfExportInteractor((doc, file) -> { }, (doc, dpi) -> List.of()));
     }
     private static BufferedImage image(int w, int h) {
         BufferedImage image = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -24,7 +23,7 @@ class CanvasHistoryImporterTest {
     }
 
     @Test void calculationCopiedFromCanvasPreservesFormulaAndResult() {
-        var library = new MaterialStore();
+        var library = new MathLibrary();
         var doc = new DocumentEditor();
         var selection = new CanvasHistorySelection(List.of(
                 new CanvasHistorySelection.Asset(image(220, 64), "\\frac{1}{2}+2", "2.5", 10, 10, 110, 32)));
@@ -37,7 +36,7 @@ class CanvasHistoryImporterTest {
     }
 
     @Test void graphCopiedFromCanvasUsesOriginalImageAndPdfLibrary() throws Exception {
-        var library = new MaterialStore();
+        var library = new MathLibrary();
         var doc = new DocumentEditor();
         var selection = new CanvasHistorySelection(List.of(
                 new CanvasHistorySelection.Asset(image(500, 200), "", "", 40, 60, 250, 100)));
@@ -53,7 +52,7 @@ class CanvasHistoryImporterTest {
     }
 
     @Test void multiSelectionCreatesTwoIndependentPdfPlacements() {
-        var library = new MaterialStore();
+        var library = new MathLibrary();
         var doc = new DocumentEditor();
         var selection = new CanvasHistorySelection(List.of(
                 new CanvasHistorySelection.Asset(image(120, 40), "x+1", "2", 20, 30, 120, 40),

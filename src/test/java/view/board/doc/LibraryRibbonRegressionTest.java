@@ -1,8 +1,7 @@
 package view.board.doc;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -21,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class LibraryRibbonRegressionTest {
     private static DocEditorPanel editor() {
         DocumentEditor document = new DocumentEditor();
-        return new DocEditorPanel(new PdfEditorController(new MaterialStore(), document,
-                new AutoLayoutInteractor(document), new PdfExportInteractor((pdf, path) -> {}, (pdf, dpi) -> List.of()), PdfWrapTextLayout::reflow));
+        return new DocEditorPanel(new PdfEditorController(new MathLibrary(), document,
+                new AutoLayoutInteractor(document), new PdfExportInteractor((pdf, path) -> {}, (pdf, dpi) -> List.of())));
     }
 
     private static <T extends Component> List<T> find(Component root, Class<T> type) {
@@ -56,6 +55,7 @@ class LibraryRibbonRegressionTest {
                 assertFalse(buttons.stream().anyMatch(b -> "Library".equals(b.getText()) || "libraryTopButton".equals(b.getName())));
                 assertEquals(0L, activeLibraryCommands(editor));
             }
+            assertFalse(editor.isLibraryVisible());
         } finally { editor.close(); }
     }
 

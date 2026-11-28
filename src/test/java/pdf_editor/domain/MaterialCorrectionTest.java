@@ -1,12 +1,11 @@
 package pdf_editor.domain;
-
-import pdf_editor.adapter.PngImages;import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import org.junit.jupiter.api.Test;
+import pdf_editor.MathLibrary;
 import java.awt.image.BufferedImage;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MaterialCorrectionTest {
-    private final MaterialStore library = new MaterialStore();
+    private final MathLibrary library = new MathLibrary();
     @Test void replacementIsImmutable() {
         PdfMaterial before = library.addFormula("a"); PdfMaterial after = before.withText("b", "");
         assertEquals("a", before.formula()); assertEquals("b", after.formula());
@@ -20,7 +19,7 @@ class MaterialCorrectionTest {
         assertEquals(before.title(), before.withText("b", "").title());
     }
     @Test void rejectsEditingGraphImage() {
-        PdfMaterial graph = library.addGraph("y=x", PngImages.encode(new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB)));
+        PdfMaterial graph = library.addGraph("y=x", new BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB));
         assertThrows(IllegalStateException.class, () -> graph.withText("x", ""));
     }
     @Test void acceptsEmptyFormula() { assertEquals("", library.addFormula("x").withText("", "3").formula()); }

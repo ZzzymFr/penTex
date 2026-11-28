@@ -4,7 +4,7 @@ import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
 import interface_adapter.history.HistoryItem;
 import interface_adapter.history.HistoryViewModel;
-import interface_adapter.UiThread;
+import javax.swing.SwingUtilities;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
@@ -13,12 +13,10 @@ import java.util.Objects;
 public final class HistoryBoardPresenter {
     private final HistoryInteractor history;
     private final HistoryViewModel model;
-    /** @param ui the thread the view model is updated on */
-    public HistoryBoardPresenter(HistoryInteractor history, HistoryViewModel model, UiThread ui) {
+    public HistoryBoardPresenter(HistoryInteractor history, HistoryViewModel model) {
         this.history = Objects.requireNonNull(history);
         this.model = Objects.requireNonNull(model);
-        Objects.requireNonNull(ui, "ui");
-        history.onChange(() -> ui.later(this::refresh));
+        history.onChange(() -> SwingUtilities.invokeLater(this::refresh));
     }
     public void refresh() {
         try {

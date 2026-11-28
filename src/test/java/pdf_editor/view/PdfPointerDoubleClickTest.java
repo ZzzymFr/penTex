@@ -1,8 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -19,10 +18,10 @@ import static org.junit.jupiter.api.Assertions.*;
 class PdfPointerDoubleClickTest {
     @Test void pointerDoubleClickOpensExistingFormulaEditorNotDrawing() {
         DocumentEditor document = new DocumentEditor();
-        MaterialStore library = new MaterialStore();
+        MathLibrary library = new MathLibrary();
         var controller = new PdfEditorController(library, document,
                 new AutoLayoutInteractor(document),
-                new PdfExportInteractor((d, f) -> { }, (d, dpi) -> List.of()), PdfWrapTextLayout::reflow);
+                new PdfExportInteractor((d, f) -> { }, (d, dpi) -> List.of()));
         var formula = library.addCalculation("2+3", "5");
         controller.place(formula, 75, 108, 320, 90);
         AtomicInteger edit = new AtomicInteger();

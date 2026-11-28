@@ -1,8 +1,7 @@
 package view.board;
 
-import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MathLibrary;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -20,9 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class PdfPointerModeTest {
     @Test void pointerDisablesPdfInkAndMarqueeButRetainsNativeSelection() throws Exception {
         DocumentEditor document = new DocumentEditor();
-        var controller = new PdfEditorController(new MaterialStore(), document,
+        var controller = new PdfEditorController(new MathLibrary(), document,
                 new AutoLayoutInteractor(document),
-                new PdfExportInteractor((doc, target) -> { }, (doc, dpi) -> List.of()), PdfWrapTextLayout::reflow);
+                new PdfExportInteractor((doc, target) -> { }, (doc, dpi) -> List.of()));
         PdfPanel pdf = new PdfPanel(controller);
         DrawingCanvas canvas = new DrawingCanvas();
         FloatingToolbar toolbar = new FloatingToolbar(canvas, new JPanel(), pdf);

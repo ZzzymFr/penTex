@@ -89,8 +89,6 @@ public final class FloatingToolbar {
         });
         canvas.addUserActionListener(() -> SwingUtilities.invokeLater(bar::repaint));  // Undo / Clear greys
         canvas.addStrokeListener(s -> bar.repaint());
-        // zoom / undo / redo change what Undo and Redo can do without any ink action
-        canvas.addUndoStateListener(() -> SwingUtilities.invokeLater(bar::repaint));
         area.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {

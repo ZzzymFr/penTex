@@ -315,8 +315,8 @@ final class GraphLookupChip extends JComponent {
         private static final int TEXT_LINE = 19;
         private static final int FOOT = 34;
         private final List<Row> rows = new ArrayList<>();
-        private final RangeChipButton clear = new RangeChipButton("Clear", false, this::clearClicked);
-        private final RangeChipButton find = new RangeChipButton("Find", true, this::find);
+        private final GraphRangeChip.Button clear = new GraphRangeChip.Button("Clear", false, this::clearClicked);
+        private final GraphRangeChip.Button find = new GraphRangeChip.Button("Find", true, this::find);
         private List<GraphLookup.Line> lines = List.of();
         private String message;
         private boolean filling;      // we're writing answers in, not the user typing

@@ -1,17 +1,16 @@
 package pdf_editor.view;
 
-import pdf_editor.adapter.PngImages;
 import pdf_editor.adapter.PdfEditorController;
-import pdf_editor.rendering.PdfBodyFlowLayout;
-import pdf_editor.rendering.PdfWrapTextLayout;
+import pdf_editor.adapter.PdfBodyFlowLayout;
+import pdf_editor.adapter.PdfWrapTextLayout;
 import pdf_editor.adapter.CanvasHistoryImporter;
 import interface_adapter.history.CanvasHistorySelection;
 import pdf_editor.adapter.PageZoomModel;
 import pdf_editor.adapter.PageCoordinateMapper;
-import pdf_editor.rendering.MaterialRenderer;
-import pdf_editor.rendering.NoteRenderer;
+import pdf_editor.data_access.MaterialRenderer;
+import pdf_editor.data_access.NoteRenderer;
 import pdf_editor.domain.PdfDocument;
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MaterialStore;
 
 import javax.swing.*;
 import java.awt.*;
@@ -36,8 +35,8 @@ public final class PdfPageCanvas extends JPanel {
     static final int PAGE_MARGIN = 28;
     private static final int MARGIN = PAGE_MARGIN;
     private final PdfEditorController controller;
-    private final pdf_editor.rendering.PdfScreenRasterCache screenRasters =
-            new pdf_editor.rendering.PdfScreenRasterCache();
+    private final pdf_editor.data_access.PdfScreenRasterCache screenRasters =
+            new pdf_editor.data_access.PdfScreenRasterCache();
     private final PdfViewportPaintCache viewportPaint = new PdfViewportPaintCache();
     private final PdfBodyRasterCache bodyRasters = new PdfBodyRasterCache();
     private final Listener listener;
@@ -222,7 +221,7 @@ public final class PdfPageCanvas extends JPanel {
         lastBodyLength = length;
         if (!added || inlineBody.getCaretPosition() < length - 2) return;
         java.util.List<PdfDocument.NoteSpan> content =
-                pdf_editor.rendering.NoteTextDocumentFactory.toSpans(inlineBody, zoom());
+                pdf_editor.adapter.NoteTextDocumentFactory.toSpans(inlineBody, zoom());
         boolean overflowing = PdfWrapTextLayout.page(content, 0, controller.placements()).until()
                 < PdfBodyFlowLayout.plainText(content).length();
         if (!overflowing) return;
@@ -427,9 +426,30 @@ public final class PdfPageCanvas extends JPanel {
     private void refreshSelectionCandidates() {
         selectionCandidates.clear();
         if (selectionBoxStart == null || selectionBoxEnd == null) return;
-        java.awt.Shape region = PdfPageRegionSelection.region(
-                drawingTool.get() == view.DrawingCanvas.Tool.LASSO, lassoScreenPath, selectionBoxStart, selectionBoxEnd);
-        selectionCandidates.addAll(PdfPageRegionSelection.covered(region, controller.placements(), zoom(), MARGIN));
+        java.awt.Shape region;
+        if (drawingTool.get() == view.DrawingCanvas.Tool.LASSO && lassoScreenPath.size() > 2) {
+            java.awt.geom.Path2D.Float path = new java.awt.geom.Path2D.Float();
+            path.moveTo(lassoScreenPath.get(0).x, lassoScreenPath.get(0).y);
+            for (int i = 1; i < lassoScreenPath.size(); i++)
+                path.lineTo(lassoScreenPath.get(i).x, lassoScreenPath.get(i).y);
+            path.closePath();
+            region = path;
+        } else {
+            region = new Rectangle(Math.min(selectionBoxStart.x, selectionBoxEnd.x),
+                    Math.min(selectionBoxStart.y, selectionBoxEnd.y),
+                    Math.abs(selectionBoxStart.x - selectionBoxEnd.x),
+                    Math.abs(selectionBoxStart.y - selectionBoxEnd.y));
+        }
+        for (PdfDocument.Placement item : controller.placements()) {
+            int cx = Math.round((item.x() + item.width() / 2) * (float) zoom()) + MARGIN;
+            int cy = Math.round((item.y() + item.height() / 2) * (float) zoom()) + MARGIN;
+            int left = Math.round(item.x() * (float) zoom()) + MARGIN;
+            int top = Math.round(item.y() * (float) zoom()) + MARGIN;
+            int width = Math.max(1, Math.round(item.width() * (float) zoom()));
+            int height = Math.max(1, Math.round(item.height() * (float) zoom()));
+            if (region.contains(cx, cy) || region.intersects(left, top, width, height))
+                selectionCandidates.add(item.id());
+        }
     }
     private void updateToolCursor() {
         view.DrawingCanvas.Tool current = drawingOnPdf ? drawingTool.get() : null;
@@ -520,9 +540,31 @@ public final class PdfPageCanvas extends JPanel {
     }
     private void completePdfStroke() {
         if (inkPreview.isEmpty()) return;
-        PdfInkStrokeRaster.Placed stroke = PdfInkStrokeRaster.render(inkPreview, drawingColor.get(), drawingWidth.get());
-        controller.place(MaterialStore.region("PDF ink stroke", PngImages.encode(stroke.image())),
-                stroke.x(), stroke.y(), stroke.width(), stroke.height());
+        float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE,maxX=-Float.MAX_VALUE,maxY=-Float.MAX_VALUE;
+        for (var p : inkPreview) {minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);
+            maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);}
+        float pad=5f;
+        float x=Math.max(0,minX-pad), y=Math.max(0,minY-pad);
+        float w=Math.min(PdfDocument.PAGE_WIDTH-x, Math.max(10,maxX-x+pad));
+        float h=Math.min(PdfDocument.PAGE_HEIGHT-y, Math.max(10,maxY-y+pad));
+        int quality=3;
+        BufferedImage image=new BufferedImage(Math.max(1,(int)Math.ceil(w*quality)),
+                Math.max(1,(int)Math.ceil(h*quality)),BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g=image.createGraphics();
+        try {
+            g.scale(quality,quality);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setStroke(new BasicStroke(Math.max(1f, drawingWidth.get()),BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));
+            g.setColor(drawingColor.get());
+            java.awt.geom.Path2D.Float path=new java.awt.geom.Path2D.Float();
+            boolean first=true;
+            for (var point : inkPreview) {if(first){path.moveTo(point.x-x,point.y-y);first=false;}
+                else path.lineTo(point.x-x,point.y-y);}
+            g.draw(path);
+            if(inkPreview.size()==1)g.fillOval(Math.round(inkPreview.get(0).x-x)-1,
+                    Math.round(inkPreview.get(0).y-y)-1,3,3);
+        } finally {g.dispose();}
+        controller.place(MaterialStore.region("PDF ink stroke",image),x,y,w,h);
         controller.clearSelection();
         inkPreview.clear();repaint();
     }
@@ -534,7 +576,41 @@ public final class PdfPageCanvas extends JPanel {
         updateSize();
         setFocusable(true);
         setBackground(new Color(243, 247, 253));
-        setTransferHandler(new PdfPageDropHandler(controller, this));
+        setTransferHandler(new TransferHandler() {
+            @Override public boolean canImport(TransferSupport support) {
+                return support.isDataFlavorSupported(CanvasPdfDragController.HISTORY_SELECTION_FLAVOR)
+                        || support.isDataFlavorSupported(DataFlavor.imageFlavor);
+            }
+            @Override public boolean importData(TransferSupport support) {
+                if (!canImport(support)) return false;
+                try {
+                    Point location = support.getDropLocation().getDropPoint();
+                    // A live inline note editor is a Swing child covering the page.
+                    // Commit/remove it before inserting the dropped History material.
+                    finishInlineEdit();
+                    if (support.isDataFlavorSupported(CanvasPdfDragController.HISTORY_SELECTION_FLAVOR)) {
+                        CanvasHistorySelection selection = (CanvasHistorySelection) support.getTransferable()
+                                .getTransferData(CanvasPdfDragController.HISTORY_SELECTION_FLAVOR);
+                        CanvasHistoryImporter.importAt(selection, controller,
+                                toPageX(location.x), toPageY(location.y));
+                        repaint();
+                        return true;
+                    }
+                    if (support.isDataFlavorSupported(DataFlavor.imageFlavor)) {
+                        java.awt.Image source = (java.awt.Image) support.getTransferable()
+                                .getTransferData(DataFlavor.imageFlavor);
+                        BufferedImage image = imageAsBuffered(source);
+                        MaterialStore.Material region = controller.materials().addInk("Canvas selection", image);
+                        float width = Math.min(440, Math.max(85, image.getWidth()));
+                        float height = width * image.getHeight() / Math.max(1f, image.getWidth());
+                        if (height > 575) { width *= 575f / height; height = 575f; }
+                        controller.place(region, toPageX(location.x), toPageY(location.y), width, height);
+                        repaint(); return true;
+                    }
+                    return false;
+                } catch (Exception ignored) { return false; }
+            }
+        });
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mouseEntered(MouseEvent e) { updateToolCursor(); }
             @Override public void mouseMoved(MouseEvent e) { updateToolCursor(); }
@@ -621,11 +697,31 @@ public final class PdfPageCanvas extends JPanel {
                     selectingBox = false;
                     if (selectionBoxStart != null) {
                         selectionBoxEnd = e.getPoint();
-                        java.awt.Shape region = PdfPageRegionSelection.region(
-                                drawingTool.get() == view.DrawingCanvas.Tool.LASSO, lassoScreenPath,
-                                selectionBoxStart, selectionBoxEnd);
-                        java.util.Set<String> chosen = PdfPageRegionSelection.covered(
-                                region, controller.placements(), zoom(), MARGIN);
+                        java.awt.Shape region;
+                        if (drawingTool.get() == view.DrawingCanvas.Tool.LASSO && lassoScreenPath.size() >= 3) {
+                            java.awt.geom.Path2D.Float outline = new java.awt.geom.Path2D.Float();
+                            outline.moveTo(lassoScreenPath.get(0).x, lassoScreenPath.get(0).y);
+                            for (int i = 1; i < lassoScreenPath.size(); i++)
+                                outline.lineTo(lassoScreenPath.get(i).x, lassoScreenPath.get(i).y);
+                            outline.closePath();
+                            region = outline;
+                        } else {
+                            region = new Rectangle(Math.min(selectionBoxStart.x, selectionBoxEnd.x),
+                                    Math.min(selectionBoxStart.y, selectionBoxEnd.y),
+                                    Math.abs(selectionBoxStart.x - selectionBoxEnd.x),
+                                    Math.abs(selectionBoxStart.y - selectionBoxEnd.y));
+                        }
+                        java.util.Set<String> chosen = new java.util.LinkedHashSet<>();
+                        for (var item : controller.placements()) {
+                            int cx = Math.round((item.x() + item.width()/2) * (float)zoom()) + MARGIN;
+                            int cy = Math.round((item.y() + item.height()/2) * (float)zoom()) + MARGIN;
+                            int left = Math.round(item.x() * (float) zoom()) + MARGIN;
+                            int top = Math.round(item.y() * (float) zoom()) + MARGIN;
+                            int width = Math.max(1, Math.round(item.width() * (float) zoom()));
+                            int height = Math.max(1, Math.round(item.height() * (float) zoom()));
+                            if (region.contains(cx, cy) || region.intersects(left, top, width, height))
+                                chosen.add(item.id());
+                        }
                         controller.setSelection(chosen, e.isShiftDown() || e.isControlDown() || e.isMetaDown());
                     }
                     // Keep multi-selection visible until Escape, blank click or tool/page switch.
@@ -663,6 +759,16 @@ public final class PdfPageCanvas extends JPanel {
         getActionMap().put("pdfClearSelection", new AbstractAction() {
             @Override public void actionPerformed(java.awt.event.ActionEvent e) { clearPageSelection(); }
         });
+    }
+    private static java.awt.image.BufferedImage imageAsBuffered(java.awt.Image image) {
+        if (image instanceof java.awt.image.BufferedImage buffered) return buffered;
+        if (image == null || image.getWidth(null) < 1 || image.getHeight(null) < 1)
+            throw new IllegalArgumentException("Unsupported canvas image");
+        java.awt.image.BufferedImage copy = new java.awt.image.BufferedImage(image.getWidth(null),
+                image.getHeight(null), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D graphics = copy.createGraphics();
+        graphics.drawImage(image, 0, 0, null); graphics.dispose();
+        return copy;
     }
 
     @Override protected void paintChildren(Graphics graphics) {

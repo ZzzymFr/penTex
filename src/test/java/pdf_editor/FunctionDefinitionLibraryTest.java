@@ -1,12 +1,11 @@
 package pdf_editor;
 
-import pdf_editor.use_case.MaterialStore;
 import org.junit.jupiter.api.Test;
 import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 class FunctionDefinitionLibraryTest {
     @Test void expressionWithoutNumericResultStillVisible() {
-        MaterialStore library = new MaterialStore();
+        MathLibrary library = new MathLibrary();
         var item = library.addSourceCalculation(17,"y=3x","");
         assertEquals("y=3x",item.formula());
         assertEquals("",item.result());
@@ -14,7 +13,7 @@ class FunctionDefinitionLibraryTest {
         assertNotNull(library.find(item.id()));
     }
     @Test void erasedDefinitionRestoredWithOriginalIdentity() {
-        MaterialStore library=new MaterialStore();
+        MathLibrary library=new MathLibrary();
         var item=library.addSourceCalculation(23,"y=3x","");
         library.retainActiveSources(Set.of());
         assertNull(library.find(item.id()));

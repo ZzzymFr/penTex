@@ -1,8 +1,8 @@
 package pdf_editor.adapter;
 
-import pdf_editor.use_case.MaterialStore;
+import pdf_editor.MaterialStore;
 
-import interface_adapter.UiThread;
+import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
 
 public final class MathLabCollector {
@@ -17,14 +17,12 @@ public final class MathLabCollector {
         }
     }
     @FunctionalInterface private interface HistoryCommand { void execute() throws java.io.IOException; }
-    private final UiThread ui;  // materials are published on the UI thread
-    public MathLabCollector(MaterialStore library, UiThread ui) { this(library, null, null, ui); }
-    public MathLabCollector(MaterialStore library, history.use_case.HistoryInteractor history, UiThread ui) {
-        this(library, history, null, ui);
+    public MathLabCollector(MaterialStore library) { this(library, null, null); }
+    public MathLabCollector(MaterialStore library, history.use_case.HistoryInteractor history) {
+        this(library, history, null);
     }
     public MathLabCollector(MaterialStore library, history.use_case.HistoryInteractor history,
-                            history.use_case.CanvasHistoryLifecycle linkedHistory, UiThread ui) {
-        this.ui = java.util.Objects.requireNonNull(ui, "ui");
+                            history.use_case.CanvasHistoryLifecycle linkedHistory) {
         this.library = library;
         this.history = history;
         this.linkedHistory = linkedHistory;
@@ -102,7 +100,7 @@ public final class MathLabCollector {
     public void acceptInteractiveGraph(entity.graph.GraphDefinition definition, BufferedImage image) {
         if (definition == null || image == null) return;
         onEdt(() -> {
-            MaterialStore.Material material = library.addInteractiveGraph(definition, PngImages.encode(image));
+            MaterialStore.Material material = library.addInteractiveGraph(definition, image);
             String encoded = interface_adapter.graph.GraphDefinitionCodec.encode(definition);
             persist(() -> history.recordGraph(definition.functions().get(0), material.imagePng(),
                     material.imageWidth(), material.imageHeight(), encoded));
@@ -110,12 +108,13 @@ public final class MathLabCollector {
     }
     public void acceptGraph(String title, BufferedImage image) {
         if (image != null) onEdt(() -> {
-            MaterialStore.Material material = library.addGraph(title == null ? "Graph" : title, PngImages.encode(image));
+            MaterialStore.Material material = library.addGraph(title == null ? "Graph" : title, image);
             persist(() -> history.recordGraph(title, material.imagePng(),
                     material.imageWidth(), material.imageHeight()));
         });
     }
-    private void onEdt(Runnable task) {
-        ui.run(task);
+    private static void onEdt(Runnable task) {
+        if (SwingUtilities.isEventDispatchThread()) task.run();
+        else SwingUtilities.invokeLater(task);
     }
 }
