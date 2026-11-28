@@ -3,7 +3,7 @@ package pdf_editor.use_case;
 import org.junit.jupiter.api.Test;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.domain.PdfMaterial;
-import pdf_editor.adapter.PdfBodyFlowLayout;
+import pdf_editor.rendering.PdfBodyFlowLayout;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;

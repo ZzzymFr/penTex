@@ -1,6 +1,6 @@
 package pdf_editor.view;
 
-import pdf_editor.adapter.NoteTextDocumentFactory;
+import pdf_editor.rendering.NoteTextDocumentFactory;
 import pdf_editor.domain.PdfDocument;
 import javax.swing.*;
 import javax.swing.text.SimpleAttributeSet;

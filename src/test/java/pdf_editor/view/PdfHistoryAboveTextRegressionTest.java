@@ -1,9 +1,10 @@
 package pdf_editor.view;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import history.domain.HistoryEntry;
 import interface_adapter.history.HistoryItem;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -18,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** History/PDF text default layer and hit-testing regressions. */
 class PdfHistoryAboveTextRegressionTest {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private final DocumentEditor editor = new DocumentEditor();
     private final PdfEditorController controller = new PdfEditorController(library, editor,
             new AutoLayoutInteractor(editor),
-            new PdfExportInteractor((d, file) -> {}, (d, dpi) -> List.of()));
+            new PdfExportInteractor((d, file) -> {}, (d, dpi) -> List.of()), PdfWrapTextLayout::reflow);
 
     @Test void textInsertedAfterHistoryDefaultsBelowItAndCanStillBeArranged() {
         var history = controller.place(library.addCalculation("2+3", "5"), 85, 105, 260, 85);

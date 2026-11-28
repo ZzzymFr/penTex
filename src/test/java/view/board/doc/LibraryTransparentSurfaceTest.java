@@ -1,7 +1,8 @@
 package view.board.doc;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -18,11 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class LibraryTransparentSurfaceTest {
     @Test void noHiddenLibraryRowsOrViewportRemain() {
         DocumentEditor editor = new DocumentEditor();
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         library.addFormula("x^2");
         PdfEditorController controller = new PdfEditorController(library, editor,
                 new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((doc,path)->{}, (doc,dpi)->List.of()));
+                new PdfExportInteractor((doc,path)->{}, (doc,dpi)->List.of()), PdfWrapTextLayout::reflow);
         DocEditorPanel panel = new DocEditorPanel(controller);
         try {
             List<JList<?>> lists = new ArrayList<>();

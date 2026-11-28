@@ -1,8 +1,8 @@
 package pdf_editor.view;
 
+import pdf_editor.adapter.PngImages;
 import entity.Stroke;
 import pdf_editor.adapter.SelectedInkRegistry;
-import pdf_editor.adapter.SelectedInkArtwork;
 import pdf_editor.use_case.SelectionToHistory;
 import view.DrawingCanvas;
 import view.glass.GlassDialogs;
@@ -26,7 +26,7 @@ import java.util.Objects;
 /** View-only context commands; the use case validates and publishes the result. */
 public final class CanvasHistorySelectionMenu {
     private CanvasHistorySelectionMenu() { }
-    public static void install(DrawingCanvas canvas, SelectionToHistory action, SelectedInkRegistry registry) {
+    public static void install(DrawingCanvas canvas, SelectionToHistory<BufferedImage> action, SelectedInkRegistry registry) {
         Objects.requireNonNull(canvas); Objects.requireNonNull(action); Objects.requireNonNull(registry);
         canvas.addMouseListener(new MouseAdapter() {
             @Override public void mousePressed(MouseEvent event) { popup(event); }
@@ -61,7 +61,7 @@ public final class CanvasHistorySelectionMenu {
                 ink.addActionListener(e -> {
                     List<Stroke> strokes = canvas.selectedInkSnapshot();
                     if (!strokes.isEmpty()) {
-                        registry.track(action.addInk(SelectedInkArtwork.render(canvas, true)).id(), strokes);
+                        registry.track(action.addInk(PngImages.encode(SelectedInkArtwork.render(canvas, true))).id(), strokes);
                     }
                 });
                 menu.show(canvas, event.getX(), event.getY());

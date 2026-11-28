@@ -1,12 +1,14 @@
 package pdf_editor.data_access;
 
+import view.SwingUiThread;
+import pdf_editor.adapter.PngImages;
 import entity.graph.GraphDefinition;
 import history.adapter.HistoryBoardPresenter;
 import history.data_access.FileHistoryRepository;
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
 import interface_adapter.history.HistoryViewModel;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.HistoryMaterialImporter;
 import pdf_editor.adapter.MathLabCollector;
 import pdf_editor.domain.PdfDocument;
@@ -45,16 +47,16 @@ public final class PdfPersistenceSmoke {
             var library = new MaterialStore();
             var historyPath = temp.resolve("history");
             var history = new HistoryInteractor(new FileHistoryRepository(historyPath));
-            var collector = new MathLabCollector(library, history);
+            var collector = new MathLabCollector(library, history, SwingUiThread.INSTANCE);
             var body = new PdfDocument.NoteSpan("Résumé ∑", true, true, false, 17, "Dialog");
             var graph = new GraphDefinition(List.of("z=x^2+y^2"), new GraphDefinition.Range(-3, 4),
                     new GraphDefinition.Range(-5, 6), new GraphDefinition.Range(-7, 8),
                     new GraphDefinition.Camera(.4, -.2));
             var nativeMaterial = PdfMaterial.restore("native-id", "Plot", "", "", png, 40, 25, graph);
             var formula = library.addCalculation("x+1", "2");
-            var ink = library.addInk("Canvas selection", image);
-            library.addInk("Canvas selection", image);
-            var selection = new SelectionToHistory(ignored -> "y+2", library, collector::recordSelectedFormula);
+            var ink = library.addInk("Canvas selection", PngImages.encode(image));
+            library.addInk("Canvas selection", PngImages.encode(image));
+            var selection = new SelectionToHistory<java.awt.image.BufferedImage>(ignored -> "y+2", library, collector::recordSelectedFormula);
             selection.addFormula("y+2");
             selection.addCalculation("y+2", "3");
             var reopenedHistory = new HistoryInteractor(new FileHistoryRepository(historyPath));
@@ -63,7 +65,7 @@ public final class PdfPersistenceSmoke {
             var inkEntry = historyEntries.stream().filter(e -> e.kind() == HistoryEntry.Kind.INK).findFirst().orElseThrow();
             check(Arrays.equals(inkEntry.png(), ink.imagePng()), "Persisted handwriting pixels");
             var model = new HistoryViewModel();
-            SwingUtilities.invokeAndWait(() -> new HistoryBoardPresenter(reopenedHistory, model).refresh());
+            SwingUtilities.invokeAndWait(() -> new HistoryBoardPresenter(reopenedHistory, model, SwingUiThread.INSTANCE).refresh());
             var item = model.getItems().stream().filter(i -> i.isInk()).findFirst().orElseThrow();
             check(item.hasImage() && !item.isGraph(), "Ink is image-backed but is not a native graph");
             var imported = HistoryMaterialImporter.importRecord(item, library);
@@ -71,10 +73,10 @@ public final class PdfPersistenceSmoke {
             check(history.list().size() == 2, "Import does not republish History");
             check(imported == HistoryMaterialImporter.importRecord(item, library), "Reuse does not duplicate cached material");
             check(imported.id().equals(inkEntry.id()), "Imported material keeps persistent History source ID");
-            var live = library.addInteractiveGraph(graph, image);
+            var live = library.addInteractiveGraph(graph, PngImages.encode(image));
             library.archive(live);
             var anotherThumbnail = new BufferedImage(80, 50, BufferedImage.TYPE_INT_ARGB);
-            library.archive(library.addInteractiveGraph(graph, anotherThumbnail));
+            library.archive(library.addInteractiveGraph(graph, PngImages.encode(anotherThumbnail)));
             check(history.list().stream().filter(e -> e.kind() == HistoryEntry.Kind.GRAPH).count() == 1,
                     "Repeated native graph handoff with different thumbnail is deduplicated");
             var graphEntry = history.list().stream().filter(e -> e.kind() == HistoryEntry.Kind.GRAPH).findFirst().orElseThrow();
@@ -84,7 +86,7 @@ public final class PdfPersistenceSmoke {
             var editing = new DocumentEditor();
             var controller = new pdf_editor.adapter.PdfEditorController(library, editing,
                     new pdf_editor.use_case.AutoLayoutInteractor(editing),
-                    new pdf_editor.use_case.PdfExportInteractor((d, p) -> {}, (d, dpi) -> List.of()));
+                    new pdf_editor.use_case.PdfExportInteractor((d, p) -> {}, (d, dpi) -> List.of()), pdf_editor.rendering.PdfWrapTextLayout::reflow);
             var archivedCalc = history.list().stream().filter(e -> e.kind() == HistoryEntry.Kind.CALCULATION).findFirst().orElseThrow();
             var importedCalc = HistoryMaterialImporter.importRecord(new interface_adapter.history.HistoryItem(archivedCalc), library);
             var first = controller.place(importedCalc, 20, 20, 100, 50);

@@ -1,5 +1,8 @@
 package pdf_editor;
 
+import pdf_editor.use_case.MaterialStore;
+import app.PdfStudioLauncher;
+
 import history.data_access.FileHistoryRepository;
 import history.use_case.HistoryInteractor;
 import org.junit.jupiter.api.Test;
@@ -16,7 +19,7 @@ class CanvasErasureArchiveRetentionTest {
 
     @Test void synchronizingEmptyCanvasNeverRemovesSavedCalculation() throws Exception {
         var history = new HistoryInteractor(new FileHistoryRepository(dir));
-        var studio = new PdfStudioLauncher(history);
+        var studio = PdfStudioLauncher.create(history);
         var drawing = new DrawingCanvas();
         var shared = new SharedCanvas(drawing);
         SwingUtilities.invokeAndWait(() -> {
@@ -25,15 +28,15 @@ class CanvasErasureArchiveRetentionTest {
             drawing.clear();
             studio.synchronizeCanvas(shared);
         });
-        assertEquals(1, studio.getLibrary().items().size());
-        assertEquals("7", studio.getLibrary().items().get(0).result());
+        assertEquals(1, studio.getMaterialStore().items().size());
+        assertEquals("7", studio.getMaterialStore().items().get(0).result());
         assertEquals(1, history.list().size());
         assertEquals(1, new HistoryInteractor(new FileHistoryRepository(dir)).list().size());
     }
 
     @Test void savedInkRemainsAfterCanvasIsCleared() {
         var drawing = new DrawingCanvas();
-        var library = new MathLibrary();
+        var library = new MaterialStore();
         var registry = new SelectedInkRegistry(drawing, library);
         var item = library.addFormula("archived");
         registry.track(item.id(), java.util.List.of());

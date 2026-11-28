@@ -1,7 +1,7 @@
 package pdf_editor.adapter;
 
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import view.DrawingCanvas;
 import java.awt.event.MouseEvent;
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,14 +14,14 @@ class SelectedInkRestoreTest {
     }
     @Test void clearingCanvasDoesNotHideSavedMaterial() {
         DrawingCanvas canvas = new DrawingCanvas();canvas.setSize(400,400);ink(canvas);
-        MathLibrary library = new MathLibrary();SelectedInkRegistry registry = new SelectedInkRegistry(canvas,library);
+        MaterialStore library = new MaterialStore();SelectedInkRegistry registry = new SelectedInkRegistry(canvas,library);
         var image = library.addFormula("x");registry.track(image.id(),canvas.getStrokes());
         canvas.clear();assertSame(image, library.find(image.id()));
         canvas.undo();assertSame(image,library.find(image.id()));
     }
     @Test void repeatedUndoAndPruningDoNotCreateDuplicates() {
         DrawingCanvas canvas = new DrawingCanvas();canvas.setSize(400,400);ink(canvas);
-        MathLibrary library = new MathLibrary();SelectedInkRegistry registry = new SelectedInkRegistry(canvas,library);
+        MaterialStore library = new MaterialStore();SelectedInkRegistry registry = new SelectedInkRegistry(canvas,library);
         var item = library.addFormula("x");registry.track(item.id(),canvas.getStrokes());
         canvas.clear();registry.synchronize();canvas.undo();registry.synchronize();
         assertEquals(1,library.items().size());

@@ -1,8 +1,7 @@
 package pdf_editor.adapter;
 
 import entity.Stroke;
-import pdf_editor.MaterialStore;
-import view.DrawingCanvas;
+import pdf_editor.use_case.MaterialStore;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,10 +9,10 @@ import java.util.Objects;
 
 /** UI-adapter mapping of library material IDs to their original strokes. */
 public final class SelectedInkRegistry {
-    private final DrawingCanvas canvas;
+    private final CanvasInkSource canvas;
     private final MaterialStore library;
     private final Map<String, List<List<Stroke>>> sources = new HashMap<>();
-    public SelectedInkRegistry(DrawingCanvas canvas, MaterialStore library) {
+    public SelectedInkRegistry(CanvasInkSource canvas, MaterialStore library) {
         this.canvas = Objects.requireNonNull(canvas);
         this.library = Objects.requireNonNull(library);
         canvas.addInkChangeListener(this::synchronize);

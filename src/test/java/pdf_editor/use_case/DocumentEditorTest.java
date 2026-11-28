@@ -1,13 +1,12 @@
 package pdf_editor.use_case;
 
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfDocument;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DocumentEditorTest {
-    private final MathLibrary materials = new MathLibrary();
+    private final MaterialStore materials = new MaterialStore();
     private final DocumentEditor editor = new DocumentEditor();
 
     @Test void placementIsImmutableAndSnapshotCannotChangeEditor() {

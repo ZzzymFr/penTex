@@ -2,7 +2,7 @@ package pdf_editor.view;
 
 import pdf_editor.use_case.FormulaEditSubmission;
 import pdf_editor.domain.PdfMaterial;
-import pdf_editor.data_access.MaterialRenderer;
+import pdf_editor.rendering.MaterialRenderer;
 import view.board.BoardTheme;
 import view.glass.GlassDialogs;
 import view.glass.GlassSegmentedControl;

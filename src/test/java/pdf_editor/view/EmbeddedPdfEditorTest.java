@@ -1,9 +1,10 @@
 package pdf_editor.view;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import history.domain.HistoryEntry;
 import interface_adapter.history.HistoryItem;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.DocumentEditor;
 import pdf_editor.use_case.AutoLayoutInteractor;
@@ -19,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class EmbeddedPdfEditorTest {
     private PdfEditorController controller() {
         DocumentEditor editor = new DocumentEditor();
-        return new PdfEditorController(new MathLibrary(), editor, new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((document, file) -> {}, (document, dpi) -> List.of()));
+        return new PdfEditorController(new MaterialStore(), editor, new AutoLayoutInteractor(editor),
+                new PdfExportInteractor((document, file) -> {}, (document, dpi) -> List.of()), PdfWrapTextLayout::reflow);
     }
     private HistoryItem history(String latex, String result) {
         return new HistoryItem(new HistoryEntry("entry", HistoryEntry.Kind.CALCULATION,
@@ -30,7 +31,6 @@ class EmbeddedPdfEditorTest {
         PdfPanel panel = new PdfPanel(controller());
         assertTrue(panel.editor() instanceof DocEditorPanel);
         assertTrue(panel instanceof javax.swing.JPanel);
-        assertFalse(panel.editor().isLibraryVisible());
         panel.close();
     }
     @Test void historyIsCopiedToEditableDocumentWithoutModifyingStoredRecord() {

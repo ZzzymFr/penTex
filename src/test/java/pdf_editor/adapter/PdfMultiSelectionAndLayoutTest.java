@@ -1,7 +1,8 @@
 package pdf_editor.adapter;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.DocumentEditor;
@@ -14,10 +15,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Selection is transient; group mutations and image layer edits must remain atomic/undoable. */
 class PdfMultiSelectionAndLayoutTest {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private final DocumentEditor editor = new DocumentEditor();
     private final PdfEditorController controller = new PdfEditorController(library, editor,
-            new AutoLayoutInteractor(editor), new PdfExportInteractor((d,p)->{}, (d,dpi)->List.of()));
+            new AutoLayoutInteractor(editor), new PdfExportInteractor((d,p)->{}, (d,dpi)->List.of()), PdfWrapTextLayout::reflow);
 
     @Test void deleteTwoSelectedPlacementsIsOneUndoAndDoesNotDeleteLibraryMaterials() {
         var first = controller.place(library.addFormula("x"), 50, 70, 90, 45);

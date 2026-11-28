@@ -1,12 +1,13 @@
 package view.board.doc;
 
+import pdf_editor.adapter.PngImages;
 import view.glass.GlassDialogs;
 import view.glass.GlassButton;
 
 import history.adapter.HistoryMaterialMapper;
 import pdf_editor.adapter.HistoryMaterialImporter;
 import interface_adapter.history.HistoryItem;
-import pdf_editor.MaterialStore;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.adapter.FormulaRevisionCoordinator;
 import pdf_editor.domain.PdfDocument;
@@ -185,116 +186,8 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     }
     public PdfPageCanvas pageView() { return paper; }
     public PdfEditorController documentController() { return controller; }
-    /** @deprecated The standalone Library has been removed. */
-    @Deprecated public boolean isLibraryVisible() { return false; }
 
-    /** Floating Apple-like controls: rounded capsules rather than full-width white strips. */
-    private static class Capsule extends JPanel {
-        Capsule(java.awt.LayoutManager layout) {
-            super(layout);
-            setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
-        }
-        // a pill while it's one row high, a 14px card once it grows taller
-        int arc() {
-            return getHeight() - 3 <= 48 ? getHeight() - 3 : 16;
-        }
-        @Override protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int arc = arc();
-            for (int i = 1; i <= 3; i++) {
-                g2.setColor(new Color(0, 0, 0, 6));
-                g2.fillRoundRect(0, i, getWidth() - 1, getHeight() - 3, arc, arc);
-            }
-            g2.setColor(Color.WHITE);
-            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 3, arc, arc);
-            g2.setColor(new Color(0, 0, 0, 22));
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 3, arc, arc);
-            g2.dispose();
-            super.paintComponent(g);
-        }
-    }
 
-    /**
-     * macOS segmented control for the ribbon tabs: a grey track, and a white raised pill under the
-     * chosen tab that slides (spring) to the next one instead of jumping.
-     */
-    private static final class SegmentTrack extends JPanel {
-        private final view.board.Spring pillX = new view.board.Spring();
-        private final view.board.Spring pillW = new view.board.Spring();
-        private final view.board.Motion.Clock clock = new view.board.Motion.Clock();
-        private final javax.swing.Timer timer = new javax.swing.Timer(view.board.Motion.FRAME_MS, e -> step());
-        private Component chosen;
-        private boolean placed;
-
-        SegmentTrack() {
-            super(new FlowLayout(FlowLayout.CENTER, 0, 0));
-            setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(3, 3, 3, 3));
-        }
-
-        void choose(Component tab) {
-            chosen = tab;
-            if (!placed || !isShowing()) {
-                placed = false;  // snap on the next layout
-            }
-            if (isShowing()) timer.start();
-            repaint();
-        }
-
-        @Override public void removeNotify() {
-            timer.stop();
-            clock.reset();
-            placed = false;
-            super.removeNotify();
-        }
-
-        @Override public void doLayout() {
-            super.doLayout();
-            if (chosen != null && (!placed || !timer.isRunning())) {
-                pillX.snap(chosen.getX());
-                pillW.snap(chosen.getWidth());
-                placed = chosen.getWidth() > 0;
-            }
-        }
-
-        private void step() {
-            if (chosen == null) {
-                timer.stop();
-                return;
-            }
-            float dt = clock.tick();
-            boolean still = pillX.step(chosen.getX(), view.board.Motion.SELECT, dt);
-            still &= pillW.step(chosen.getWidth(), view.board.Motion.SELECT, dt);
-            if (still) {
-                timer.stop();
-                clock.reset();
-            }
-            repaint();
-        }
-
-        @Override protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int h = getHeight();
-            g2.setColor(new Color(0, 0, 0, 16));
-            g2.fillRoundRect(0, 0, getWidth(), h, h, h);
-            if (chosen != null && pillW.x > 0) {
-                int y = 3;
-                int ph = h - 6;
-                for (int i = 1; i <= 2; i++) {
-                    g2.setColor(new Color(0, 0, 0, 10));
-                    g2.fillRoundRect(Math.round(pillX.x), y + i, Math.round(pillW.x), ph, ph, ph);
-                }
-                g2.setColor(Color.WHITE);
-                g2.fillRoundRect(Math.round(pillX.x), y, Math.round(pillW.x), ph, ph, ph);
-                g2.setColor(new Color(0, 0, 0, 14));
-                g2.drawRoundRect(Math.round(pillX.x), y, Math.round(pillW.x), ph, ph, ph);
-            }
-            g2.dispose();
-        }
-    }
     private SegmentTrack segmentTrack;
 
     private JComponent buildHeader() {
@@ -437,36 +330,6 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         b.setFont(BoardTheme.font(14f));
         return b;
     }
-    /** Readable rounded buttons with a real opaque fill; unlike platform LAF translucent defaults. */
-    private static final class RoundedActionButton extends JButton {
-        private final boolean primary;
-        boolean quiet;
-        private boolean over;
-        RoundedActionButton(String text, Runnable action, boolean primary) {
-            super(text);this.primary = primary;
-            setFont(BoardTheme.font(12.5f));
-            setFocusable(false);setContentAreaFilled(false);setOpaque(false);setBorderPainted(false);
-            setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
-            setRolloverEnabled(true);
-            addActionListener(e -> action.run());
-            addMouseListener(new java.awt.event.MouseAdapter() {
-                @Override public void mouseEntered(MouseEvent e) {over = true;repaint();}
-                @Override public void mouseExited(MouseEvent e) {over = false;repaint();}
-            });
-        }
-        private view.glass.AppleLook.Tone tone() {
-            if (primary) return view.glass.AppleLook.Tone.PRIMARY;
-            if (getModel().isSelected()) return view.glass.AppleLook.Tone.TINTED;
-            return quiet ? view.glass.AppleLook.Tone.QUIET : view.glass.AppleLook.Tone.SECONDARY;
-        }
-        @Override protected void paintComponent(Graphics g) {
-            int w = getWidth(), h = getHeight();
-            boolean pressed = getModel().isArmed() && getModel().isPressed();
-            view.glass.AppleLook.paintButton((Graphics2D) g, w, h, h, tone(), over, pressed, isEnabled());
-            setForeground(view.glass.AppleLook.buttonText(tone(), isEnabled()));
-            super.paintComponent(g);
-        }
-    }
     private void updateStatus() {
         pageCount.setText("Page " + (controller.currentPage() + 1) + " of " + controller.pageCount());
         paper.refreshInteractiveGraphs();
@@ -522,7 +385,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
         Objects.requireNonNull(thumbnail);
         Point spot = new Point(cursorOnScreen);
         if (paper.isShowing()) SwingUtilities.convertPointFromScreen(spot, paper);
-        MaterialStore.Material material = library.addInteractiveGraph(definition, thumbnail);
+        MaterialStore.Material material = library.addInteractiveGraph(definition, PngImages.encode(thumbnail));
         addMaterial(material, paper.isShowing() ? Math.max(0, paper.pageX(spot.x)) : 75,
                 paper.isShowing() ? Math.max(0, paper.pageY(spot.y)) : 108);
         library.archive(material);
@@ -680,7 +543,7 @@ public final class DocEditorPanel extends JPanel implements PdfWorkspacePort {
     private void insertCanvasInk() {
         BufferedImage image = canvasCapture.get();
         if (image == null) {GlassDialogs.warning(this, "Select some handwriting on the Canvas first.");return;}
-        addMaterial(library.addInk("Handwriting", image), 85, 110);
+        addMaterial(library.addInk("Handwriting", PngImages.encode(image)), 85, 110);
     }
     private void editFormula() {
         PdfDocument.Placement selected = controller.selected();

@@ -1,6 +1,7 @@
 package pdf_editor.view;
 
-import pdf_editor.MaterialStore;
+import pdf_editor.rendering.PdfWrapTextLayout;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.domain.PdfMaterial;
@@ -160,7 +161,7 @@ public final class PdfViewportPaintSmoke {
     static Fixture fixture() throws Exception {
         var editor = new DocumentEditor();
         var controller = new PdfEditorController(new MaterialStore(), editor, new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((doc, path) -> {}, (doc, dpi) -> List.of()));
+                new PdfExportInteractor((doc, path) -> {}, (doc, dpi) -> List.of()), PdfWrapTextLayout::reflow);
         PdfDocument doc = new PdfDocument(); doc.addPage();
         doc.setBody(0, List.of(new PdfDocument.NoteSpan("Rich text on a zoomed page. ".repeat(65),
                 false, false, true, 16, "Dialog")));

@@ -1,18 +1,18 @@
 package pdf_editor.use_case;
 
+import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfDocument;
 import java.awt.image.BufferedImage;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AutoLayoutInteractorTest {
     @Test void groupsAssociatedGraphAndFormulaOnSamePage() {
-        MathLibrary library = new MathLibrary();
+        MaterialStore library = new MaterialStore();
         DocumentEditor editor = new DocumentEditor();
         editor.addNote(0, "Top notes", 40, 720);
         var graph = new BufferedImage(600, 400, BufferedImage.TYPE_INT_ARGB);
-        library.addGraph("y=x^2", graph);
+        library.addGraph("y=x^2", PngImages.encode(graph));
         library.addFormula("y=x^2");
         AutoLayoutInteractor layout = new AutoLayoutInteractor(editor);
         int last = layout.importMaterials(0, library.items());

@@ -1,6 +1,5 @@
 package pdf_editor.view;
 
-import pdf_editor.use_case.CanvasRegionSnapshot;
 import view.DrawingCanvas;
 
 import javax.swing.JComponent;

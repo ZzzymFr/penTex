@@ -1,8 +1,10 @@
 package pdf_editor.data_access;
 
+import pdf_editor.rendering.MaterialRenderer;
+import pdf_editor.rendering.NoteRenderer;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.domain.PdfMaterial;
-import pdf_editor.adapter.PdfWrapTextLayout;
+import pdf_editor.rendering.PdfWrapTextLayout;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;

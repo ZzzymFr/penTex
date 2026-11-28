@@ -1,7 +1,8 @@
 package pdf_editor.view;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.*;
@@ -13,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class WordDocumentTypingTest {
     private PdfEditorController controller() {
         var editor=new DocumentEditor();
-        return new PdfEditorController(new MathLibrary(),editor,new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((d,f)->{},(d,dpi)->List.of()));
+        return new PdfEditorController(new MaterialStore(),editor,new AutoLayoutInteractor(editor),
+                new PdfExportInteractor((d,f)->{},(d,dpi)->List.of()), PdfWrapTextLayout::reflow);
     }
     @Test void defaultDocumentBodyIsBorderlessAndNotASelectableFloatingTextBox() {
         var controller=controller();var view=new DocEditorPanel(controller);
@@ -43,7 +44,7 @@ class WordDocumentTypingTest {
     }
     @Test void newNotesDefaultToTimesNewRoman() {
         var editor=new DocumentEditor();var note=editor.addNote(0,"Test",72,72);
-        var pane=pdf_editor.adapter.NoteTextDocumentFactory.createPane(note);
+        var pane=pdf_editor.rendering.NoteTextDocumentFactory.createPane(note);
         assertEquals("Times New Roman",StyleConstants.getFontFamily(
                 pane.getStyledDocument().getCharacterElement(0).getAttributes()));
     }

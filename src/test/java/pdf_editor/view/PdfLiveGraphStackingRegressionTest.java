@@ -1,7 +1,8 @@
 package pdf_editor.view;
 
+import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.domain.PdfDocument;
 
 import java.awt.image.BufferedImage;
@@ -11,11 +12,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Interactive Swing child must respect the same text/media paint order as exported PDF. */
 class PdfLiveGraphStackingRegressionTest {
-    private final MathLibrary library = new MathLibrary();
+    private final MaterialStore library = new MaterialStore();
     private PdfDocument.Placement graph() {
         return PdfDocument.Placement.material(
                 library.addInteractiveGraph(entity.graph.GraphDefinition.of("y=x*x"),
-                        new BufferedImage(40, 25, BufferedImage.TYPE_INT_ARGB)), 70, 110, 220, 140);
+                        PngImages.encode(new BufferedImage(40, 25, BufferedImage.TYPE_INT_ARGB))), 70, 110, 220, 140);
     }
     private PdfDocument.Placement media(String name) {
         return PdfDocument.Placement.material(library.addFormula(name), 80, 125, 120, 45);

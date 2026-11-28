@@ -44,7 +44,7 @@ The course assignment asks the team to describe its domain, stories, MVP leads, 
 
 ## Architecture
 
-The application uses Swing at the boundary and plain Java domain objects for much of the mathematics. The composition root creates the model adapter, use cases, presenters, session stores and storage gateways. Recognition and calculation run on a worker. The canvas checks the captured formula's revision before applying asynchronous results. Each live plot card gets its own interaction state. [Entry point](src/main/java/app.java) · [Application wiring](src/main/java/app/StackedAppBuilder.java) · [Worker](src/main/java/view/canvas/AnswerWorker.java)
+The application uses Swing at the boundary and plain Java domain objects for much of the mathematics. The composition root creates the model adapter, use cases, presenters, session stores and storage gateways. Recognition and calculation run on a worker. The canvas checks the captured formula's revision before applying asynchronous results. Each live plot card gets its own interaction state. [Entry point](src/main/java/app/Main.java) · [Application wiring](src/main/java/app/StackedAppBuilder.java) · [Worker](src/main/java/view/canvas/AnswerWorker.java)
 
 ```mermaid
 flowchart LR
@@ -100,7 +100,7 @@ sequenceDiagram
 
 | Location | Responsibility and useful entry points |
 | --- | --- |
-| [app.java](src/main/java/app.java), [app/](src/main/java/app/) | Load the shipped model, open a timestamped log, construct the board on Swing's event thread and release the model when the window closes. |
+| [Main.java](src/main/java/app/Main.java), [app/](src/main/java/app/) | Load the shipped model, open a timestamped log, construct the board on Swing's event thread and release the model when the window closes. |
 | [view/](src/main/java/view/), [rendering/](src/main/java/rendering/) | Capture and group strokes, paint answers, host live cards, and coordinate History and the PDF editor. Swing listeners route actions to controllers. |
 | [entity/](src/main/java/entity/) | Lexer, parser, expression nodes, values and evaluation contexts. Separate packages implement calculus, symbolic operations, integral parsing, graph geometry and phase-plane sampling. |
 | [use_case/](src/main/java/use_case/), [interface_adapter/](src/main/java/interface_adapter/) | Input boundaries and interactors select operations. Presenters convert typed output into view state. Graph and phase exploration reuse a stored plot through session interfaces. |
