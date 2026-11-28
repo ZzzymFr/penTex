@@ -138,10 +138,6 @@ public class GlassBar extends JComponent {
         void released(Point screen);
     }
 
-    private static final class Platter {
-        final Spring x = new Spring();
-        final Spring w = new Spring();
-    }
 
     private final Supplier<Point> origin;
     private final Consumer<Graphics2D> backdrop;
@@ -736,7 +732,7 @@ public class GlassBar extends JComponent {
                 settled = false;
             }
         }
-        appear += (appearTarget - appear) * ease(0.22f, f);
+        appear += (appearTarget - appear) * GlassPaint.ease(0.22f, f);
         if (Math.abs(appearTarget - appear) < 0.01f) {
             appear = appearTarget;
         } else {
@@ -767,7 +763,7 @@ public class GlassBar extends JComponent {
             settled &= lensX.step(cx, Motion.HOVER, dt);
             settled &= lensW.step(w, Motion.HOVER, dt);
         }
-        lensAlpha += (alphaTarget - lensAlpha) * ease(0.25f, f);
+        lensAlpha += (alphaTarget - lensAlpha) * GlassPaint.ease(0.25f, f);
         if (Math.abs(alphaTarget - lensAlpha) < 0.01f) {
             lensAlpha = alphaTarget;
         } else {
@@ -788,9 +784,6 @@ public class GlassBar extends JComponent {
         super.removeNotify();
     }
 
-    static float ease(float k, float f) {
-        return 1f - (float) Math.pow(1f - k, f);
-    }
 
     // ---- painting
 
@@ -801,7 +794,7 @@ public class GlassBar extends JComponent {
         }
         Graphics2D g2 = (Graphics2D) g.create();
         if (vertical) g2.transform(FLIP);
-        hints(g2);
+        GlassPaint.hints(g2);
         if (appear < 1f) g2.setComposite(AlphaComposite.SrcOver.derive(appear));
         RoundRectangle2D.Float cap = capsule(press.x * 3f);
         double deviceScale = Math.hypot(g2.getTransform().getScaleX(), g2.getTransform().getShearY());
@@ -830,8 +823,8 @@ public class GlassBar extends JComponent {
                     0, lens.y + lens.height * .5f, new Color(255,255,255,0)));
             optical.fill(lens);
             optical.setStroke(new BasicStroke(1.6f));
-            optical.setPaint(rimPaint(lens, 255, 170));
-            optical.draw(inset(lens, 1.3f));
+            optical.setPaint(GlassPaint.rimPaint(lens, 255, 170));
+            optical.draw(GlassPaint.inset(lens, 1.3f));
             optical.dispose();
         }
         g2.dispose();
@@ -911,8 +904,8 @@ public class GlassBar extends JComponent {
         }
         face.dispose();
         g2.setStroke(new BasicStroke(1.4f));
-        g2.setPaint(rimPaint(cap, BoardTheme.RIM_TOP, BoardTheme.RIM_BOTTOM));
-        g2.draw(inset(cap, 1.2f));
+        g2.setPaint(GlassPaint.rimPaint(cap, BoardTheme.RIM_TOP, BoardTheme.RIM_BOTTOM));
+        g2.draw(GlassPaint.inset(cap, 1.2f));
     }
 
     /** Only actual local scene changes invalidate the lens raster; alpha does not. */
@@ -928,12 +921,6 @@ public class GlassBar extends JComponent {
     // where this bar sits in the backdrop's coords
     private Point origin() { return origin.get(); }
 
-    static void hints(Graphics2D g) {
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-    }
 
     // Capture a fixed reference-space rectangle, not the currently animated size.
     private BufferedImage captureBackdrop(Rectangle bounds, double scale) {
@@ -955,12 +942,6 @@ public class GlassBar extends JComponent {
         return flipped;
     }
 
-    private static Paint rimPaint(RoundRectangle2D.Float r, int top, int bottom) {
-        return new LinearGradientPaint(r.x, r.y, r.x + r.width * 0.35f, r.y + r.height * 2.2f,
-                new float[]{0f, 0.35f, 0.7f, 1f},
-                new Color[]{new Color(255, 255, 255, top), new Color(255, 255, 255, 0),
-                    new Color(255, 255, 255, 0), new Color(255, 255, 255, bottom)});
-    }
 
     private void paintForeground(Graphics2D g2, RoundRectangle2D.Float cap, float scale) {
         g2.setFont(font);
@@ -1022,7 +1003,7 @@ public class GlassBar extends JComponent {
                     tg.dispose();
                 }
             } else if (it.kind == Kind.SWATCH) {
-                paintSwatch(g2, it, b.getCenterX(), b.getCenterY(), scale);
+                GlassPaint.paintSwatch(g2, it, b.getCenterX(), b.getCenterY(), scale, selected.get(it.group) == it);
             } else if (it.kind == Kind.SEPARATOR) {
                 g2.setColor(BoardTheme.EDGE);
                 g2.setStroke(new BasicStroke(1f));
@@ -1039,31 +1020,6 @@ public class GlassBar extends JComponent {
             }
     }
 
-    private void paintSwatch(Graphics2D g2, Item it, double cx, double cy, float scale) {
-        double d = Math.min(22, it.w - 8) * scale;  // dot shrinks with a squeezed bar
-        Ellipse2D dot = new Ellipse2D.Double(cx - d / 2, cy - d / 2, d, d);
-        if (it.custom) {
-            for (int i = 0; i < 24; i++) {
-                g2.setColor(Color.getHSBColor(i / 24f, 0.75f, 0.95f));
-                g2.fill(new Arc2D.Double(dot.getBounds2D(), 90 - i * 15, -15.5, Arc2D.PIE));
-            }
-            double di = d - 7 * scale;
-            g2.setColor(it.color != null ? it.color : BoardTheme.CANVAS);
-            g2.fill(new Ellipse2D.Double(cx - di / 2, cy - di / 2, di, di));
-        } else {
-            g2.setColor(it.color);
-            g2.fill(dot);
-        }
-        g2.setColor(BoardTheme.EDGE);
-        g2.setStroke(new BasicStroke(1f));
-        g2.draw(dot);
-        if (selected.get(it.group) == it) {
-            double dr = d + 8 * scale;
-            g2.setColor(BoardTheme.LABEL_SELECTED);
-            g2.setStroke(new BasicStroke(2f));
-            g2.draw(new Ellipse2D.Double(cx - dr / 2, cy - dr / 2, dr, dr));
-        }
-    }
 
     private RoundRectangle2D.Float lensShape() {
         float lh = capH + 2 * HOVER_GROW_Y + press.x * 4f;
@@ -1082,9 +1038,5 @@ public class GlassBar extends JComponent {
         return new RoundRectangle2D.Float(sx, sy, sw, sh, sh, sh);
     }
 
-    private static RoundRectangle2D.Float inset(RoundRectangle2D.Float r, float d) {
-        return new RoundRectangle2D.Float(r.x + d, r.y + d, r.width - 2 * d, r.height - 2 * d,
-                r.arcwidth - 2 * d, r.archeight - 2 * d);
-    }
 
 }

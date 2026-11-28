@@ -1,8 +1,9 @@
 package pdf_editor.view;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
-import pdf_editor.adapter.PdfBodyFlowLayout;
+import pdf_editor.use_case.MaterialStore;
+import pdf_editor.rendering.PdfBodyFlowLayout;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.AutoLayoutInteractor;
@@ -25,9 +26,9 @@ class PdfBodyReturnToPreviousPageTest {
                     false,false,false,16));
             editor.updateFlowingBody(0,PdfBodyFlowLayout.paginate(body));
             assertTrue(editor.pageCount()>=2);
-            var controller = new PdfEditorController(new MathLibrary(),editor,
+            var controller = new PdfEditorController(new MaterialStore(),editor,
                     new AutoLayoutInteractor(editor),
-                    new PdfExportInteractor((doc,path)->{},(doc,dpi)->List.of()));
+                    new PdfExportInteractor((doc,path)->{},(doc,dpi)->List.of()), PdfWrapTextLayout::reflow);
             var canvas=new PdfPageCanvas(controller,new PdfPageCanvas.Listener() {
                 public void contextMenu(MouseEvent event) { }
                 public void editNote() { }

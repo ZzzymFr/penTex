@@ -1,7 +1,7 @@
 package pdf_editor.use_case;
 
+import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
-import pdf_editor.MathLibrary;
 import pdf_editor.domain.PdfDocument;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AutoLayoutBoundaryTest {
     @Test void manyFormulasPaginateAndAllItemsRemainOnA4() {
-        var library = new MathLibrary();
-        var items = new ArrayList<MathLibrary.Material>();
+        var library = new MaterialStore();
+        var items = new ArrayList<MaterialStore.Material>();
         for (int i=0; i<30; i++) items.add(library.addFormula("x_"+i));
         var editor = new DocumentEditor();
         int last = new AutoLayoutInteractor(editor).importMaterials(0, items);
@@ -31,7 +31,7 @@ class AutoLayoutBoundaryTest {
     }
     @Test void invalidPageRollsBackWithoutChangingUndoHistory() {
         var editor = new DocumentEditor();
-        var material = new MathLibrary().addFormula("x");
+        var material = new MaterialStore().addFormula("x");
         assertThrows(IndexOutOfBoundsException.class,
                 () -> new AutoLayoutInteractor(editor).importMaterials(2, List.of(material)));
         assertEquals(1, editor.pageCount());
@@ -39,7 +39,7 @@ class AutoLayoutBoundaryTest {
     }
     @Test void nullMaterialRollsBackBatchAndKeepsExistingItems() {
         var editor = new DocumentEditor();
-        var material = new MathLibrary().addFormula("x");
+        var material = new MaterialStore().addFormula("x");
         var previous = editor.place(0, material, 10, 10, 200, 80);
         assertThrows(NullPointerException.class,
                 () -> new AutoLayoutInteractor(editor).importMaterials(0, java.util.Arrays.asList(material, null)));
@@ -47,8 +47,8 @@ class AutoLayoutBoundaryTest {
         assertNotNull(editor.find(0, previous.id()));
     }
     @Test void pairedGraphAndFormulaStayTogetherWhenNearBottom() {
-        var library = new MathLibrary();
-        library.addGraph("y=x^2", new BufferedImage(400, 280, BufferedImage.TYPE_INT_RGB));
+        var library = new MaterialStore();
+        library.addGraph("y=x^2", PngImages.encode(new BufferedImage(400, 280, BufferedImage.TYPE_INT_RGB)));
         library.addFormula("y=x^2");
         var editor = new DocumentEditor();
         editor.addNote(0, "bottom", 20, 700);

@@ -1,9 +1,10 @@
 package pdf_editor.view;
 
+import pdf_editor.rendering.PdfWrapTextLayout;
 import org.junit.jupiter.api.Test;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.DocumentEditor;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.adapter.PdfEditorController;
 import pdf_editor.use_case.AutoLayoutInteractor;
 import pdf_editor.use_case.PdfExportInteractor;
@@ -48,8 +49,8 @@ class InlineNoteEditorTest {
     }
     @Test void pageCanvasCreatesInlineEditorForSelectedNote() {
         DocumentEditor editor=new DocumentEditor();
-        var controller=new PdfEditorController(new MathLibrary(),editor,new AutoLayoutInteractor(editor),
-                new PdfExportInteractor((d,f)->{},(d,dpi)->List.of()));
+        var controller=new PdfEditorController(new MaterialStore(),editor,new AutoLayoutInteractor(editor),
+                new PdfExportInteractor((d,f)->{},(d,dpi)->List.of()), PdfWrapTextLayout::reflow);
         var page=new PdfPageCanvas(controller,new PdfPageCanvas.Listener(){
             public void contextMenu(java.awt.event.MouseEvent e){}public void editNote(){}public void editFormula(){}
         });

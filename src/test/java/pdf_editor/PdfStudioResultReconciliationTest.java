@@ -1,5 +1,9 @@
 package pdf_editor;
 
+import view.SwingUiThread;
+import pdf_editor.use_case.MaterialStore;
+import app.PdfStudioLauncher;
+
 import entity.Stroke;
 import history.domain.HistoryEntry;
 import history.use_case.HistoryInteractor;
@@ -46,8 +50,8 @@ class PdfStudioResultReconciliationTest {
 
     @Test void libraryListenersNeverSeeCalculationBeforeHistoryStorage() throws Exception {
         var history = new HistoryInteractor(new MemoryRepository());
-        var library = new MathLibrary();
-        var collector = new pdf_editor.adapter.MathLabCollector(library, history);
+        var library = new MaterialStore();
+        var collector = new pdf_editor.adapter.MathLabCollector(library, history, SwingUiThread.INSTANCE);
         var observed = new java.util.concurrent.atomic.AtomicBoolean();
         library.onChange(() -> {
             try {
@@ -66,7 +70,7 @@ class PdfStudioResultReconciliationTest {
     @Test void formulaOnlyExportThenTypesetAnswerUpgradesHistoryAndLibrary() throws Exception {
         var repo = new MemoryRepository();
         var history = new HistoryInteractor(repo);
-        var studio = new PdfStudioLauncher(history);
+        var studio = PdfStudioLauncher.create(history);
         var canvas = new DrawingCanvas();
         var shared = new SharedCanvas(canvas);
         AtomicReference<FormulaCapture> capture = new AtomicReference<>();
@@ -75,15 +79,15 @@ class PdfStudioResultReconciliationTest {
             assertNotNull(capture.get());
             studio.setSourceCanvas(shared);
             studio.addCalculationWithSource(capture.get().getId(), "\\frac{x^3}{2}-x^2", "");
-            assertEquals(1, studio.getLibrary().items().size());
-            assertTrue(studio.getLibrary().items().get(0).result().isBlank());
+            assertEquals(1, studio.getMaterialStore().items().size());
+            assertTrue(studio.getMaterialStore().items().get(0).result().isBlank());
             assertTrue(canvas.showTypesetAnswer(capture.get().getId(), capture.get().getRevision(),
                     AnswerKind.RIGHT, "3x2/2 - 2x", "\\frac{3x^{2}}{2}-2x"));
             // The original answer exporter may omit its second callback on the same revision.
             studio.synchronizeCanvas(shared);
         });
-        assertEquals(1, studio.getLibrary().items().size());
-        assertEquals("\\frac{3x^{2}}{2}-2x", studio.getLibrary().items().get(0).result());
+        assertEquals(1, studio.getMaterialStore().items().size());
+        assertEquals("\\frac{3x^{2}}{2}-2x", studio.getMaterialStore().items().get(0).result());
         assertEquals(1, history.list().size());
         assertEquals(HistoryEntry.Kind.CALCULATION, history.list().get(0).kind());
         assertEquals("\\frac{3x^{2}}{2}-2x", history.list().get(0).result());
@@ -93,7 +97,7 @@ class PdfStudioResultReconciliationTest {
 
     @Test void normalCompletedResultUsesCanvasTypesetLatexInBothDestinations() throws Exception {
         var history = new HistoryInteractor(new MemoryRepository());
-        var studio = new PdfStudioLauncher(history);
+        var studio = PdfStudioLauncher.create(history);
         SwingUtilities.invokeAndWait(() -> {
             var canvas = new DrawingCanvas();
             var capture = oneFormula(canvas);
@@ -103,21 +107,21 @@ class PdfStudioResultReconciliationTest {
             // The teammate's public resultText can be readable but not typeset.
             studio.addCalculationWithSource(capture.getId(), "\\frac{x^3}{2}-x^2", "3x2/2 - 2x");
         });
-        assertEquals("\\frac{3x^{2}}{2}-2x", studio.getLibrary().items().get(0).result());
+        assertEquals("\\frac{3x^{2}}{2}-2x", studio.getMaterialStore().items().get(0).result());
         assertEquals("\\frac{3x^{2}}{2}-2x", history.list().get(0).result());
     }
 
     @Test void periodicRecoveryFindsAnswerWithoutAnotherCanvasNotification() throws Exception {
         var history = new HistoryInteractor(new MemoryRepository());
-        var studio = new PdfStudioLauncher(history);
+        var studio = PdfStudioLauncher.create(history);
         var latch = new java.util.concurrent.CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> {
             var canvas = new DrawingCanvas();
             var capture = oneFormula(canvas);
             studio.setSourceCanvas(new SharedCanvas(canvas));
             studio.addCalculationWithSource(capture.getId(), "2+3", "");
-            studio.getLibrary().onChange(() -> {
-                if (studio.getLibrary().items().stream().anyMatch(m -> "5".equals(m.result())))
+            studio.getMaterialStore().onChange(() -> {
+                if (studio.getMaterialStore().items().stream().anyMatch(m -> "5".equals(m.result())))
                     latch.countDown();
             });
             assertTrue(canvas.showTypesetAnswer(capture.getId(), capture.getRevision(),
@@ -132,7 +136,7 @@ class PdfStudioResultReconciliationTest {
 
     @Test void formulaOnlyWithoutAnyAnswerStaysFormulaOnly() throws Exception {
         var history = new HistoryInteractor(new MemoryRepository());
-        var studio = new PdfStudioLauncher(history);
+        var studio = PdfStudioLauncher.create(history);
         SwingUtilities.invokeAndWait(() -> {
             var canvas = new DrawingCanvas();
             var capture = oneFormula(canvas);
@@ -143,6 +147,6 @@ class PdfStudioResultReconciliationTest {
         });
         assertEquals(1, history.list().size());
         assertEquals(HistoryEntry.Kind.FORMULA, history.list().get(0).kind());
-        assertTrue(studio.getLibrary().items().get(0).result().isEmpty());
+        assertTrue(studio.getMaterialStore().items().get(0).result().isEmpty());
     }
 }

@@ -1,5 +1,7 @@
 package history.adapter;
 
+import view.SwingUiThread;
+import pdf_editor.use_case.MaterialStore;
 import history.data_access.FileHistoryRepository;
 import history.use_case.HistoryInteractor;
 import interface_adapter.history.HistoryViewModel;
@@ -16,13 +18,13 @@ class GraphableFormulaHistoryTest {
         var history = new HistoryInteractor(new FileHistoryRepository(directory));
         assertTrue(history.recordFormula("y=x"));
         var model = new HistoryViewModel();
-        var presenter = new HistoryBoardPresenter(history, model);
+        var presenter = new HistoryBoardPresenter(history, model, SwingUiThread.INSTANCE);
         presenter.refresh();
         assertEquals(1, model.getItems().size());
         assertEquals("y=x", model.getItems().get(0).getLatex());
         assertEquals("", model.getItems().get(0).getAnswer());
         var reopened = new HistoryViewModel();
-        new HistoryBoardPresenter(new HistoryInteractor(new FileHistoryRepository(directory)), reopened).refresh();
+        new HistoryBoardPresenter(new HistoryInteractor(new FileHistoryRepository(directory)), reopened, SwingUiThread.INSTANCE).refresh();
         assertEquals(1, reopened.getItems().size());
     }
 
@@ -31,15 +33,15 @@ class GraphableFormulaHistoryTest {
         history.recordFormula(".");
         history.recordFormula("y=x");
         var model = new HistoryViewModel();
-        new HistoryBoardPresenter(history, model).refresh();
+        new HistoryBoardPresenter(history, model, SwingUiThread.INSTANCE).refresh();
         assertEquals(1, model.getItems().size());
         assertEquals("y=x", model.getItems().get(0).getLatex());
         assertEquals(2, history.list().size());
     }
     @Test void savedGraphAndEditableFormulaAreSeparateHistoryMaterials() throws Exception {
         var history = new HistoryInteractor(new FileHistoryRepository(directory));
-        var library = new pdf_editor.MathLibrary();
-        var collector = new pdf_editor.adapter.MathLabCollector(library, history);
+        var library = new pdf_editor.use_case.MaterialStore();
+        var collector = new pdf_editor.adapter.MathLabCollector(library, history, SwingUiThread.INSTANCE);
         var graph = new java.awt.image.BufferedImage(60, 40, java.awt.image.BufferedImage.TYPE_INT_RGB);
         collector.acceptGraph("y=x", graph);
         collector.acceptCalculation(23L, "y=x", "");
@@ -49,7 +51,7 @@ class GraphableFormulaHistoryTest {
         assertEquals(1L, library.items().stream().filter(x -> x.isGraph()).count());
         assertEquals(1L, library.items().stream().filter(x -> !x.isGraph()).count());
         var model = new HistoryViewModel();
-        new HistoryBoardPresenter(history, model).refresh();
+        new HistoryBoardPresenter(history, model, SwingUiThread.INSTANCE).refresh();
         assertEquals(2, model.getItems().size());
         assertTrue(model.getItems().stream().anyMatch(x -> "y=x".equals(x.getLatex()) && !x.isGraph()));
         assertTrue(model.getItems().stream().anyMatch(x -> x.isGraph()));

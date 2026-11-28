@@ -3,7 +3,7 @@ package pdf_editor.view;
 import org.junit.jupiter.api.Test;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.DocumentEditor;
-import pdf_editor.adapter.NoteTextDocumentFactory;
+import pdf_editor.rendering.NoteTextDocumentFactory;
 import javax.swing.text.StyleConstants;
 import java.awt.event.MouseEvent;
 import java.util.List;

@@ -1,12 +1,13 @@
 package pdf_editor.data_access;
 
+import pdf_editor.adapter.PngImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import pdf_editor.MathLibrary;
+import pdf_editor.use_case.MaterialStore;
 import pdf_editor.domain.PdfDocument;
 import pdf_editor.use_case.DocumentEditor;
 import java.awt.Color;
@@ -30,7 +31,7 @@ class PdfBoxOutputAdapterIntegrationTest {
     }
     @Test void formulaExportKeepsCopyableLatexAppendix() throws Exception {
         var editor = new DocumentEditor();
-        editor.place(0, new MathLibrary().addCalculation("x^2+1=", "=2"), 45, 60, 300, 110);
+        editor.place(0, new MaterialStore().addCalculation("x^2+1=", "=2"), 45, 60, 300, 110);
         Path file = temp.resolve("formula.pdf");
         adapter.export(editor.snapshot(), file);
         try (PDDocument pdf = PDDocument.load(file.toFile())) {
@@ -51,7 +52,7 @@ class PdfBoxOutputAdapterIntegrationTest {
         var graphPixels = new BufferedImage(100, 60, BufferedImage.TYPE_INT_RGB);
         for (int y=0; y<60; y++) for (int x=0; x<100; x++) graphPixels.setRGB(x,y,Color.BLUE.getRGB());
         var editor = new DocumentEditor();
-        editor.place(0, MathLibrary.region("plot", graphPixels), 20, 20, 300, 200);
+        editor.place(0, MaterialStore.region("plot", PngImages.encode(graphPixels)), 20, 20, 300, 200);
         editor.addNote(0, "Note content", 20, 280);
         Path file = temp.resolve("graph.pdf");
         adapter.export(editor.snapshot(), file);
@@ -62,7 +63,7 @@ class PdfBoxOutputAdapterIntegrationTest {
     }
     @Test void multiPageAndPreviewPreserveDocumentState() throws Exception {
         var editor = new DocumentEditor();
-        editor.place(0, new MathLibrary().addFormula("a+b"), 20, 20, 200, 80);
+        editor.place(0, new MaterialStore().addFormula("a+b"), 20, 20, 200, 80);
         editor.addPage();
         editor.addNote(1, "Second page", 20, 20);
         var snapshot = editor.snapshot();
@@ -76,7 +77,7 @@ class PdfBoxOutputAdapterIntegrationTest {
         assertThrows(IllegalArgumentException.class, () -> adapter.preview(new PdfDocument(), -1));
     }
     @Test void duplicateMaterialOnSeveralPagesHasSingleAppendixEntry() throws Exception {
-        var source = new MathLibrary().addFormula("z^3");
+        var source = new MaterialStore().addFormula("z^3");
         var editor = new DocumentEditor();
         editor.place(0, source, 40, 40, 200, 100);
         editor.addPage();
